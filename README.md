@@ -2,6 +2,15 @@
 
 Central NTULearn downloader. Authentication and sync state stay here; course files go to each configured Google Drive module folder.
 
+## Status
+
+Early, and built in the open. Course pages, announcements and attachments sync today. Recorded
+lecture videos, their transcripts, and transcription for the videos that have none are intended
+and not yet built.
+
+It is public from its first commit so that anyone who wants it while it is still being built can
+run it — MIT licensed, `docs/adr/0002`. Expect it to change under you.
+
 ## Commands
 
 ```bash
