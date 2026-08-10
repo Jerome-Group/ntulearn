@@ -16,12 +16,15 @@ export function attachmentPlacement(placement, item, attachment) {
   return { file, trail: placement.trail, segments, path: segments.join("/") };
 }
 
-// The trail is the folders in NTULearn's own words, so a person can find the place in the browser;
-// the segments are the same folders as the destination numbers and sanitises them.
+// The folders an item is in, itself included when it is one — so a folder's own document and the
+// files beneath it are named by the same walk rather than by two expressions that agree today.
+//
+// The trail is those folders in NTULearn's own words, so a person can find the place in the
+// browser; the segments are the same folders as the destination numbers and sanitises them.
 function placementOf(item, itemsById) {
   const folders = [];
-  for (let parent = itemsById.get(item.parentId); parent; parent = itemsById.get(parent.parentId)) {
-    if (isFolder(parent)) folders.unshift(parent);
+  for (let each = item; each; each = itemsById.get(each.parentId)) {
+    if (isFolder(each)) folders.unshift(each);
   }
   return {
     trail: folders.map((folder) => folder.title).join(TRAIL_SEPARATOR),

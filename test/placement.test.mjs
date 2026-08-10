@@ -45,6 +45,12 @@ test("names the folders an item sits under, in NTULearn's words and in the desti
   assert.deepEqual(placement.segments, ["09 Career Pathways Platform", "03 Instruction Manual"]);
 });
 
+// The folder a folder makes is the folder its own document goes in, so both come from one walk.
+test("places a folder in the folder it makes", () => {
+  const placement = placementsIn(COURSE).get("_2_1");
+  assert.deepEqual(placement.segments, ["09 Career Pathways Platform", "03 Instruction Manual"]);
+});
+
 test("counts a Learning Module as a folder its children sit under", () => {
   const items = [
     {

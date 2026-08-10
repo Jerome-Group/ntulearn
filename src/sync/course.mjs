@@ -25,12 +25,12 @@ export async function syncCourse({ client, course, state }) {
 
   const placements = placementsIn(snapshot.items);
   for (const item of snapshot.items) {
+    // A folder's own placement is the folder it makes; anything else's is the folder it lands in.
     const folder = safeResolve(course.destination, ...placements.get(item.id).segments);
 
     if (isFolder(item)) {
-      const own = safeResolve(folder, orderedName(item.position, item.title));
-      await mkdir(own, { recursive: true });
-      await writeDocument(safeResolve(own, FOLDER_DOCUMENT), contentDocument(item), tally);
+      await mkdir(folder, { recursive: true });
+      await writeDocument(safeResolve(folder, FOLDER_DOCUMENT), contentDocument(item), tally);
       continue;
     }
 
