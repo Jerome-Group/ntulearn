@@ -1,0 +1,15 @@
+{
+  "name": "ntulearn-sync",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "login": "node src/cli.mjs login",
+    "discover": "node src/cli.mjs discover",
+    "sync": "node src/cli.mjs sync",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2",
+    "turndown": "^7.2.1"
+  }
+}

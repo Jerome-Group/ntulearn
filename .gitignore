@@ -10,3 +10,19 @@
 .env
 .env.*
 *.local
+
+# Dependencies
+node_modules/
+
+# The saved NTU session and the sync state. `.data/chrome-profile` is a live authenticated
+# browser profile — this repository's actual secret — and it is permission-restricted on disk.
+# It has never been tracked, which is the only state from which that is free.
+.data/
+
+# The local module configuration: a personal Drive destination path and real course identifiers.
+# Ignored rather than tracked, so it never enters the history of a public repository. See
+# `README.md` for the shape it should have.
+config/courses.json
+
+# Partial downloads
+*.part-*
