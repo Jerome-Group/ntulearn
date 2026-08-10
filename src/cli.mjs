@@ -8,11 +8,12 @@ import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
 import { readState, writeState } from "./sync/state.mjs";
+import { verifyCourse, verifyReport } from "./sync/verify.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const USAGE = "Usage: npm run login | npm run discover | npm run sync -- <course|all>";
+const USAGE = "Usage: npm run login | npm run discover | npm run (sync|verify) -- <course|all>";
 
-const commands = { login, discover, sync };
+const commands = { login, discover, sync, verify };
 
 async function login(config) {
   const window = await openLoginWindow(config.profilePath);
@@ -55,6 +56,24 @@ async function sync(config, key) {
 
   await writeLine(stdout, asJson(results));
   return results.some((result) => result.failures.length) ? 1 : 0;
+}
+
+async function verify(config, key) {
+  const courses = selectCourses(config.courses, key);
+  const client = await openClient(config.profilePath);
+  const results = [];
+
+  try {
+    for (const course of courses) {
+      results.push(await verifyCourse({ client, course }));
+    }
+  } finally {
+    await client.close();
+  }
+
+  const report = verifyReport(results);
+  await writeLine(stdout, asJson(report));
+  return report.complete ? 0 : 1;
 }
 
 async function main([name, argument]) {

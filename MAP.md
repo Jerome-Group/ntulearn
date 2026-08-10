@@ -6,10 +6,10 @@ Start here: `README.md`, then `AGENTS.md`.
 
 | Area | What lives there | Entry point |
 |------|------------------|-------------|
-| Commands | The CLI — `login`, `discover`, `sync` — the `npm run` scripts that reach it, and how a line gets out before the process exits | `src/cli.mjs`, `src/output.mjs`, `package.json` |
+| Commands | The CLI — `login`, `discover`, `sync`, `verify` — the `npm run` scripts that reach it, and how a line gets out before the process exits | `src/cli.mjs`, `src/output.mjs`, `package.json` |
 | Configuration | Reading `config/courses.json` — which courses sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
-| Sync | Everything that writes to a destination: the course walk, the Markdown documents, the file names, and what has already been downloaded | `src/sync/` |
+| Sync | Everything that has a destination in hand: the course walk that writes to it, where each file lands, the Markdown documents, what has already been downloaded, and the read that holds it against NTULearn | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
 | Tests | One file per module under test, plus the two that spawn the CLI to check what only a process shows | `test/` |
 | Toolchain | Prettier formats this repository's own code, ESLint checks correctness only, and the supported Node range is enforced at install rather than warned about | `.prettierrc.json`, `eslint.config.mjs`, `.npmrc` |

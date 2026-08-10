@@ -1,16 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { relative } from "node:path";
-import {
-  attachmentName,
-  attachmentsOf,
-  externalLinkOf,
-  isFile,
-  isFolder,
-} from "../ntulearn/content.mjs";
+import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
 import { isFileOfSize, writeAtomically, writeIfChanged } from "./files.mjs";
 import { announcementDocument, contentDocument, courseDocument, isoDate } from "./markdown.mjs";
 import { orderedName, safeResolve, safeSegment } from "./paths.mjs";
+import { attachmentPlacement, placementsIn } from "./placement.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 const COURSE_DOCUMENT = "Course.md";
@@ -28,9 +22,9 @@ export async function syncCourse({ client, course, state }) {
   const overview = safeResolve(course.destination, COURSE_DOCUMENT);
   await writeDocument(overview, courseDocument(snapshot.course), tally);
 
-  const itemsById = new Map(snapshot.items.map((item) => [item.id, item]));
+  const placements = placementsIn(snapshot.items);
   for (const item of snapshot.items) {
-    const folder = safeResolve(course.destination, ...ancestorFolders(item, itemsById));
+    const folder = safeResolve(course.destination, ...placements.get(item.id).segments);
 
     if (isFolder(item)) {
       const own = safeResolve(folder, orderedName(item.position, item.title));
@@ -43,12 +37,12 @@ export async function syncCourse({ client, course, state }) {
     const target = safeResolve(folder, `${orderedName(item.position, item.title)}.md`);
     await writeDocument(target, page, tally);
 
-    for (const attachment of await attachmentsWithDetail(client, course.courseId, item)) {
+    for (const attachment of await client.readAttachments(course.courseId, item)) {
       const record = previous.downloads?.[attachment.resourceUrl];
       const saved = await saveAttachment({
         course,
         client,
-        folder,
+        at: attachmentPlacement(placements.get(item.id), item, attachment),
         item,
         attachment,
         record,
@@ -85,14 +79,13 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, course, folder, item, attachment, record, tally }) {
-  const target = safeResolve(folder, orderedName(item.position, attachmentName(item, attachment)));
-  const relativePath = relative(course.destination, target);
+async function saveAttachment({ client, course, at, item, attachment, record, tally }) {
+  const target = safeResolve(course.destination, ...at.segments);
   const fingerprint = attachmentFingerprint(item, attachment);
 
   const unchanged =
     record?.fingerprint === fingerprint &&
-    record.relativePath === relativePath &&
+    record.relativePath === at.path &&
     (await isFileOfSize(target, attachment.fileSize));
   if (unchanged) {
     tally.skipped += 1;
@@ -106,17 +99,15 @@ async function saveAttachment({ client, course, folder, item, attachment, record
     tally.bytes += body.length;
     return {
       fingerprint,
-      relativePath,
+      relativePath: at.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       mimeType: attachment.mimeType || headers["content-type"] || null,
     };
   } catch (error) {
-    tally.failures.push({
-      item: item.title,
-      file: attachmentName(item, attachment),
-      error: error.message,
-    });
+    // Where it was and where it would have gone, because the item's own title is `ultraDocumentBody`
+    // for every embedded document in a course and so names nothing (#21).
+    tally.failures.push({ file: at.file, trail: at.trail, path: at.path, error: error.message });
     // No record, so the next run treats this attachment as never downloaded and tries again.
     return null;
   }
@@ -133,23 +124,8 @@ async function writeAnnouncements(destination, announcements, tally) {
   }
 }
 
-// The Summary view carries no attached file, so an item that claims one is re-read in full.
-async function attachmentsWithDetail(client, courseId, item) {
-  const attachments = attachmentsOf(item);
-  if (attachments.length || !isFile(item)) return attachments;
-  return attachmentsOf(await client.readContentItem(courseId, item.id));
-}
-
 function attachmentFingerprint(item, attachment) {
   return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
-}
-
-function ancestorFolders(item, itemsById) {
-  const folders = [];
-  for (let parent = itemsById.get(item.parentId); parent; parent = itemsById.get(parent.parentId)) {
-    if (isFolder(parent)) folders.unshift(orderedName(parent.position, parent.title));
-  }
-  return folders;
 }
 
 async function writeDocument(path, content, tally) {

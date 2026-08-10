@@ -1,4 +1,4 @@
-import { isFolder } from "./content.mjs";
+import { attachmentsOf, isFile, isFolder } from "./content.mjs";
 import { openSignedInContext } from "./session.mjs";
 import { absoluteUrl, courseUrl } from "./urls.mjs";
 
@@ -65,16 +65,22 @@ class NtulearnClient {
   }
 
   // The Summary view omits an attached file, so an item known to have one is re-read in full.
-  readContentItem(courseId, itemId) {
-    return this.#get(
-      `/learn/api/v1/courses/${courseId}/contents/${itemId}?expand=gradebookCategory`,
-    );
+  async readAttachments(courseId, item) {
+    const attachments = attachmentsOf(item);
+    if (attachments.length || !isFile(item)) return attachments;
+    return attachmentsOf(await this.#readContentItem(courseId, item.id));
   }
 
   async download(resourceUrl) {
     const response = await this.#context.request.get(absoluteUrl(resourceUrl));
     if (!response.ok()) throw new Error(`Download failed: HTTP ${response.status()}`);
     return { body: await response.body(), headers: response.headers() };
+  }
+
+  #readContentItem(courseId, itemId) {
+    return this.#get(
+      `/learn/api/v1/courses/${courseId}/contents/${itemId}?expand=gradebookCategory`,
+    );
   }
 
   async #get(path, { optional = false } = {}) {
