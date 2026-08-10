@@ -9,6 +9,12 @@
 # 3-day default for version updates. ADR-0010 wants no wait on `terraform`; three days is what
 # the platform actually offers, and it costs nothing on bumps a human reads anyway.
 #
+# **`labels: []` is not optional, and it goes on every ecosystem.** Dependabot applies
+# `dependencies` and a per-ecosystem label unless told not to, and the Organisation's label set is
+# closed (ADR-0028 in the management hub) — the next apply deletes both, stripping them off the
+# pull requests carrying them, and the next bump puts them back. An ecosystem added without it
+# puts this repository into that loop.
+#
 # No `groups:` key, deliberately: a grouped pull request has to be judged by its worst member,
 # and one-per-dependency names the culprit in the title when a bump breaks CI.
 version: 2
@@ -26,6 +32,10 @@ updates:
     directory: /
     schedule:
       interval: daily
+    # Labelling off, for the reason the header gives: a label Dependabot applies here is one the
+    # next apply deletes and the next bump recreates. Empty is how the option is switched off —
+    # omitting it is not the same thing, it is Dependabot's two defaults.
+    labels: []
     # Already the default, stated because the auto-merge path depends on it: GitHub will not
     # update a pull request that has fallen behind `main`, even with auto-merge queued and
     # `allow_update_branch` on — measured, see ADR-0010. Dependabot rebasing its own pull
@@ -51,4 +61,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Labelling off, for the reason the header gives: a label Dependabot applies here is one the
+    # next apply deletes and the next bump recreates. Empty is how the option is switched off —
+    # omitting it is not the same thing, it is Dependabot's two defaults.
+    labels: []
     rebase-strategy: auto
