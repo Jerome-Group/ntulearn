@@ -23,6 +23,62 @@ test("strips the ways HTML can carry script into a note", () => {
   assert.equal(htmlToMarkdown('<a href="javascript:steal()">link</a>'), "[link](#)");
 });
 
+const embed = (attachment) => `data-bbfile='${JSON.stringify(attachment)}'`;
+
+test("names an attachment link from the embed, NTULearn having left the text empty", () => {
+  const html = `<a ${embed({ linkName: "Handout00.pdf" })} href="/bbcswebdav/xid-1"></a>`;
+  assert.equal(htmlToMarkdown(html), "[Handout00.pdf](/bbcswebdav/xid-1)");
+});
+
+test("gives an embedded player its title and the URL it plays at", () => {
+  const html = `<a href="undefined" ${embed({
+    title: "Why everyone should know about sustainability (22:29)",
+    url: "https://ntulearnv1.ntu.edu.sg/browseandembed/index/media/entryid/0_td7lgutt/",
+  })}>undefined</a>`;
+
+  assert.equal(
+    htmlToMarkdown(html),
+    "[Why everyone should know about sustainability (22:29)]" +
+      "(https://ntulearnv1.ntu.edu.sg/browseandembed/index/media/entryid/0_td7lgutt/)",
+  );
+});
+
+test("prefers the link text NTULearn did supply over the embed's name", () => {
+  const html = `<a ${embed({ linkName: "Handout00.pdf" })} href="/bbcswebdav/xid-1">Week 1 notes</a>`;
+  assert.equal(htmlToMarkdown(html), "[Week 1 notes](/bbcswebdav/xid-1)");
+});
+
+test("falls back through the names an embed may carry", () => {
+  const named = (attachment) => htmlToMarkdown(`<a ${embed(attachment)} href="/x"></a>`);
+
+  assert.equal(named({ displayName: "b.pdf" }), "[b.pdf](/x)");
+  assert.equal(named({ fileName: "c.pdf" }), "[c.pdf](/x)");
+  assert.equal(named({ title: "d" }), "[d](/x)");
+  assert.equal(named({}), "[/x](/x)");
+});
+
+test("leaves no empty link where the embed offers neither name nor target", () => {
+  assert.equal(
+    htmlToMarkdown(`<a href="undefined" ${embed({ url: "undefined" })}>undefined</a>`),
+    "",
+  );
+  assert.equal(
+    htmlToMarkdown(`<a href="undefined" ${embed({ title: "Video 1" })}>undefined</a>`),
+    "Video 1",
+  );
+});
+
+test("leaves an ordinary link alone", () => {
+  assert.equal(
+    htmlToMarkdown('<a href="https://example.org/x">read this</a>'),
+    "[read this](https://example.org/x)",
+  );
+});
+
+test("survives a malformed data-bbfile, falling back to the element's own link", () => {
+  assert.equal(htmlToMarkdown('<a data-bbfile="{not json" href="/x">text</a>'), "[text](/x)");
+});
+
 test("collapses runs of blank lines", () => {
   assert.equal(htmlToMarkdown("<p>a</p><br><br><br><p>b</p>"), "a\n\nb");
 });

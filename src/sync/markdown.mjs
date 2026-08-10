@@ -1,5 +1,8 @@
 import TurndownService from "turndown";
+import { isSupplied } from "../ntulearn/content.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
+
+const EMBED_ATTRIBUTE = "data-bbfile";
 
 const EVENT_HANDLER_ATTRIBUTE = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
 const JAVASCRIPT_URL_ATTRIBUTE = /(?:href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\1/gi;
@@ -12,6 +15,27 @@ const turndown = new TurndownService({
   headingStyle: "atx",
 });
 turndown.remove(["script", "style", "iframe", "object", "embed", "form"]);
+
+// NTULearn leaves an embed's anchor without link text, and an embedded player's href unwritten,
+// so the plain conversion gives `[](url)` for every attachment and `[undefined](undefined)` for
+// every video. What the embed is stays in its `data-bbfile`, which carries the name and — for a
+// player, whose file is a stream rather than a download — the URL to watch it at.
+turndown.addRule("bbEmbed", {
+  filter: (node) => node.nodeName === "A" && node.hasAttribute(EMBED_ATTRIBUTE),
+  replacement: (text, node) => {
+    const embed = embedOf(node);
+    const target = firstSupplied(node.getAttribute("href"), embed.url);
+    const label = firstSupplied(
+      text,
+      embed.linkName,
+      embed.displayName,
+      embed.fileName,
+      embed.title,
+    );
+    if (!target) return label ?? "";
+    return `[${label ?? target}](${target})`;
+  },
+});
 
 export function htmlToMarkdown(value) {
   const html = String(value ?? "")
@@ -62,4 +86,21 @@ export function isoDate(value) {
 
 function document(title, sections) {
   return `# ${title}\n\n${sections.filter(Boolean).join("\n\n")}\n`;
+}
+
+function embedOf(node) {
+  try {
+    return JSON.parse(node.getAttribute(EMBED_ATTRIBUTE)) ?? {};
+  } catch {
+    // A malformed data-bbfile attribute names nothing, so the element's own link stands alone.
+    return {};
+  }
+}
+
+function firstSupplied(...values) {
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (isSupplied(text)) return text;
+  }
+  return null;
 }
