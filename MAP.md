@@ -11,7 +11,7 @@ Start here: `README.md`, then `AGENTS.md`.
 | NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Sync | Everything that writes to a destination: the course walk, the Markdown documents, the file names, and what has already been downloaded | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
-| Tests | `node --test`, one file per module under test; run with `npm test` | `test/` |
+| Tests | One file per module under test, plus the two that spawn the CLI to check what only a process shows | `test/` |
 | Formatting and lint | Prettier formats this repository's own code; ESLint checks correctness only | `.prettierrc.json`, `eslint.config.mjs` |
 | Working here | Agent + contributor conventions, commit/attribution rules | `AGENTS.md` (= `CLAUDE.md`) |
 | Contributing | How work flows here — issue first, then a pull request | `CONTRIBUTING.md` |

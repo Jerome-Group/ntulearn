@@ -1,9 +1,10 @@
 # A sync never deletes from a destination
 
-A sync writes and skips. It never removes a file from a destination, never prunes a folder that
-NTULearn no longer returns, and never moves a file that has been renamed upstream — it writes the
-new name and leaves the old one. A destination therefore accumulates, and the copy is a superset
-of the course rather than a match for it.
+A sync is **additive**: it writes and it skips. It leaves a file NTULearn no longer returns, keeps
+the folder that held it, and answers an upstream rename by writing the new name beside the old
+one. A destination therefore accumulates, and the copy is a superset of the course rather than a
+match for it. *Additive* is the word for this everywhere — the glossary, `AGENTS.md`, and the
+code.
 
 This is the decision the word *sync* would lead you to expect the other way round, so it is
 recorded rather than left to be inferred from the absence of an `unlink` call.

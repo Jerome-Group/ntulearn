@@ -17,8 +17,7 @@ const COURSE_DOCUMENT = "Course.md";
 const FOLDER_DOCUMENT = "_NTULearn.md";
 const ANNOUNCEMENTS_FOLDER = "Announcements";
 
-// Reads one configured course and writes what changed into its destination. Nothing is deleted:
-// a run that finds less than the last one leaves the earlier files where they are.
+// Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
 export async function syncCourse({ client, course, state }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
