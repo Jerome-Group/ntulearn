@@ -53,18 +53,19 @@ export function externalLinkOf(item) {
 // link. That last one is trusted only when it points back at NTULearn: an ordinary outbound link
 // in a body carries `data-bbfile` too, and it is a link rather than an attachment.
 function embeddedUrl(embedded, element) {
-  if (isUrl(embedded.resourceUrl)) return embedded.resourceUrl;
-  if (isUrl(embedded.viewerUrl)) return embedded.viewerUrl.split("?")[0];
+  if (isSupplied(embedded.resourceUrl)) return embedded.resourceUrl;
+  if (isSupplied(embedded.viewerUrl)) return embedded.viewerUrl.split("?")[0];
 
   const link = element.match(ELEMENT_LINK)?.[1];
   const url = link && decodeHtmlEntities(link);
-  return isUrl(url) && isNtulearnUrl(url) ? url : null;
+  return isSupplied(url) && isNtulearnUrl(url) ? url : null;
 }
 
-// An embedded player has no file behind it, and NTULearn says so by writing the *word* `undefined`
-// where the URL goes — in the JSON and in the element's own link both. Left as a URL it resolves
-// against the origin and downloads the error page as though it were the attachment.
-function isUrl(value) {
+// Where NTULearn has no value it writes the *word* — `undefined` in an embedded player's URL and
+// in its link text both — rather than leaving the field out. Every such word is truthy, so each
+// one is a value that reads as supplied until it is asked for: a URL that resolves against the
+// origin and downloads the error page, or a link labelled `undefined` in the Markdown.
+export function isSupplied(value) {
   return typeof value === "string" && value !== "" && value !== "undefined" && value !== "null";
 }
 
