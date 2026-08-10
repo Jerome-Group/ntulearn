@@ -9,49 +9,71 @@ use for the same thing. An entry earns its place when two people — or a person
 could reasonably mean different things by the same word.
 
 Each entry is the term, what it means **here**, and the near-synonyms to avoid so the wrong one
-does not creep back in.
+does not creep back in. What any of it looks like on disk is `README.md`'s business, not this
+file's.
+
+### The operation
 
 **Sync**:
-The one operation this repository performs: read a course from NTULearn and write what changed
-into its destination. It is incremental and it never deletes, so "sync" here means *bring the
-copy up to date*, not *make the two sides identical*.
+Bringing the copy of a course up to date with NTULearn. It is one-way and additive — never a
+reconciliation that makes the two sides match.
 _Avoid_: import, download, mirror, scrape, backup — the first two were used interchangeably with
 this until they were retired, and the last three each promise something a sync does not do
 
-**Course**:
-One NTULearn course, and the unit a sync operates on. A configured course is an entry in
-`config/courses.json`: a `key` to type at the command line, NTULearn's `courseId`, and the
-`destination` it syncs into.
-_Avoid_: module, class, subject — "module" is what a student calls it and what a Drive folder is
-named, and it is also what a `.mjs` file is
-
-**Destination**:
-The folder on disk a course syncs into. It belongs to the person running the sync, never to this
-repository, and nothing outside it is ever written.
-_Avoid_: output directory, target, vault
-
 **Snapshot**:
-Everything read from NTULearn for one course in a single run — the course, its content items,
-its announcements and its conversations — before any of it is written.
+Everything read from NTULearn for one course in a single run, before any of it is written.
 _Avoid_: dump, payload, response
 
-**Content item**:
-One node of a course's content tree as NTULearn returns it: a folder, a page, a file, or a link.
-Its attachments and its external link are read off it; it is not itself a file on disk.
-_Avoid_: resource, node, entry
+### What is read
 
-**State**:
-`.data/state.json` — what has already been downloaded, per course, so the next sync can skip it.
-It is a cache of facts about the destination, so deleting it costs a re-download and nothing else.
-_Avoid_: database, index, manifest
+**Student**:
+The person whose NTULearn account the sync signs in as. Their view bounds the whole domain:
+nothing exists here that they could not already see for themselves.
+_Avoid_: user, account, member
+
+**Course**:
+One NTULearn course. It is the unit a sync operates on and the unit a person configures.
+_Avoid_: module, class, subject — "module" is what a student calls it, and also what a `.mjs`
+file is
+
+**Content item**:
+One node of a course's content tree: a folder, a page, a file, or a link. It may carry text, an
+attachment, and a link out, in any combination.
+_Avoid_: resource, node, page, entry
+
+**Attachment**:
+A file hanging off a content item. It is copied as it is, never converted.
+_Avoid_: asset, document, upload
+
+**Announcement**:
+A dated notice posted to a course as a whole, rather than to a place in its content tree.
+_Avoid_: notice, post, message
+
+**Conversation**:
+A discussion thread on a course. A sync counts the new ones and copies none of them, so a
+conversation is something this repository reports on rather than something it keeps.
+_Avoid_: discussion, forum, thread
+
+### What is kept
+
+**Destination**:
+The folder a course is synced into. It belongs to the person running the sync, and nothing
+outside it is ever written.
+_Avoid_: output directory, target, vault
 
 **Session**:
-The saved, signed-in Chrome profile in `.data/chrome-profile`, and the XSRF token captured from
-the page it loads. It is the repository's one secret.
-_Avoid_: login, credentials, cookie, token — the token is one part of the session, not a synonym
-for it
+Proof that the student is signed in, reusable across runs. It is this repository's one secret.
+_Avoid_: login, credentials, cookie, token — a token is one part of a session, not a word for it
 
-Two terms are Organisation-wide and mean the same thing in every repository:
+**State**:
+What a previous sync recorded about a destination, so the next one can skip what has not changed.
+It is a cache and never a source of truth: losing it costs time and nothing else.
+_Avoid_: database, index, manifest, cache — the last is what it behaves like, but "the cache"
+already means the browser's
+
+### Organisation-wide
+
+Two terms mean the same thing in every repository:
 
 **Organisation**:
 The `Jerome-Group` GitHub org — the top-level account that owns the repositories.

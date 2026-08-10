@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { stderr, stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
+import { writeLine } from "./output.mjs";
 import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
@@ -16,11 +17,11 @@ const commands = { login, discover, sync };
 async function login(config) {
   const window = await openLoginWindow(config.profilePath);
   try {
-    await write(stdout, "Complete NTU SSO/MFA in Chrome, then return here.");
+    await writeLine(stdout, "Complete NTU SSO/MFA in Chrome, then return here.");
     const prompt = createInterface({ input: stdin, output: stdout });
     await prompt.question("Press Enter after the NTULearn Courses page appears... ");
     prompt.close();
-    await write(stdout, `Session page: ${window.page.url()}`);
+    await writeLine(stdout, `Session page: ${window.page.url()}`);
   } finally {
     await window.close();
   }
@@ -30,7 +31,7 @@ async function login(config) {
 async function discover(config) {
   const client = await openClient(config.profilePath);
   try {
-    await write(stdout, asJson(await client.listCourses()));
+    await writeLine(stdout, asJson(await client.listCourses()));
   } finally {
     await client.close();
   }
@@ -52,14 +53,14 @@ async function sync(config, key) {
     await client.close();
   }
 
-  await write(stdout, asJson(results));
+  await writeLine(stdout, asJson(results));
   return results.some((result) => result.failures.length) ? 1 : 0;
 }
 
 async function main([name, argument]) {
   const command = commands[name];
   if (!command) {
-    await write(stderr, USAGE);
+    await writeLine(stderr, USAGE);
     return 1;
   }
   return command(await loadConfig(ROOT), argument);
@@ -69,15 +70,8 @@ function asJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
-// Resolves once the line has actually left the process, so exiting cannot truncate a pipe.
-function write(target, line) {
-  return new Promise((done, fail) => {
-    target.write(`${line}\n`, (error) => (error ? fail(error) : done()));
-  });
-}
-
 const status = await main(process.argv.slice(2)).catch(async (error) => {
-  await write(stderr, error.message);
+  await writeLine(stderr, error.message);
   return 1;
 });
 

@@ -1,4 +1,4 @@
-export const BASE_URL = "https://ntulearn.ntu.edu.sg";
+const BASE_URL = "https://ntulearn.ntu.edu.sg";
 
 export const COURSES_URL = `${BASE_URL}/ultra/course`;
 

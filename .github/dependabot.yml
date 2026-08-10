@@ -37,3 +37,18 @@ updates:
     # update is never held back by it.
     cooldown:
       default-days: 7
+
+  # Added when this repository gained the ecosystem, which is what the note above asks for. The
+  # runtime dependencies are Playwright and Turndown; the rest are the formatter, the linter and
+  # what they pull in.
+  #
+  # No `cooldown` key, and that is not an oversight: the reason the ecosystem above waits seven
+  # days is that it is the one a repository may eventually let merge itself. This one is not —
+  # nothing here auto-merges npm, so every bump is read by a person before it lands, and a hold
+  # would only delay the reading. Dependabot's own 3-day default for version updates still
+  # applies, and a security update is never held by either.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    rebase-strategy: auto

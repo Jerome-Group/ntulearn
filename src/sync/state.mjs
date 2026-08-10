@@ -3,7 +3,7 @@ import { writeAtomically } from "./files.mjs";
 
 const STATE_VERSION = 1;
 
-export const EMPTY_COURSE_STATE = Object.freeze({
+const EMPTY_COURSE_STATE = Object.freeze({
   downloads: {},
   contentIds: [],
   announcementIds: [],
