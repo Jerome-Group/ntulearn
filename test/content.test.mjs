@@ -89,16 +89,56 @@ test("collects an embed carried on an image as well as on a link", () => {
   assert.equal(attachment.resourceUrl, "/bbcswebdav/xid-3");
 });
 
-test("prefers resourceUrl over the links that stand in for it", () => {
-  const encoded = encode({
-    resourceUrl: "/bbcswebdav/named",
+test("asks the element first, then the viewer link, then the snapshot", () => {
+  const all = encode({
+    resourceUrl: "/bbcswebdav/snapshot",
     viewerUrl: "https://ntulearn.ntu.edu.sg/bbcswebdav/viewer?render=inline",
   });
+  const [fromElement] = attachmentsOf({
+    body: { rawText: `<a data-bbfile="${all}" href="/bbcswebdav/live"></a>` },
+  });
+  assert.equal(fromElement.resourceUrl, "/bbcswebdav/live");
+
+  const [fromViewer] = attachmentsOf({ body: { rawText: `<a data-bbfile="${all}"></a>` } });
+  assert.equal(fromViewer.resourceUrl, "https://ntulearn.ntu.edu.sg/bbcswebdav/viewer");
+
+  const snapshotOnly = encode({ resourceUrl: "/bbcswebdav/snapshot" });
+  const [fromSnapshot] = attachmentsOf({
+    body: { rawText: `<a data-bbfile="${snapshotOnly}"></a>` },
+  });
+  assert.equal(fromSnapshot.resourceUrl, "/bbcswebdav/snapshot");
+});
+
+// The shape that made every one of the ten reported failures: the snapshot points at a resource
+// id that is gone, and the element points at the file NTULearn actually serves.
+test("takes the live link over a resourceUrl left behind by a replaced file", () => {
+  const encoded = encode({
+    linkName: "2026 CAO Mentorship Programmes - Overview to Students.pdf",
+    resourceUrl:
+      "https://ntulearn.ntu.edu.sg/bbcswebdav/pid-5965241-dt-content-rid-58357318_1/xid-58357318_1",
+  });
   const [attachment] = attachmentsOf({
-    body: { rawText: `<a data-bbfile="${encoded}" href="/bbcswebdav/href"></a>` },
+    body: {
+      rawText:
+        `<a data-bbfile="${encoded}" ` +
+        `href="https://ntulearn.ntu.edu.sg/bbcswebdav/pid-5965241-dt-content-rid-64341018_1/xid-64341018_1"></a>`,
+    },
   });
 
-  assert.equal(attachment.resourceUrl, "/bbcswebdav/named");
+  assert.match(attachment.resourceUrl, /rid-64341018_1/);
+});
+
+// A `/sessions/<id>/…` value was never durable: it belongs to the authoring session that wrote it.
+test("takes the live link over an upload URL from the authoring session", () => {
+  const encoded = encode({
+    fileName: "Copyright_NTULearn.jpg",
+    resourceUrl: "https://ntulearn.ntu.edu.sg/sessions/53/53FBC8F0/dd257e7a/Copyright_NTULearn.jpg",
+  });
+  const [attachment] = attachmentsOf({
+    body: { rawText: `<img data-bbfile="${encoded}" src="/bbcswebdav/xid-64475503_1" />` },
+  });
+
+  assert.equal(attachment.resourceUrl, "/bbcswebdav/xid-64475503_1");
 });
 
 test("keeps an embedded player out, URL or no URL", () => {

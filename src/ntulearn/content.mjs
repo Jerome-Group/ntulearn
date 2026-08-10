@@ -48,17 +48,23 @@ export function externalLinkOf(item) {
   return link ? absoluteUrl(link) : null;
 }
 
-// Only some embeds carry `resourceUrl`. The rest name the same file by its viewer link, whose
-// query string is display options rather than identity, and failing that by the element's own
-// link. That last one is trusted only when it points back at NTULearn: an ordinary outbound link
-// in a body carries `data-bbfile` too, and it is a link rather than an attachment.
+// The element's own link is the live one. `resourceUrl` inside `data-bbfile` is a snapshot taken
+// when the embed was written, and NTULearn does not revisit it: replace the file, or copy the
+// course into a new term, and the link moves while the snapshot keeps pointing at a resource id
+// that is gone. Sometimes the snapshot was never durable at all — a `/sessions/<id>/…` upload URL
+// belongs to the authoring session that made it. So the element is asked first and the snapshot
+// is the last resort, with the viewer link between them; its query string is display options
+// rather than identity, and it resolves to the same bytes.
+//
+// The element's link counts only when it points back at NTULearn, because an ordinary outbound
+// link in a body carries `data-bbfile` too, and it is a link rather than an attachment.
 function embeddedUrl(embedded, element) {
-  if (isSupplied(embedded.resourceUrl)) return embedded.resourceUrl;
-  if (isSupplied(embedded.viewerUrl)) return embedded.viewerUrl.split("?")[0];
-
   const link = element.match(ELEMENT_LINK)?.[1];
   const url = link && decodeHtmlEntities(link);
-  return isSupplied(url) && isNtulearnUrl(url) ? url : null;
+  if (isSupplied(url) && isNtulearnUrl(url)) return url;
+
+  if (isSupplied(embedded.viewerUrl)) return embedded.viewerUrl.split("?")[0];
+  return isSupplied(embedded.resourceUrl) ? embedded.resourceUrl : null;
 }
 
 // Where NTULearn has no value it writes the *word* — `undefined` in an embedded player's URL and
