@@ -11,3 +11,11 @@ export function courseUrl(courseId) {
 export function absoluteUrl(pathOrUrl) {
   return new URL(pathOrUrl, BASE_URL).href;
 }
+
+export function isNtulearnUrl(pathOrUrl) {
+  try {
+    return new URL(pathOrUrl, BASE_URL).origin === BASE_URL;
+  } catch {
+    return false;
+  }
+}
