@@ -58,8 +58,9 @@ folder are never touched.
 
 ## What a sync does
 
-Incremental and non-destructive: unchanged downloads are skipped, and nothing is ever deleted —
-a run that sees less than the last one leaves the earlier files where they are. Page text and
+Incremental and **additive**: unchanged downloads are skipped, and nothing is ever deleted, so a
+run that sees less than the last one leaves the earlier files where they are. Your own files in a
+destination are safe for the same reason — `docs/adr/0003` argues it. Page text and
 announcements become Markdown; attachments keep their original file type. Each course gets a
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.

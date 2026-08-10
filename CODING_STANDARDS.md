@@ -99,11 +99,10 @@ Two shapes are settled, so no repository re-argues them:
 
 ## 6. Repo-specific standards
 
-**Node, ESM, `.mjs`.** No transpiler and no build step: what is committed is what runs. The
-supported version is `engines.node` in `package.json`, and CI reads it from there.
+**Node, ESM, `.mjs`.** No transpiler and no build step: what is committed is what runs, so a
+stack frame points at a real line and there is nothing to rebuild before a change takes effect.
 
-**Prettier formats, ESLint checks correctness.** `npm run format:check` and `npm run lint` are
-what CI runs, so neither formatting nor an unused variable is ever a review topic. Prettier is
+**Prettier formats, ESLint checks correctness**, and neither is ever a review topic. Prettier is
 scoped to this repository's own code — `.prettierignore` keeps it off the Markdown and the
 workflows, which arrive written from the management hub and are not ours to reflow. ESLint's
 config carries no whitespace rule, so the two can never disagree.

@@ -1,41 +1,38 @@
 # AGENTS.md — ntulearn
 
-> Canonical instruction file for AI agents (Claude Code and others) working in this repo.
-> `CLAUDE.md` is a symlink to this file, so the two can never drift.
+> `CLAUDE.md` is a symlink to this file. Edit this one; both change.
 
 ## What this repo is
 
 A command-line sync from NTULearn into a folder per course: it signs in as the student once,
 reads each configured course, and writes the pages and announcements as Markdown alongside the
-original attachments. It is a **read** of NTULearn — it never submits, posts, or changes anything
-upstream — and it is not a general Blackboard client, not a service, and not a place for anyone's
-course files, which land wherever the local configuration points and never in this repository.
+original attachments. Everything it does upstream is a **read** — it stays within what the
+signed-in student can already see, and it leaves NTULearn exactly as it found it. Course files
+live wherever the local configuration points; this repository holds the code and nothing a
+student owns.
 
 - **Visibility:** public
 - **Organisation:** [Jerome-Group](https://github.com/Jerome-Group)
 
 ## Getting it running
 
-```bash
-npm ci                        # `--ignore-scripts` if you do not need the browser
-cp config/courses.example.json config/courses.json
-npm test                      # node --test; no network, no browser
-npm run lint                  # eslint
-npm run format                # prettier --write; `format:check` is what CI runs
-```
+`package.json` holds the scripts. What it cannot tell you: `npm ci --ignore-scripts` is enough for
+everything but running the tool — it skips Playwright's browser download, and nothing under
+`test/` needs a browser or a network, which is the property `CODING_STANDARDS.md` §6 exists to
+hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
 `npm run login`, `npm run discover` and `npm run sync` reach NTULearn as a real signed-in student
-and write to real folders on this machine. **They are not yours to run unattended:** `login`
-needs a person at the MFA prompt, and the other two need a live session that only `login`
-produces. Change them, test the pure parts, and leave the running to the Owner.
+and write to real folders on this machine. Change them, test the pure parts, and leave the running
+to the Owner: `login` needs a person at the MFA prompt, and the other two need a live session that
+only `login` produces.
 
 ## Conventions
 
 - Default branch: `main`.
-- Domain glossary lives in `CONTEXT.md`; decisions are recorded as ADRs in `docs/adr/`.
-- Keep secrets out of the repo. **Never commit a token.** The conformance check scans every pull
-  request for one, and it fires after the push — so a caught credential is burned: rotate it
-  first, then clean up. The full response is in `CONTRIBUTING.md`.
+- Keep secrets out of the repo — a credential belongs in the environment or a secret store, and
+  an example value belongs behind a `# gitleaks:allow` that asserts it opens nothing. The
+  conformance check scans every pull request, and it fires after the push, so a caught credential
+  is already burned: rotate it first, then clean up. The full response is in `CONTRIBUTING.md`.
 
 ## Code standards
 
@@ -55,27 +52,23 @@ step is "commit your work" has described the middle of the job. It reaches file 
 nothing else: a session that changes no file owes no pull request, and the only other thing that
 stops you is the author saying, here, that they want the commit alone.
 
-Before you stop, every acceptance criterion you satisfied is ticked on the issue and every one you
-did not is left unticked and explained — `docs/agents/acceptance-criteria.md`.
-
 ## Commit & PR attribution
 
 Every commit **you write**, and every pull-request body, ends with an `Assisted-by:` trailer —
 plus a `Co-authored-by:` for a model whose vendor address is verified — as its **last,
 contiguous** lines. Wrote it yourself? Then it is `Assisted-by: none`, never no trailer at all.
-The commits GitHub writes are not yours either: the squash on `main` and the merge the **Update
-branch** button makes are the platform's text, so the check skips a merge commit and is never run
-over `main`. Both are argued in ADR-0040 and ADR-0041 **in the management hub**, whose numbering is
-not this repository's. The full rule and the verified allowlist are in
-`CONTRIBUTING.md`; an effort suffix is recorded only when one is explicitly set, and a mode
-(Ultracode) is never recorded as one.
+The commits GitHub writes are not yours: the squash on `main` and the merge the **Update branch**
+button makes are the platform's text, so leave them as they are — the check skips a merge commit
+and never runs over `main`. The full rule and the verified allowlist are in `CONTRIBUTING.md`; an
+effort suffix is recorded only when one is explicitly set, and a mode (Ultracode) is a mode rather
+than an effort.
 
 ## Agent skills
 
 ### The route through the skills
 
-Where a piece of work starts, what hands on to what, and where research and prototypes live. See
-`docs/agents/workflow.md` before inventing a route.
+Read `docs/agents/workflow.md` before inventing a route — it says where each kind of work starts
+and what hands on to what.
 
 ### Issue tracker
 
@@ -90,30 +83,34 @@ by the next apply and one removed by hand comes back.
 
 ### Acceptance criteria
 
-Ticked on the issue, never falsely; what could not be done is a not-doing line in the pull-request
-body, and the drift block has a fixed shape. See `docs/agents/acceptance-criteria.md`.
+Before you stop: every criterion you satisfied is ticked on the issue, and every one you did not
+is left unticked and carries a not-doing line in the pull-request body. Tick against the branch,
+never against the effort. The drift block has a fixed shape —
+`docs/agents/acceptance-criteria.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+The glossary is `CONTEXT.md` and the decisions are `docs/adr/`, both at the root. Read them before
+exploring an area, and `docs/agents/domain.md` before adding to either.
 
 ### Dependency updates
 
-Surfaced at both ends of any session that touches a pull request — `docs/agents/dependencies.md`.
-Note its **first** merge condition: this repository auto-merges nothing until it opts in, and a
-skeleton CI has not earned that.
+List the open Dependabot pull requests at both ends of any session that touches a pull request —
+`docs/agents/dependencies.md`. Note its **first** merge condition: opting in means carrying
+`dependabot-auto-merge.yml`, and this repository does not, so hand every bump to the Owner.
 
 ## Repository notes
 
+**A sync is additive.** It writes and it skips, and a destination only ever grows — anything that
+would remove, prune, or rename a file there is the decision argued in `docs/adr/0003`, and reading
+that record is the first step of proposing it. The word is the glossary's: `CONTEXT.md` defines
+*sync* as additive, and the code uses it too.
+
 **`.data/chrome-profile` is the secret.** It is a live authenticated Chrome profile — possession
-of it is possession of the student's NTULearn session. It is untracked, `chmod 700`, and it is
-never to be copied, printed, or turned into a value in a configuration file. Why the session is a
-browser profile at all, and what that costs, is `docs/adr/0004`.
+of it is possession of the student's NTULearn session. Leave it where it is, untracked and
+`chmod 700`; a session belongs in that directory and nowhere else, least of all in a configuration
+file or a log line. What it costs to hold a session this way is `docs/adr/0004`.
 
 **`config/courses.json` is untracked too**, because it holds real course identifiers and a real
 Drive path. `config/courses.example.json` is the tracked shape; change one and change the other,
 along with the table in `README.md`.
-
-**Nothing is ever deleted from a destination** — `docs/adr/0003`, which is the record to read
-before writing anything that removes, prunes, or renames a file there. A destination is somebody
-else's folder, and the record says why that settles it.
