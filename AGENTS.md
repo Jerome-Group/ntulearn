@@ -107,12 +107,13 @@ skeleton CI has not earned that.
 
 **`.data/chrome-profile` is the secret.** It is a live authenticated Chrome profile — possession
 of it is possession of the student's NTULearn session. It is untracked, `chmod 700`, and it is
-never to be copied, printed, or turned into a value in a configuration file.
+never to be copied, printed, or turned into a value in a configuration file. Why the session is a
+browser profile at all, and what that costs, is `docs/adr/0004`.
 
 **`config/courses.json` is untracked too**, because it holds real course identifiers and a real
 Drive path. `config/courses.example.json` is the tracked shape; change one and change the other,
 along with the table in `README.md`.
 
-**Nothing is ever deleted from a destination.** A sync writes and skips; a run that sees less than
-the last one leaves the earlier files alone. Anything that would remove a file is a decision, so
-it needs an ADR before it needs code.
+**Nothing is ever deleted from a destination** — `docs/adr/0003`, which is the record to read
+before writing anything that removes, prunes, or renames a file there. A destination is somebody
+else's folder, and the record says why that settles it.

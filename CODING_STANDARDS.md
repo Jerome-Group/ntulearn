@@ -123,6 +123,12 @@ framework and no network. The seam is the pure function: names, Markdown, conten
 configuration and state are all tested directly; the browser session and the HTTP client are
 thin enough to be read instead.
 
+**What only the process can show, a child process checks.** An exit code, a usage line on stderr,
+whether a large write survives the exit — none of those are observable from inside the process
+that has them, so `test/cli.test.mjs` and `test/output.test.mjs` spawn one and read it back.
+Everything in `test/` still runs without a network and without a browser, and that is the line
+worth keeping rather than a rule against subprocesses.
+
 **Errors carry the next action.** A message that a person will see says what to do about it —
 `Run: npm run login`, `Copy config/courses.example.json` — because the alternative is a correct
 sentence that leaves the reader where they were.

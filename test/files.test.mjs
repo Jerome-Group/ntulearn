@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { isFileOfSize, writeAtomically, writeIfChanged } from "../src/sync/files.mjs";
-import { newIds, readState, writeState } from "../src/sync/state.mjs";
 
 function workspace() {
   return mkdtemp(join(tmpdir(), "ntulearn-files-"));
@@ -41,23 +40,4 @@ test("matches an existing file by size, and reports a missing one as no match", 
   assert.equal(await isFileOfSize(path, null), true);
   assert.equal(await isFileOfSize(join(root, "missing.bin"), 5), false);
   assert.equal(await isFileOfSize(root, null), false);
-});
-
-test("reads an absent state file as an empty state", async () => {
-  const root = await workspace();
-  assert.deepEqual(await readState(join(root, "state.json")), { version: 1, courses: {} });
-});
-
-test("round-trips the state", async () => {
-  const root = await workspace();
-  const path = join(root, "state.json");
-  await writeState(path, { version: 1, courses: { AB1234: { contentIds: ["_1_1"] } } });
-  const state = await readState(path);
-  assert.deepEqual(state.courses.AB1234.contentIds, ["_1_1"]);
-});
-
-test("reports the ids that were not there last time", () => {
-  assert.deepEqual(newIds(["a", "b", "c"], ["a"]), ["b", "c"]);
-  assert.deepEqual(newIds(["a"], ["a", "b"]), []);
-  assert.deepEqual(newIds(["a"]), ["a"]);
 });

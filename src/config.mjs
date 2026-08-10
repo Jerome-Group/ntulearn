@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
-export const CONFIG_PATH = "config/courses.json";
+const CONFIG_PATH = "config/courses.json";
 const EXAMPLE_PATH = "config/courses.example.json";
 const DEFAULT_PROFILE_PATH = ".data/chrome-profile";
 const DEFAULT_STATE_PATH = ".data/state.json";
