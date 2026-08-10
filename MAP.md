@@ -10,7 +10,7 @@ Start here: `README.md`, then `AGENTS.md`.
 | Sync | Walking a course and writing what changed; incremental and non-destructive | `src/sync.mjs` |
 | NTULearn | The authenticated client — session reuse, course listing, content fetch | `src/ntulearn.mjs` |
 | Output | Page text and announcements to Markdown; where each file lands on disk | `src/markdown.mjs`, `src/paths.mjs` |
-| Configuration | Reading `config/courses.json` — which modules sync, and where each one goes | `src/config.mjs` |
+| Configuration | Reading `config/courses.json` — which modules sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | Local state | The saved browser session and sync state. Ignored, never committed | `.data/` (untracked) |
 | Tests | `node --test`; run with `npm test` | `test/` |
 | Working here | Agent + contributor conventions, commit/attribution rules | `AGENTS.md` (= `CLAUDE.md`) |
