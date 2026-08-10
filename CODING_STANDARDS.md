@@ -102,6 +102,13 @@ Two shapes are settled, so no repository re-argues them:
 **Node, ESM, `.mjs`.** No transpiler and no build step: what is committed is what runs, so a
 stack frame points at a real line and there is nothing to rebuild before a change takes effect.
 
+**`engines.node` is the intersection with the toolchain, not a guess.** It reads
+`^22.13.0 || >=24` rather than `>=22` because the eslint packages exclude 22.0–22.12 and the whole
+of 23.x, and a manifest that promises a Node the linter refuses is a promise made to the one
+person CI cannot see. `.npmrc` sets `engine-strict`, so a Node outside the range fails `npm ci`
+instead of warning past it. Recompute the range when a dependency raises its floor; do not
+simplify it back.
+
 **Prettier formats, ESLint checks correctness**, and neither is ever a review topic. Prettier is
 scoped to this repository's own code — `.prettierignore` keeps it off the Markdown and the
 workflows, which arrive written from the management hub and are not ours to reflow. ESLint's
