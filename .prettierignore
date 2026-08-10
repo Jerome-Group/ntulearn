@@ -1,0 +1,7 @@
+node_modules/
+.data/
+package-lock.json
+
+# Prose and the workflows arrive written, and are not this formatter's to reflow.
+*.md
+.github/

@@ -1,15 +1,33 @@
 {
   "name": "ntulearn-sync",
+  "version": "1.0.0",
+  "description": "Syncs NTULearn course content — pages, announcements and attachments — into a folder per course.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jerome-Group/ntulearn.git"
+  },
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "login": "node src/cli.mjs login",
     "discover": "node src/cli.mjs discover",
     "sync": "node src/cli.mjs sync",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "playwright": "^1.54.2",
     "turndown": "^7.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "prettier": "3.9.6"
   }
 }

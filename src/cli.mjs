@@ -1,59 +1,86 @@
 import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 import { dirname, resolve } from "node:path";
+import { stderr, stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.mjs";
-import { openNtulearn } from "./ntulearn.mjs";
-import { readState, syncConfiguredCourse, writeState } from "./sync.mjs";
+import { loadConfig, selectCourses } from "./config.mjs";
+import { openClient } from "./ntulearn/client.mjs";
+import { openLoginWindow } from "./ntulearn/session.mjs";
+import { syncCourse } from "./sync/course.mjs";
+import { readState, writeState } from "./sync/state.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const config = await loadConfig(root);
-const [command, argument] = process.argv.slice(2);
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const USAGE = "Usage: npm run login | npm run discover | npm run sync -- <course|all>";
 
-if (command === "login") {
-  const session = await openNtulearn(config.profilePath, { headless: false });
-  const page = await session.page();
-  console.log("Complete NTU SSO/MFA in Chrome, then return here.");
-  const prompt = createInterface({ input: stdin, output: stdout });
-  await prompt.question("Press Enter after the NTULearn Courses page appears... ");
-  prompt.close();
-  console.log(`Session page: ${page.url()}`);
-  await session.close();
-  process.exit(0);
+const commands = { login, discover, sync };
+
+async function login(config) {
+  const window = await openLoginWindow(config.profilePath);
+  try {
+    await write(stdout, "Complete NTU SSO/MFA in Chrome, then return here.");
+    const prompt = createInterface({ input: stdin, output: stdout });
+    await prompt.question("Press Enter after the NTULearn Courses page appears... ");
+    prompt.close();
+    await write(stdout, `Session page: ${window.page.url()}`);
+  } finally {
+    await window.close();
+  }
+  return 0;
 }
 
-if (command === "discover") {
-  const client = await openNtulearn(config.profilePath);
+async function discover(config) {
+  const client = await openClient(config.profilePath);
   try {
-    console.log(JSON.stringify(await client.discoverCourses(), null, 2));
+    await write(stdout, asJson(await client.listCourses()));
   } finally {
     await client.close();
   }
-  process.exit(0);
+  return 0;
 }
 
-if (command === "sync") {
-  const selected = !argument || argument === "all"
-    ? config.courses
-    : config.courses.filter((course) => course.key.toLowerCase() === argument.toLowerCase());
-  if (!selected.length) throw new Error(`Unknown module: ${argument}`);
-
-  const client = await openNtulearn(config.profilePath);
+async function sync(config, key) {
+  const courses = selectCourses(config.courses, key);
   const state = await readState(config.statePath);
+  const client = await openClient(config.profilePath);
   const results = [];
+
   try {
-    for (const course of selected) {
-      const result = await syncConfiguredCourse({ client, config: course, state });
-      results.push(result);
+    for (const course of courses) {
+      results.push(await syncCourse({ client, course, state }));
       await writeState(config.statePath, state);
     }
   } finally {
     await client.close();
   }
-  console.log(JSON.stringify(results, null, 2));
-  if (results.some((result) => result.failures.length)) process.exitCode = 1;
-  process.exit();
+
+  await write(stdout, asJson(results));
+  return results.some((result) => result.failures.length) ? 1 : 0;
 }
 
-console.error("Usage: npm run login | npm run discover | npm run sync -- <module|all>");
-process.exitCode = 1;
+async function main([name, argument]) {
+  const command = commands[name];
+  if (!command) {
+    await write(stderr, USAGE);
+    return 1;
+  }
+  return command(await loadConfig(ROOT), argument);
+}
+
+function asJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+// Resolves once the line has actually left the process, so exiting cannot truncate a pipe.
+function write(target, line) {
+  return new Promise((done, fail) => {
+    target.write(`${line}\n`, (error) => (error ? fail(error) : done()));
+  });
+}
+
+const status = await main(process.argv.slice(2)).catch(async (error) => {
+  await write(stderr, error.message);
+  return 1;
+});
+
+// Chrome's persistent profile can leave handles open, so the exit is asked for rather than waited
+// for. Every line above has been flushed by the time this runs.
+process.exit(status);

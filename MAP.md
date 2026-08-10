@@ -1,18 +1,18 @@
 # Map
 
-Imports NTULearn course content — pages, announcements and attachments — into per-module folders.
+Syncs NTULearn course content — pages, announcements and attachments — into a folder per course.
 
 Start here: `README.md`, then `AGENTS.md`.
 
 | Area | What lives there | Entry point |
 |------|------------------|-------------|
 | Commands | The CLI — `login`, `discover`, `sync` — and the `npm run` scripts that reach it | `src/cli.mjs`, `package.json` |
-| Sync | Walking a course and writing what changed; incremental and non-destructive | `src/sync.mjs` |
-| NTULearn | The authenticated client — session reuse, course listing, content fetch | `src/ntulearn.mjs` |
-| Output | Page text and announcements to Markdown; where each file lands on disk | `src/markdown.mjs`, `src/paths.mjs` |
-| Configuration | Reading `config/courses.json` — which modules sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
-| Local state | The saved browser session and sync state. Ignored, never committed | `.data/` (untracked) |
-| Tests | `node --test`; run with `npm test` | `test/` |
+| Configuration | Reading `config/courses.json` — which courses sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
+| NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
+| Sync | Everything that writes to a destination: the course walk, the Markdown documents, the file names, and what has already been downloaded | `src/sync/` |
+| Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
+| Tests | `node --test`, one file per module under test; run with `npm test` | `test/` |
+| Formatting and lint | Prettier formats this repository's own code; ESLint checks correctness only | `.prettierrc.json`, `eslint.config.mjs` |
 | Working here | Agent + contributor conventions, commit/attribution rules | `AGENTS.md` (= `CLAUDE.md`) |
 | Contributing | How work flows here — issue first, then a pull request | `CONTRIBUTING.md` |
 | Code standards | How code is written and reviewed | `CODING_STANDARDS.md` |

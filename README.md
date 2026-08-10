@@ -1,23 +1,25 @@
 # NTULearn Sync
 
-Central NTULearn downloader. Authentication and sync state stay here; course files go to each configured Google Drive module folder.
+Signs in to NTULearn once and keeps a copy of your courses on disk: pages and announcements as
+Markdown, attachments as the files they already are. Authentication and sync state stay in this
+repository; course files go to whichever folder you point each course at.
+
+MIT licensed and public — `docs/adr/0002`.
 
 ## Status
 
-Early, and built in the open. Course pages, announcements and attachments sync today. Recorded
-lecture videos, their transcripts, and transcription for the videos that have none are intended
-and not yet built.
-
-It is public from its first commit so that anyone who wants it while it is still being built can
-run it — MIT licensed, `docs/adr/0002`. Expect it to change under you.
+In use. Course pages, announcements and attachments sync today, and the command line and the
+shape of `config/courses.json` are settled — a change to either would be a breaking change rather
+than a Tuesday. Recorded lecture videos and their transcripts are not read yet; that is the next
+thing, and its absence is a missing feature rather than an unfinished one.
 
 ## Commands
 
 ```bash
-npm run login                 # refresh NTU SSO/MFA session
-npm run discover              # list accessible NTULearn courses
-npm run sync -- MH2100        # sync one configured module
-npm run sync -- all           # sync every configured module
+npm run login                 # refresh the NTU SSO/MFA session
+npm run discover              # list the NTULearn courses you can see
+npm run sync -- MH2100        # sync one configured course
+npm run sync -- all           # sync every configured course
 ```
 
 ## Configuration
@@ -45,17 +47,41 @@ cp config/courses.example.json config/courses.json
 
 | Field | Required | What it is |
 |-------|----------|------------|
-| `courses[].key` | yes | What you type at `npm run sync -- <key>`. Matched case-insensitively, and must be unique across the file. The module code is the obvious choice. |
+| `courses[].key` | yes | What you type at `npm run sync -- <key>`. Matched case-insensitively, and must be unique across the file. The course code is the obvious choice. |
 | `courses[].courseId` | yes | NTULearn's own identifier for the course, of the form `_1234567_1`. Run `npm run discover` to list the ones you can see. |
 | `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. |
 | `profilePath` | no | The saved browser session. Defaults to `.data/chrome-profile`. |
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
 
-Point each destination at a dedicated `NTULearn` subfolder, so unrelated module files remain
-untouched.
+Point each destination at a dedicated `NTULearn` subfolder, so your own files in that course's
+folder are never touched.
 
-The sync is incremental and non-destructive: unchanged downloads are skipped and stale files are not deleted. Useful page text and announcements are Markdown. Original attachments retain their file type.
+## What a sync does
 
-The saved Chrome profile in `.data/chrome-profile` is the reusable secret. It is permission-restricted and ignored by Git. The university may expire it; run `npm run login` again when that happens. Do not copy cookies into configuration files.
+Incremental and non-destructive: unchanged downloads are skipped, and nothing is ever deleted —
+a run that sees less than the last one leaves the earlier files where they are. Page text and
+announcements become Markdown; attachments keep their original file type. Each course gets a
+`Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
+numbered folders in NTULearn's own order.
 
-Limits: only content visible to the logged-in student can be read. Release-rule-hidden content, instructor-only material, live grades/submissions, and third-party LTI data are not mirrored. External tools are recorded as links.
+The saved Chrome profile in `.data/chrome-profile` is the reusable secret. It is
+permission-restricted and ignored by Git. The university expires it periodically; run
+`npm run login` again when that happens. Do not copy cookies into configuration files.
+
+## Limits
+
+Only content visible to the signed-in student can be read. Release-rule-hidden content,
+instructor-only material, live grades and submissions, and third-party LTI data are not copied;
+external tools are recorded as links.
+
+## Working on it
+
+```bash
+npm ci
+npm test                      # node --test
+npm run lint                  # eslint
+npm run format:check          # prettier
+```
+
+`AGENTS.md` is the instruction file for agents and contributors both; `CONTRIBUTING.md` is how
+work flows here, and `MAP.md` says where everything lives.
