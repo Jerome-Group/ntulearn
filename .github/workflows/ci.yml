@@ -38,8 +38,8 @@ jobs:
       - name: MAP.md exists
         run: test -f MAP.md
 
-      # This repository's real checks go below, as further jobs in this file. What they owe —
-      # what CI must prove, how the checks grow, and why none of them gets a path filter — is
+      # This repository's real checks are the `code` job below. What they owe — what CI must
+      # prove, how the checks grow, and why none of them gets a path filter — is
       # `CODING_STANDARDS.md` §5, which is the text rather than a summary of it.
       #
       # This job *is* a required status check from the repository's first day: the two steps
@@ -52,3 +52,24 @@ jobs:
       #
       # Renaming this job renames the check context, which the `Required checks` ruleset names by
       # hand. Rename both, or every merge blocks on a check that will never report.
+
+  code:
+    runs-on: ubuntu-latest
+    env:
+      # Nothing here drives a browser, and the download is the slowest thing in the run.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          cache: npm
+
+      # No install script is needed to lint, format-check or test, and not running them keeps a
+      # dependency's postinstall out of CI.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm test

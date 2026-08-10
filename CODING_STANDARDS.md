@@ -99,14 +99,33 @@ Two shapes are settled, so no repository re-argues them:
 
 ## 6. Repo-specific standards
 
-*(Each repository fills this in and owns it.)* Language and framework conventions, the seams
-where tests are written, naming or layout rules particular to this codebase, and anything the
-core leaves open. Add them here; they evolve through this repository's normal pull-request flow.
+**Node, ESM, `.mjs`.** No transpiler and no build step: what is committed is what runs. The
+supported version is `engines.node` in `package.json`, and CI reads it from there.
 
-This section is empty because this repository is newly generated. Fill it in with the first
-change that has an opinion worth holding the next one to — the formatter and linter that run in
-CI, where the tests live, and the one or two layout rules a newcomer would otherwise guess
-wrong.
+**Prettier formats, ESLint checks correctness.** `npm run format:check` and `npm run lint` are
+what CI runs, so neither formatting nor an unused variable is ever a review topic. Prettier is
+scoped to this repository's own code — `.prettierignore` keeps it off the Markdown and the
+workflows, which arrive written from the management hub and are not ours to reflow. ESLint's
+config carries no whitespace rule, so the two can never disagree.
+
+**Two layers, and the arrow only points one way.** `src/ntulearn/` speaks to NTULearn; `src/sync/`
+writes to disk. Sync imports from NTULearn — never the reverse — and `src/cli.mjs` is the only
+file that knows about both, about `process`, or about the argument list.
+
+**A module that touches the network is separable from one that does not.** Everything that can be
+tested without a browser is in a file that does not import `playwright`, which is why the
+NTULearn addresses live in `src/ntulearn/urls.mjs` rather than beside the session that uses them.
+Adding an import that drags Playwright into a pure module is the mistake this rule exists to
+catch.
+
+**Tests are `test/*.test.mjs`, one file per module under test, run by `node --test`.** They use no
+framework and no network. The seam is the pure function: names, Markdown, content fields,
+configuration and state are all tested directly; the browser session and the HTTP client are
+thin enough to be read instead.
+
+**Errors carry the next action.** A message that a person will see says what to do about it —
+`Run: npm run login`, `Copy config/courses.example.json` — because the alternative is a correct
+sentence that leaves the reader where they were.
 
 ## 7. Evolution — what is rigid, what moves
 

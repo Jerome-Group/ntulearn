@@ -1,21 +1,33 @@
-# AGENTS.md — <repository>
+# AGENTS.md — ntulearn
 
 > Canonical instruction file for AI agents (Claude Code and others) working in this repo.
 > `CLAUDE.md` is a symlink to this file, so the two can never drift.
 
 ## What this repo is
 
-*(One paragraph: what this repository is for, and what it is not for. Replace this and the
-heading above before the first pull request.)*
+A command-line sync from NTULearn into a folder per course: it signs in as the student once,
+reads each configured course, and writes the pages and announcements as Markdown alongside the
+original attachments. It is a **read** of NTULearn — it never submits, posts, or changes anything
+upstream — and it is not a general Blackboard client, not a service, and not a place for anyone's
+course files, which land wherever the local configuration points and never in this repository.
 
-- **Visibility:** *(private | public)*
+- **Visibility:** public
 - **Organisation:** [Jerome-Group](https://github.com/Jerome-Group)
 
 ## Getting it running
 
-*(The commands an agent could not have guessed — install, run, test, lint — and any constraint
-on where they may be run. Fill this in with the first real code; until then it is honestly
-empty.)*
+```bash
+npm ci                        # `--ignore-scripts` if you do not need the browser
+cp config/courses.example.json config/courses.json
+npm test                      # node --test; no network, no browser
+npm run lint                  # eslint
+npm run format                # prettier --write; `format:check` is what CI runs
+```
+
+`npm run login`, `npm run discover` and `npm run sync` reach NTULearn as a real signed-in student
+and write to real folders on this machine. **They are not yours to run unattended:** `login`
+needs a person at the MFA prompt, and the other two need a live session that only `login`
+produces. Change them, test the pure parts, and leave the running to the Owner.
 
 ## Conventions
 
@@ -93,4 +105,14 @@ skeleton CI has not earned that.
 
 ## Repository notes
 
-*(Anything with no natural home above. May be empty.)*
+**`.data/chrome-profile` is the secret.** It is a live authenticated Chrome profile — possession
+of it is possession of the student's NTULearn session. It is untracked, `chmod 700`, and it is
+never to be copied, printed, or turned into a value in a configuration file.
+
+**`config/courses.json` is untracked too**, because it holds real course identifiers and a real
+Drive path. `config/courses.example.json` is the tracked shape; change one and change the other,
+along with the table in `README.md`.
+
+**Nothing is ever deleted from a destination.** A sync writes and skips; a run that sees less than
+the last one leaves the earlier files alone. Anything that would remove a file is a decision, so
+it needs an ADR before it needs code.
