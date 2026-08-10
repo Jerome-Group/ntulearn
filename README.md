@@ -6,6 +6,13 @@ repository; course files go to whichever folder you point each course at.
 
 MIT licensed and public — `docs/adr/0002`.
 
+## Status
+
+In use. Course pages, announcements and attachments sync today, and the command line and the
+shape of `config/courses.json` are settled — a change to either would be a breaking change rather
+than a Tuesday. Recorded lecture videos and their transcripts are not read yet; that is the next
+thing, and its absence is a missing feature rather than an unfinished one.
+
 ## Commands
 
 ```bash
@@ -65,8 +72,7 @@ permission-restricted and ignored by Git. The university expires it periodically
 
 Only content visible to the signed-in student can be read. Release-rule-hidden content,
 instructor-only material, live grades and submissions, and third-party LTI data are not copied;
-external tools are recorded as links. Recorded lecture videos and their transcripts are not read
-yet.
+external tools are recorded as links.
 
 ## Working on it
 
