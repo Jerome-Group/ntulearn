@@ -40,40 +40,42 @@ async function discover(config) {
 }
 
 async function sync(config, key) {
-  const courses = selectCourses(config.courses, key);
   const state = await readState(config.statePath);
-  const client = await openClient(config.profilePath);
-  const results = [];
-
-  try {
-    for (const course of courses) {
-      results.push(await syncCourse({ client, course, state }));
-      await writeState(config.statePath, state);
-    }
-  } finally {
-    await client.close();
-  }
+  const results = await eachCourse(config, key, async ({ client, course }) => {
+    const result = await syncCourse({ client, course, state });
+    await writeState(config.statePath, state);
+    return result;
+  });
 
   await writeLine(stdout, asJson(results));
   return results.some((result) => result.failures.length) ? 1 : 0;
 }
 
 async function verify(config, key) {
+  const report = verifyReport(await eachCourse(config, key, verifyCourse));
+
+  await writeLine(stdout, asJson(report));
+  if (report.complete) return 0;
+
+  await writeLine(stderr, `Attachments are absent. Run: npm run sync -- ${key || "all"}`);
+  return 1;
+}
+
+// One session serves every course asked for, and it is closed whether or not the walk finishes.
+async function eachCourse(config, key, walk) {
   const courses = selectCourses(config.courses, key);
   const client = await openClient(config.profilePath);
   const results = [];
 
   try {
     for (const course of courses) {
-      results.push(await verifyCourse({ client, course }));
+      results.push(await walk({ client, course }));
     }
   } finally {
     await client.close();
   }
 
-  const report = verifyReport(results);
-  await writeLine(stdout, asJson(report));
-  return report.complete ? 0 : 1;
+  return results;
 }
 
 async function main([name, argument]) {

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { isFileOfSize, writeAtomically, writeIfChanged } from "../src/sync/files.mjs";
+import { isFilePresent, writeAtomically, writeIfChanged } from "../src/sync/files.mjs";
 
 function workspace() {
   return mkdtemp(join(tmpdir(), "ntulearn-files-"));
@@ -35,9 +35,9 @@ test("matches an existing file by size, and reports a missing one as no match", 
   const root = await workspace();
   const path = join(root, "a.bin");
   await writeFile(path, "12345");
-  assert.equal(await isFileOfSize(path, 5), true);
-  assert.equal(await isFileOfSize(path, 6), false);
-  assert.equal(await isFileOfSize(path, null), true);
-  assert.equal(await isFileOfSize(join(root, "missing.bin"), 5), false);
-  assert.equal(await isFileOfSize(root, null), false);
+  assert.equal(await isFilePresent(path, 5), true);
+  assert.equal(await isFilePresent(path, 6), false);
+  assert.equal(await isFilePresent(path, null), true);
+  assert.equal(await isFilePresent(join(root, "missing.bin"), 5), false);
+  assert.equal(await isFilePresent(root, null), false);
 });

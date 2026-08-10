@@ -20,7 +20,7 @@ export async function writeAtomically(path, content) {
   }
 }
 
-export async function isFileOfSize(path, expectedBytes) {
+export async function isFilePresent(path, expectedBytes) {
   const info = await stat(path).catch(missingAsNull);
   return Boolean(info?.isFile()) && (expectedBytes == null || info.size === expectedBytes);
 }

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
-import { isFileOfSize, writeAtomically, writeIfChanged } from "./files.mjs";
+import { expectedAttachments } from "./attachments.mjs";
+import { isFilePresent, writeAtomically, writeIfChanged } from "./files.mjs";
 import { announcementDocument, contentDocument, courseDocument, isoDate } from "./markdown.mjs";
 import { orderedName, safeResolve, safeSegment } from "./paths.mjs";
-import { attachmentPlacement, placementsIn } from "./placement.mjs";
+import { placementsIn } from "./placement.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 const COURSE_DOCUMENT = "Course.md";
@@ -36,20 +37,24 @@ export async function syncCourse({ client, course, state }) {
     const page = contentDocument(item, externalLinkOf(item));
     const target = safeResolve(folder, `${orderedName(item.position, item.title)}.md`);
     await writeDocument(target, page, tally);
+  }
 
-    for (const attachment of await client.readAttachments(course.courseId, item)) {
-      const record = previous.downloads?.[attachment.resourceUrl];
-      const saved = await saveAttachment({
-        course,
-        client,
-        at: attachmentPlacement(placements.get(item.id), item, attachment),
-        item,
-        attachment,
-        record,
-        tally,
-      });
-      if (saved) downloads[attachment.resourceUrl] = saved;
-    }
+  for await (const { item, attachment, placement } of expectedAttachments({
+    client,
+    courseId: course.courseId,
+    items: snapshot.items,
+  })) {
+    const record = previous.downloads?.[attachment.resourceUrl];
+    const saved = await saveAttachment({
+      course,
+      client,
+      placement,
+      item,
+      attachment,
+      record,
+      tally,
+    });
+    if (saved) downloads[attachment.resourceUrl] = saved;
   }
 
   await writeAnnouncements(course.destination, snapshot.announcements, tally);
@@ -79,14 +84,14 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, course, at, item, attachment, record, tally }) {
-  const target = safeResolve(course.destination, ...at.segments);
+async function saveAttachment({ client, course, placement, item, attachment, record, tally }) {
+  const target = safeResolve(course.destination, ...placement.segments);
   const fingerprint = attachmentFingerprint(item, attachment);
 
   const unchanged =
     record?.fingerprint === fingerprint &&
-    record.relativePath === at.path &&
-    (await isFileOfSize(target, attachment.fileSize));
+    record.relativePath === placement.path &&
+    (await isFilePresent(target, attachment.fileSize));
   if (unchanged) {
     tally.skipped += 1;
     return record;
@@ -99,7 +104,7 @@ async function saveAttachment({ client, course, at, item, attachment, record, ta
     tally.bytes += body.length;
     return {
       fingerprint,
-      relativePath: at.path,
+      relativePath: placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       mimeType: attachment.mimeType || headers["content-type"] || null,
@@ -107,7 +112,12 @@ async function saveAttachment({ client, course, at, item, attachment, record, ta
   } catch (error) {
     // Where it was and where it would have gone, because the item's own title is `ultraDocumentBody`
     // for every embedded document in a course and so names nothing (#21).
-    tally.failures.push({ file: at.file, trail: at.trail, path: at.path, error: error.message });
+    tally.failures.push({
+      file: placement.file,
+      trail: placement.trail,
+      path: placement.path,
+      error: error.message,
+    });
     // No record, so the next run treats this attachment as never downloaded and tries again.
     return null;
   }
