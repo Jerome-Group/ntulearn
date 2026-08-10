@@ -11,14 +11,16 @@ const ALL = "all";
 export async function loadConfig(root) {
   const raw = await readFile(resolve(root, CONFIG_PATH), "utf8").catch((error) => {
     if (error.code !== "ENOENT") throw error;
-    throw new Error(`No ${CONFIG_PATH}. Copy ${EXAMPLE_PATH} to it and edit it.`);
+    throw new Error(`No ${CONFIG_PATH}. Copy ${EXAMPLE_PATH} to it and edit it.`, {
+      cause: error,
+    });
   });
 
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${CONFIG_PATH} is not valid JSON: ${error.message}`);
+    throw new Error(`${CONFIG_PATH} is not valid JSON: ${error.message}`, { cause: error });
   }
 
   return {
