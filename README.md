@@ -1,15 +1,20 @@
-# <repository>
+# NTULearn Sync
 
-*(One or two sentences: what this is and who it is for.)*
+Central NTULearn downloader. Authentication and sync state stay here; course files go to each configured Google Drive module folder.
 
-A [Jerome-Group](https://github.com/Jerome-Group) repository. It was born from a template, so
-it already carries the Organisation's conventions — see [`MAP.md`](MAP.md) to find your way
-around and [`AGENTS.md`](AGENTS.md) for how work is done here.
+## Commands
 
-## Status
+```bash
+npm run login                 # refresh NTU SSO/MFA session
+npm run discover              # list accessible NTULearn courses
+npm run sync -- MH2100        # sync one configured module
+npm run sync -- all           # sync every configured module
+```
 
-🌱 Newly generated. Replace this section, the title, and the description above.
+Configure modules in `config/courses.json`. Each destination should be a dedicated `NTULearn` subfolder so unrelated module files remain untouched.
 
-## Getting started
+The sync is incremental and non-destructive: unchanged downloads are skipped and stale files are not deleted. Useful page text and announcements are Markdown. Original attachments retain their file type.
 
-*(How to run it, build it, or test it.)*
+The saved Chrome profile in `.data/chrome-profile` is the reusable secret. It is permission-restricted and ignored by Git. The university may expire it; run `npm run login` again when that happens. Do not copy cookies into configuration files.
+
+Limits: only content visible to the logged-in student can be read. Release-rule-hidden content, instructor-only material, live grades/submissions, and third-party LTI data are not mirrored. External tools are recorded as links.
