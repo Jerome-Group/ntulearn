@@ -23,9 +23,9 @@ export function isFile(item) {
 }
 
 // The handler is what an item is, and it is legible enough to pass on unless a student would have
-// to decode it. Only the ones that have needed translating are translated, and this table is never
-// finished: a Building Block registers its own handler key — which is what `x-plugin-` means — so
-// the set is whatever an institution installed rather than anything a list could close
+// to decode it. Only the ones that have needed translating are translated, and the table is never
+// finished: a Building Block registers its own handler key, so the set is whatever an institution
+// installed rather than anything a vendor list could close
 // (`docs/research/does-blackboard-document-the-content-handlers.md`).
 export function kindOf(item) {
   return KIND_NAMES[item.contentHandler] ?? item.contentHandler ?? "Unknown";
