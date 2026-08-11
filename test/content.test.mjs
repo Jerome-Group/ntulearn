@@ -6,6 +6,7 @@ import {
   externalLinkOf,
   isFile,
   isFolder,
+  kindOf,
 } from "../src/ntulearn/content.mjs";
 
 const encode = (attachment) => JSON.stringify(attachment).replaceAll('"', "&quot;");
@@ -31,6 +32,13 @@ test("a detail that is not a container leaves the item one", () => {
     contentDetail: { "resource/x-bb-file": { file: { permanentUrl: "/bbcswebdav/one" } } },
   };
   assert.equal(isFolder(file), false);
+});
+
+test("says what an item is, in a word where a student would not read the handler", () => {
+  assert.equal(kindOf({ contentHandler: "resource/x-bb-asmt-test-link" }), "Test");
+  assert.equal(kindOf({ contentHandler: "resource/x-bb-assignment" }), "Assignment");
+  assert.equal(kindOf({ contentHandler: "resource/x-bb-courselink" }), "resource/x-bb-courselink");
+  assert.equal(kindOf({}), "Unknown");
 });
 
 test("recognises a file item", () => {

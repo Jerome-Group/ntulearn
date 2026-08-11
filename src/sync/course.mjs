@@ -3,7 +3,13 @@ import { mkdir } from "node:fs/promises";
 import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
 import { expectedAttachments } from "./attachments.mjs";
 import { isFilePresent, writeAtomically, writeIfChanged } from "./files.mjs";
-import { announcementDocument, contentDocument, courseDocument, isoDate } from "./markdown.mjs";
+import {
+  announcementDocument,
+  contentDocument,
+  courseDocument,
+  isoDate,
+  uncopiedDocument,
+} from "./markdown.mjs";
 import { orderedName, safeResolve, safeSegment } from "./paths.mjs";
 import { placementsIn } from "./placement.mjs";
 import { courseState, newIds } from "./state.mjs";
@@ -16,7 +22,7 @@ const ANNOUNCEMENTS_FOLDER = "Announcements";
 export async function syncCourse({ client, course, state }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
-  const tally = { downloaded: 0, skipped: 0, bytes: 0, markdown: 0, failures: [] };
+  const tally = { downloaded: 0, skipped: 0, bytes: 0, markdown: 0, uncopied: 0, failures: [] };
   const downloads = {};
 
   await mkdir(course.destination, { recursive: true });
@@ -24,6 +30,10 @@ export async function syncCourse({ client, course, state }) {
   await writeDocument(overview, courseDocument(snapshot.course), tally);
 
   const placements = placementsIn(snapshot.items);
+  // An item that wrote no page, until an attachment below claims it. Whatever is still here
+  // afterwards would leave the destination holding nothing for it at all (ADR-0006).
+  const unwritten = new Map();
+
   for (const item of snapshot.items) {
     // A folder's own placement is the folder it makes; anything else's is the folder it lands in.
     const folder = safeResolve(course.destination, ...placements.get(item.id).segments);
@@ -36,7 +46,8 @@ export async function syncCourse({ client, course, state }) {
 
     const page = contentDocument(item, externalLinkOf(item));
     const target = safeResolve(folder, `${orderedName(item.position, item.title)}.md`);
-    await writeDocument(target, page, tally);
+    if (page) await writeDocument(target, page, tally);
+    else unwritten.set(item.id, { item, target });
   }
 
   for await (const { item, attachment, placement } of expectedAttachments({
@@ -44,6 +55,8 @@ export async function syncCourse({ client, course, state }) {
     courseId: course.courseId,
     items: snapshot.items,
   })) {
+    // Its file is the trace, and a download that fails leaves a failure naming where it belonged.
+    unwritten.delete(item.id);
     const record = previous.downloads?.[attachment.resourceUrl];
     const saved = await saveAttachment({
       course,
@@ -55,6 +68,15 @@ export async function syncCourse({ client, course, state }) {
       tally,
     });
     if (saved) downloads[attachment.resourceUrl] = saved;
+  }
+
+  for (const { item, target } of unwritten.values()) {
+    tally.uncopied += 1;
+    // An item hidden by a release rule reads exactly like one there was never anything to copy
+    // from, so a page the student already has is never replaced by the statement that there is
+    // nothing to copy — additive in the direction ADR-0003 argues for.
+    if (await isFilePresent(target)) continue;
+    await writeDocument(target, uncopiedDocument(item, placements.get(item.id).trail), tally);
   }
 
   await writeAnnouncements(course.destination, snapshot.announcements, tally);

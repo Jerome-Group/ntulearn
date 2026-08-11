@@ -1,5 +1,5 @@
 import TurndownService from "turndown";
-import { isSupplied } from "../ntulearn/content.mjs";
+import { isSupplied, kindOf } from "../ntulearn/content.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
 
 const EMBED_ATTRIBUTE = "data-bbfile";
@@ -66,6 +66,16 @@ export function contentDocument(item, externalLink = null) {
     externalLink && `## External link\n\n${externalLink}`,
   ];
   return sections.some(Boolean) ? document(item.title, sections) : "";
+}
+
+// Written in place of the item itself, so nothing NTULearn returns leaves the destination without
+// a trace of having existed and the numbering has no unexplained gap (ADR-0006).
+export function uncopiedDocument(item, trail) {
+  return document(item.title, [
+    [`- Kind: ${kindOf(item)}`, trail && `- Trail: ${trail}`].filter(Boolean).join("\n"),
+    "This item carries no text, no link and no attachment, so there was nothing to copy. " +
+      "Open it in NTULearn.",
+  ]);
 }
 
 export function announcementDocument(announcement) {

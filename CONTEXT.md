@@ -53,6 +53,14 @@ _Avoid_: resource, node, page, entry
 A file hanging off a content item. It is copied as it is, never converted.
 _Avoid_: asset, document, upload
 
+**Uncopied item**:
+A content item there is nothing to bring across from — no text, no link, no attachment — because
+what it is lives behind an NTULearn interaction: a quiz, a test, a submission point. A sync writes
+a document naming it in its place, so the copy says the item exists rather than leaving it out in
+silence (`docs/adr/0006`).
+_Avoid_: skipped, missing, empty — the first two are what `verify` says about a file that ought to
+be in a destination and is not, which is a defect where this is a limit
+
 **Trail**:
 Where something is in NTULearn, said in the titles a student would read on the screen — the
 folders it sits under, outermost first. It is what a report says alongside the *path*, which is

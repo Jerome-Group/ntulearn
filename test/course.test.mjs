@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -35,32 +35,66 @@ const ITEMS = [
 ];
 
 const AT = "09 Career Pathways Platform/03 Instruction Manual/01 Guide.pdf";
+const QUIZ = "03 ⭐Topic 1_ Knowledge Check Points.md";
 
-function client(download) {
+// CC0006's Week 1, trimmed to the two children that decide whether a document is written: a quiz
+// NTULearn holds nothing copyable for, and a file whose attachment is its own trace (#20).
+const WEEK_1 = [
+  {
+    id: "_1_1",
+    parentId: null,
+    position: 0,
+    title: "Week 1",
+    contentHandler: "resource/x-bb-folder",
+  },
+  {
+    id: "_2_1",
+    parentId: "_1_1",
+    position: 2,
+    title: "⭐Topic 1: Knowledge Check Points",
+    contentHandler: "resource/x-bb-asmt-test-link",
+  },
+  {
+    id: "_3_1",
+    parentId: "_1_1",
+    position: 4,
+    title: "Week 1 PPT",
+    contentHandler: "resource/x-bb-file",
+    contentDetail: {
+      "resource/x-bb-file": {
+        file: { fileName: "Week 1 PPT.pptx", permanentUrl: "/bbcswebdav/w1" },
+      },
+    },
+  },
+];
+
+function client(download, items) {
   return {
     readCourse: async () => ({
       course: { displayName: "Career Pathways" },
       announcements: [],
       conversations: [],
-      items: ITEMS,
+      items,
     }),
     readAttachments: async (courseId, item) => attachmentsOf(item),
     download,
   };
 }
 
-async function sync(download) {
+const downloads = (content) => async () => ({ body: Buffer.from(content), headers: {} });
+
+async function sync(download, items = ITEMS) {
   const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-"));
   const course = { key: "CC0006", courseId: "_9_1", destination };
   const state = { version: 1, courses: {} };
-  return { destination, result: await syncCourse({ client: client(download), course, state }) };
+  return {
+    destination,
+    result: await syncCourse({ client: client(download, items), course, state }),
+  };
 }
 
 test("writes an attachment to the path its placement names", async () => {
-  const { destination, result } = await sync(async () => ({
-    body: Buffer.from("pdf"),
-    headers: {},
-  }));
+  const { destination, result } = await sync(downloads("pdf"));
 
   assert.equal(await readFile(join(destination, AT), "utf8"), "pdf");
   assert.deepEqual(result.failures, []);
@@ -82,4 +116,43 @@ test("says where a failed download came from and where it would have gone", asyn
       error: "Download failed: HTTP 404",
     },
   ]);
+  assert.equal(result.uncopied, 0);
+});
+
+// The quiz at position 2 wrote nothing at all, so the missing `03` beside the file's `05` was the
+// only evidence it had ever been there — which reads as a bug in the numbering (#20, ADR-0006).
+test("writes down an item that would otherwise leave nothing but a gap in the numbering", async () => {
+  const { destination, result } = await sync(downloads("ppt"), WEEK_1);
+  const written = join(destination, "01 Week 1", QUIZ);
+
+  assert.match(await readFile(written, "utf8"), /^# ⭐Topic 1: Knowledge Check Points\n/);
+  assert.match(await readFile(written, "utf8"), /- Trail: Week 1\n/);
+  assert.equal(result.uncopied, 1);
+});
+
+test("leaves the item whose attachment is already its trace without a document beside it", async () => {
+  const { destination } = await sync(downloads("ppt"), WEEK_1);
+
+  assert.deepEqual((await readdir(join(destination, "01 Week 1"))).sort(), [
+    QUIZ,
+    "05 Week 1 PPT.pptx",
+  ]);
+});
+
+// A page hidden by a release rule arrives carrying nothing, exactly as an uncopiable item does,
+// and the student's copy of it is the thing ADR-0003 exists to protect.
+test("never writes over a page an earlier run copied", async () => {
+  const { destination, result } = await sync(downloads("ppt"), WEEK_1);
+  const written = join(destination, "01 Week 1", QUIZ);
+  await writeFile(written, "# The week the quiz still had a page\n");
+
+  const again = await syncCourse({
+    client: client(downloads("ppt"), WEEK_1),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state: { version: 1, courses: {} },
+  });
+
+  assert.equal(await readFile(written, "utf8"), "# The week the quiz still had a page\n");
+  assert.equal(result.uncopied, 1);
+  assert.equal(again.uncopied, 1);
 });
