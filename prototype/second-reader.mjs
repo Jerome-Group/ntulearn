@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { openSignedInContext } from "../src/ntulearn/session.mjs";
 
 // A second opinion on what a course holds, sharing no code with `src/ntulearn/content.mjs` and
@@ -27,7 +28,24 @@ export async function openSecondReader(profilePath) {
   const get = reading(context, token);
   return {
     read: (courseId) => readCourse(get, courseId),
+    weigh: (url) => weigh(context, url),
     close: () => context.close(),
+  };
+}
+
+// What is actually at a URL, without keeping it. Two addresses that answer with the same digest
+// are one file written down twice, and telling those apart from two files is the whole question a
+// difference in the counts raises.
+async function weigh(context, url) {
+  const response = await context.request.get(new URL(url, BASE_URL).href);
+  if (!response.ok()) return { status: response.status(), bytes: null, sha256: null, type: null };
+
+  const body = await response.body();
+  return {
+    status: response.status(),
+    bytes: body.length,
+    sha256: createHash("sha256").update(body).digest("hex"),
+    type: response.headers()["content-type"] ?? null,
   };
 }
 
