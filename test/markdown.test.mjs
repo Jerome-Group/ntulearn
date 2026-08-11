@@ -6,6 +6,7 @@ import {
   courseDocument,
   htmlToMarkdown,
   isoDate,
+  uncopiedDocument,
 } from "../src/sync/markdown.mjs";
 
 test("converts HTML to Markdown", () => {
@@ -108,6 +109,27 @@ test("writes a content item's description, body and link", () => {
 test("writes nothing for an item that carries neither text nor a link", () => {
   assert.equal(contentDocument({ title: "Empty" }), "");
   assert.equal(contentDocument({ title: "Empty", body: { rawText: "<p></p>" } }), "");
+});
+
+test("writes down an item there was nothing to copy from", () => {
+  const item = {
+    title: "⭐Topic 1: Knowledge Check Points",
+    contentHandler: "resource/x-bb-asmt-test-link",
+  };
+  assert.equal(
+    uncopiedDocument(item, "Week 1 › Topic 1"),
+    "# ⭐Topic 1: Knowledge Check Points\n\n" +
+      "- Kind: Test\n" +
+      "- Trail: Week 1 › Topic 1\n\n" +
+      "This item carries no text, no link and no attachment, so there was nothing to copy. " +
+      "Open it in NTULearn.\n",
+  );
+});
+
+test("leaves the trail out of an uncopied item that sits at a course's root", () => {
+  const markdown = uncopiedDocument({ title: "T", contentHandler: "x" }, "");
+  assert.doesNotMatch(markdown, /Trail/);
+  assert.match(markdown, /^# T\n\n- Kind: x\n\n/);
 });
 
 test("prefers displayText over rawText", () => {

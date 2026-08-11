@@ -2,6 +2,10 @@ import { absoluteUrl, isNtulearnUrl } from "./urls.mjs";
 
 const FOLDER_HANDLER = "resource/x-bb-folder";
 const FILE_HANDLER = "resource/x-bb-file";
+const KIND_NAMES = {
+  "resource/x-bb-asmt-test-link": "Test",
+  "resource/x-bb-assignment": "Assignment",
+};
 const EMBED = /<(?:a|img)\b[^>]*\bdata-bbfile="([^"]+)"[^>]*>/g;
 const ELEMENT_LINK = /\b(?:href|src)="([^"]+)"/;
 
@@ -15,6 +19,12 @@ export function isFolder(item) {
 
 export function isFile(item) {
   return item.contentHandler === FILE_HANDLER;
+}
+
+// The handler is what an item is, and it is legible enough to pass on unless a student would have
+// to decode it. Only the ones that have needed translating are translated.
+export function kindOf(item) {
+  return KIND_NAMES[item.contentHandler] ?? item.contentHandler ?? "Unknown";
 }
 
 export function attachmentsOf(item) {

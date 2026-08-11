@@ -66,6 +66,11 @@ announcements become Markdown; attachments keep their original file type. Each c
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.
 
+An item a sync cannot copy — a quiz, a test, a submission point, anything holding no text, no link
+and no attachment — still gets a Markdown file at its own numbered place, naming it and saying
+there was nothing to bring across. The numbering stays continuous, and the copy never leaves out
+something the course tells you to do; `docs/adr/0006` argues it.
+
 A download that fails says where it was and where it would have gone, so the file can be found in
 NTULearn without walking the course by hand:
 
@@ -119,7 +124,8 @@ The gaps it names are fixed by running the sync again; it never repairs anything
 
 Only content visible to the signed-in student can be read. Release-rule-hidden content,
 instructor-only material, live grades and submissions, and third-party LTI data are not copied;
-external tools are recorded as links.
+external tools are recorded as links. What is not copied is written down where it sat, so a limit
+shows up in the destination rather than only here.
 
 ## Working on it
 
