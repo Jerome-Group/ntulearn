@@ -127,6 +127,29 @@ and it exits `1` when anything is absent — `docs/adr/0005`.
 
 The gaps it names are fixed by running the sync again; it never repairs anything itself.
 
+### What `complete: true` does not cover
+
+The number counts **attachments, present at a path**, and it is worth reading as narrowly as that
+says.
+
+- **Recorded lecture videos and their transcripts** are not read at all. They are absent from both
+  sides of the number rather than counted as missing.
+- **Quizzes, tests and submission points** hold nothing to download. A sync writes a Markdown file
+  naming each one where it sat (`docs/adr/0006`), and there is no file for `verify` to count either
+  way.
+- **External tools** — anything reached through LTI — are recorded as a link. Whatever is on the
+  other side of that link is never fetched and never counted.
+- **Presence is not content.** `verify` asks the filesystem whether a file is at the path and
+  nothing more, so a truncated, corrupt or since-replaced file counts as present
+  (`docs/adr/0005`).
+- **The count is attachments as this tool reads them.** A kind of embed it does not recognise is
+  one a sync never downloads and `verify` never expects, so both are silent about it together.
+  Four such gaps have been found so far, and every one was found by opening NTULearn in a browser
+  rather than by the tool disagreeing with itself.
+
+So `complete: true` says that every file this tool knows to look for arrived. It does not say the
+copy is the course.
+
 ## Limits
 
 Only content visible to the signed-in student can be read. Release-rule-hidden content,
