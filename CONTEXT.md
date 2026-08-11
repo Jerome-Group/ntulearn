@@ -81,7 +81,9 @@ _Avoid_: discussion, forum, thread
 
 **Destination**:
 The folder a course is synced into. It belongs to the person running the sync, and nothing
-outside it is ever written.
+outside it is ever written. One course, one destination, and no two courses share one or nest
+one inside another — a course with a lecture site and a tutorial site is two courses here, and
+two trees written into one folder is a tangle a sync cannot undo (`docs/adr/0003`).
 _Avoid_: output directory, target, vault
 
 **Session**:

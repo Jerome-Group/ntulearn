@@ -6,6 +6,11 @@
       "key": "AB1234",
       "courseId": "_0000000_1",
       "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn"
+    },
+    {
+      "key": "AB1234-TUT",
+      "courseId": "_0000001_1",
+      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn_Tutorial"
     }
   ]
 }
