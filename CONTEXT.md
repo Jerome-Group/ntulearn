@@ -28,6 +28,13 @@ writes to neither, so it answers a question about the destination rather than ab
 _Avoid_: check, audit, reconcile — the last is the operation a sync is not, and naming this one
 after it invites the deletion `docs/adr/0003` refuses
 
+**Authority**:
+The reading of a course that a check treats as the truth about what exists. Completeness is always
+relative to one: a number can say that everything the authority saw is accounted for, and never
+that nothing was missed. So a report names the authority behind it, and what that authority does
+not cover is part of the answer rather than a caveat on it.
+_Avoid_: source of truth, ground truth — both claim an absoluteness no reading here has
+
 **Snapshot**:
 Everything read from NTULearn for one course in a single run, before any of it is written.
 _Avoid_: dump, payload, response
@@ -47,11 +54,34 @@ file is
 **Content item**:
 One node of a course's content tree: a folder, a page, a file, or a link. It may carry text, an
 attachment, and a link out, in any combination.
-_Avoid_: resource, node, page, entry
+_Avoid_: resource, node, entry — and *page* on its own, which names a kind of content item here
+and never the item itself
+
+**Body**:
+A content item's text as NTULearn's read API returns it. It is NTULearn's stored record of the
+item, written when the item was authored and not revisited, so it is not what a student's browser
+shows: an address in a body can be dead while the *rendered page* serves the same file from a live
+one.
+_Avoid_: content, html, source — the last claims a fidelity a body has been measured not to have
+
+**Rendered page**:
+One content item as it appears to the signed-in student in the browser, after NTULearn has
+resolved its *body* into a page. It is the only reading of an item that is true by construction,
+because the student's view is what bounds this domain.
+_Avoid_: DOM, view, page — the last is the word `Content item` gives up, so these two stay
+together
 
 **Attachment**:
-A file hanging off a content item. It is copied as it is, never converted.
+A file hanging off a content item. It is copied as it is, never converted. It is the file, not the
+address it was fetched from — one file may have several addresses and only one of them need work.
 _Avoid_: asset, document, upload
+
+**Alias**:
+A second address for an attachment, written into a *body* when an embed was authored and since
+moved off by the file. It answers `404` or `403` where the address the *rendered page* uses serves
+the bytes, and the file it names is already in the destination under its own name. An alias is not
+a defect and nothing is missing because of one.
+_Avoid_: dead link, broken link, duplicate — the first two say the file is gone, and it is not
 
 **Uncopied item**:
 A content item there is nothing to bring across from — no text, no link, no attachment — because
