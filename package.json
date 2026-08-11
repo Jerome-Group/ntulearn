@@ -16,6 +16,7 @@
     "login": "node src/cli.mjs login",
     "discover": "node src/cli.mjs discover",
     "sync": "node src/cli.mjs sync",
+    "verify": "node src/cli.mjs verify",
     "test": "node --test",
     "lint": "eslint .",
     "format": "prettier --write .",

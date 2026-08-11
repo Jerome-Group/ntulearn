@@ -21,10 +21,11 @@ everything but running the tool — it skips Playwright's browser download, and 
 `test/` needs a browser or a network, which is the property `CODING_STANDARDS.md` §6 exists to
 hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
-`npm run login`, `npm run discover` and `npm run sync` reach NTULearn as a real signed-in student
-and write to real folders on this machine. Change them, test the pure parts, and leave the running
-to the Owner: `login` needs a person at the MFA prompt, and the other two need a live session that
-only `login` produces.
+`npm run login`, `npm run discover`, `npm run sync` and `npm run verify` reach NTULearn as a real
+signed-in student, and the sync writes to real folders on this machine. Change them, test the pure
+parts, and leave the running to the Owner: `login` needs a person at the MFA prompt, and the other
+three need a live session that only `login` produces. `verify` writing nothing does not make it
+yours to run — it still spends the Owner's session.
 
 ## Conventions
 

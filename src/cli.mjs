@@ -8,11 +8,12 @@ import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
 import { readState, writeState } from "./sync/state.mjs";
+import { verifyCourse, verifyReport } from "./sync/verify.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const USAGE = "Usage: npm run login | npm run discover | npm run sync -- <course|all>";
+const USAGE = "Usage: npm run login | npm run discover | npm run (sync|verify) -- <course|all>";
 
-const commands = { login, discover, sync };
+const commands = { login, discover, sync, verify };
 
 async function login(config) {
   const window = await openLoginWindow(config.profilePath);
@@ -39,22 +40,42 @@ async function discover(config) {
 }
 
 async function sync(config, key) {
-  const courses = selectCourses(config.courses, key);
   const state = await readState(config.statePath);
+  const results = await eachCourse(config, key, async ({ client, course }) => {
+    const result = await syncCourse({ client, course, state });
+    await writeState(config.statePath, state);
+    return result;
+  });
+
+  await writeLine(stdout, asJson(results));
+  return results.some((result) => result.failures.length) ? 1 : 0;
+}
+
+async function verify(config, key) {
+  const report = verifyReport(await eachCourse(config, key, verifyCourse));
+
+  await writeLine(stdout, asJson(report));
+  if (report.complete) return 0;
+
+  await writeLine(stderr, `Attachments are absent. Run: npm run sync -- ${key || "all"}`);
+  return 1;
+}
+
+// One session serves every course asked for, and it is closed whether or not the walk finishes.
+async function eachCourse(config, key, walk) {
+  const courses = selectCourses(config.courses, key);
   const client = await openClient(config.profilePath);
   const results = [];
 
   try {
     for (const course of courses) {
-      results.push(await syncCourse({ client, course, state }));
-      await writeState(config.statePath, state);
+      results.push(await walk({ client, course }));
     }
   } finally {
     await client.close();
   }
 
-  await writeLine(stdout, asJson(results));
-  return results.some((result) => result.failures.length) ? 1 : 0;
+  return results;
 }
 
 async function main([name, argument]) {

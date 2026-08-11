@@ -20,6 +20,7 @@ npm run login                 # refresh the NTU SSO/MFA session
 npm run discover              # list the NTULearn courses you can see
 npm run sync -- MH2100        # sync one configured course
 npm run sync -- all           # sync every configured course
+npm run verify -- all         # check what is on disk against NTULearn, writing nothing
 ```
 
 ## Configuration
@@ -65,9 +66,54 @@ announcements become Markdown; attachments keep their original file type. Each c
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.
 
+A download that fails says where it was and where it would have gone, so the file can be found in
+NTULearn without walking the course by hand:
+
+```json
+{
+  "file": "Career_Platform_User_Guide.pdf",
+  "trail": "(For EEE Students Only) Career Pathways Platform › Instruction Manual",
+  "path": "09 (For EEE Students Only) Career Pathways Platform/03 Instruction Manual/01 Career_Platform_User_Guide.pdf",
+  "error": "Download failed: HTTP 404"
+}
+```
+
 The saved Chrome profile in `.data/chrome-profile` is the reusable secret. It is
 permission-restricted and ignored by Git. The university expires it periodically; run
 `npm run login` again when that happens. Do not copy cookies into configuration files.
+
+## Is a course complete?
+
+A sync says what that run did. `npm run verify -- all` says what the destination holds: it walks
+each configured course in NTULearn, works out the path every attachment would be written to, and
+reports which of those paths hold a file. It downloads nothing and writes nothing on either side,
+and it exits `1` when anything is absent — `docs/adr/0005`.
+
+```json
+{
+  "attachments": 128,
+  "present": 118,
+  "complete": false,
+  "courses": [
+    {
+      "key": "CC0006",
+      "course": "Sustainability: Seeing Through the Haze",
+      "destination": "/…/CC0006/NTULearn",
+      "attachments": 10,
+      "present": 4,
+      "missing": [
+        {
+          "file": "Career_Platform_User_Guide.pdf",
+          "trail": "Career Pathways Platform › Instruction Manual",
+          "path": "09 Career Pathways Platform/03 Instruction Manual/01 Career_Platform_User_Guide.pdf"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The gaps it names are fixed by running the sync again; it never repairs anything itself.
 
 ## Limits
 

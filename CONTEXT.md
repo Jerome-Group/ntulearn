@@ -21,6 +21,13 @@ not, and `docs/adr/0003` is why.
 _Avoid_: import, download, mirror, scrape, backup — the first two were used interchangeably with
 this until they were retired, and the last three each promise something a sync does not do
 
+**Verify**:
+Holding a destination against NTULearn and reporting the difference. It reads both sides and
+writes to neither, so it answers a question about the destination rather than about a run —
+`docs/adr/0005`. Repairing what it finds is a sync's job and never its own.
+_Avoid_: check, audit, reconcile — the last is the operation a sync is not, and naming this one
+after it invites the deletion `docs/adr/0003` refuses
+
 **Snapshot**:
 Everything read from NTULearn for one course in a single run, before any of it is written.
 _Avoid_: dump, payload, response
@@ -45,6 +52,13 @@ _Avoid_: resource, node, page, entry
 **Attachment**:
 A file hanging off a content item. It is copied as it is, never converted.
 _Avoid_: asset, document, upload
+
+**Trail**:
+Where something is in NTULearn, said in the titles a student would read on the screen — the
+folders it sits under, outermost first. It is what a report says alongside the *path*, which is
+where the same thing lands in the destination; one finds it in the browser and the other on disk.
+_Avoid_: breadcrumb, location, path — the last is the other half of the pair and means the
+destination
 
 **Announcement**:
 A dated notice posted to a course as a whole, rather than to a place in its content tree.

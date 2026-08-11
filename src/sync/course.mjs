@@ -1,16 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { relative } from "node:path";
-import {
-  attachmentName,
-  attachmentsOf,
-  externalLinkOf,
-  isFile,
-  isFolder,
-} from "../ntulearn/content.mjs";
-import { isFileOfSize, writeAtomically, writeIfChanged } from "./files.mjs";
+import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
+import { expectedAttachments } from "./attachments.mjs";
+import { isFilePresent, writeAtomically, writeIfChanged } from "./files.mjs";
 import { announcementDocument, contentDocument, courseDocument, isoDate } from "./markdown.mjs";
 import { orderedName, safeResolve, safeSegment } from "./paths.mjs";
+import { placementsIn } from "./placement.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 const COURSE_DOCUMENT = "Course.md";
@@ -28,34 +23,38 @@ export async function syncCourse({ client, course, state }) {
   const overview = safeResolve(course.destination, COURSE_DOCUMENT);
   await writeDocument(overview, courseDocument(snapshot.course), tally);
 
-  const itemsById = new Map(snapshot.items.map((item) => [item.id, item]));
+  const placements = placementsIn(snapshot.items);
   for (const item of snapshot.items) {
-    const folder = safeResolve(course.destination, ...ancestorFolders(item, itemsById));
+    // A folder's own placement is the folder it makes; anything else's is the folder it lands in.
+    const folder = safeResolve(course.destination, ...placements.get(item.id).segments);
 
     if (isFolder(item)) {
-      const own = safeResolve(folder, orderedName(item.position, item.title));
-      await mkdir(own, { recursive: true });
-      await writeDocument(safeResolve(own, FOLDER_DOCUMENT), contentDocument(item), tally);
+      await mkdir(folder, { recursive: true });
+      await writeDocument(safeResolve(folder, FOLDER_DOCUMENT), contentDocument(item), tally);
       continue;
     }
 
     const page = contentDocument(item, externalLinkOf(item));
     const target = safeResolve(folder, `${orderedName(item.position, item.title)}.md`);
     await writeDocument(target, page, tally);
+  }
 
-    for (const attachment of await attachmentsWithDetail(client, course.courseId, item)) {
-      const record = previous.downloads?.[attachment.resourceUrl];
-      const saved = await saveAttachment({
-        course,
-        client,
-        folder,
-        item,
-        attachment,
-        record,
-        tally,
-      });
-      if (saved) downloads[attachment.resourceUrl] = saved;
-    }
+  for await (const { item, attachment, placement } of expectedAttachments({
+    client,
+    courseId: course.courseId,
+    items: snapshot.items,
+  })) {
+    const record = previous.downloads?.[attachment.resourceUrl];
+    const saved = await saveAttachment({
+      course,
+      client,
+      placement,
+      item,
+      attachment,
+      record,
+      tally,
+    });
+    if (saved) downloads[attachment.resourceUrl] = saved;
   }
 
   await writeAnnouncements(course.destination, snapshot.announcements, tally);
@@ -85,15 +84,14 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, course, folder, item, attachment, record, tally }) {
-  const target = safeResolve(folder, orderedName(item.position, attachmentName(item, attachment)));
-  const relativePath = relative(course.destination, target);
+async function saveAttachment({ client, course, placement, item, attachment, record, tally }) {
+  const target = safeResolve(course.destination, ...placement.segments);
   const fingerprint = attachmentFingerprint(item, attachment);
 
   const unchanged =
     record?.fingerprint === fingerprint &&
-    record.relativePath === relativePath &&
-    (await isFileOfSize(target, attachment.fileSize));
+    record.relativePath === placement.path &&
+    (await isFilePresent(target, attachment.fileSize));
   if (unchanged) {
     tally.skipped += 1;
     return record;
@@ -106,15 +104,18 @@ async function saveAttachment({ client, course, folder, item, attachment, record
     tally.bytes += body.length;
     return {
       fingerprint,
-      relativePath,
+      relativePath: placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       mimeType: attachment.mimeType || headers["content-type"] || null,
     };
   } catch (error) {
+    // Where it was and where it would have gone, because the item's own title is `ultraDocumentBody`
+    // for every embedded document in a course and so names nothing (#21).
     tally.failures.push({
-      item: item.title,
-      file: attachmentName(item, attachment),
+      file: placement.file,
+      trail: placement.trail,
+      path: placement.path,
       error: error.message,
     });
     // No record, so the next run treats this attachment as never downloaded and tries again.
@@ -133,23 +134,8 @@ async function writeAnnouncements(destination, announcements, tally) {
   }
 }
 
-// The Summary view carries no attached file, so an item that claims one is re-read in full.
-async function attachmentsWithDetail(client, courseId, item) {
-  const attachments = attachmentsOf(item);
-  if (attachments.length || !isFile(item)) return attachments;
-  return attachmentsOf(await client.readContentItem(courseId, item.id));
-}
-
 function attachmentFingerprint(item, attachment) {
   return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
-}
-
-function ancestorFolders(item, itemsById) {
-  const folders = [];
-  for (let parent = itemsById.get(item.parentId); parent; parent = itemsById.get(parent.parentId)) {
-    if (isFolder(parent)) folders.unshift(orderedName(parent.position, parent.title));
-  }
-  return folders;
 }
 
 async function writeDocument(path, content, tally) {
