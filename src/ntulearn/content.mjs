@@ -5,6 +5,7 @@ const FILE_HANDLER = "resource/x-bb-file";
 const KIND_NAMES = {
   "resource/x-bb-asmt-test-link": "Test",
   "resource/x-bb-assignment": "Assignment",
+  "resource/x-plugin-scormengine": "SCORM package",
 };
 const EMBED = /<(?:a|img)\b[^>]*\bdata-bbfile="([^"]+)"[^>]*>/g;
 const ELEMENT_LINK = /\b(?:href|src)="([^"]+)"/;
@@ -22,7 +23,10 @@ export function isFile(item) {
 }
 
 // The handler is what an item is, and it is legible enough to pass on unless a student would have
-// to decode it. Only the ones that have needed translating are translated.
+// to decode it. Only the ones that have needed translating are translated, and the table is never
+// finished: a Building Block registers its own handler key, so the set is whatever an institution
+// installed rather than anything a vendor list could close
+// (`docs/research/does-blackboard-document-the-content-handlers.md`).
 export function kindOf(item) {
   return KIND_NAMES[item.contentHandler] ?? item.contentHandler ?? "Unknown";
 }
