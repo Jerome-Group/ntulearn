@@ -37,6 +37,7 @@ test("a detail that is not a container leaves the item one", () => {
 test("says what an item is, in a word where a student would not read the handler", () => {
   assert.equal(kindOf({ contentHandler: "resource/x-bb-asmt-test-link" }), "Test");
   assert.equal(kindOf({ contentHandler: "resource/x-bb-assignment" }), "Assignment");
+  assert.equal(kindOf({ contentHandler: "resource/x-plugin-scormengine" }), "SCORM package");
   assert.equal(kindOf({ contentHandler: "resource/x-bb-courselink" }), "resource/x-bb-courselink");
   assert.equal(kindOf({}), "Unknown");
 });
