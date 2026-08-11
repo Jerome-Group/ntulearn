@@ -23,6 +23,9 @@ node_modules/
 # Ignored rather than tracked, so it never enters the history of a public repository. See
 # `README.md` for the shape it should have.
 config/courses.json
+# And a copy of it under any suffix: a backup is what somebody makes just before editing
+# the file this rule protects, so it exists exactly when the identifiers are in play.
+config/courses.json.*
 
 # Partial downloads
 *.part-*
