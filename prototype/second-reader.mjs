@@ -13,6 +13,7 @@ const ROOT_FOLDER = "ROOT";
 const PAGE_SIZE = 1000;
 const AT_A_TIME = 8;
 const DECODE_PASSES = 3;
+const CONTEXT = 160;
 
 // Absolute or root-relative, stopped by whatever ends a link in HTML or in JSON. The lookbehind is
 // what keeps `application/pdf` from reading as a path to `/pdf`.
@@ -41,10 +42,11 @@ async function readCourse(get, courseId) {
       unreadable.push({ id: item.id, title: item.title ?? null });
       return;
     }
-    for (const text of stringsIn(full)) {
-      for (const link of linksIn(text)) {
+    for (const { path, text } of stringsIn(full)) {
+      for (const { link, context } of linksIn(text)) {
         if (links.has(link)) continue;
-        links.set(link, { link, itemId: item.id, itemTitle: full.title ?? item.title ?? null });
+        const itemTitle = full.title ?? item.title ?? null;
+        links.set(link, { link, field: path, context, itemId: item.id, itemTitle });
       }
     }
   });
@@ -107,14 +109,29 @@ function linksIn(text) {
     for (const [link] of decodeHtmlEntities(embedded).matchAll(LINK)) found.push(link);
   }
 
-  return found.filter(isNtulearnUrl);
+  // Each link with the markup it was written in, because finding one the walk missed is only half
+  // an answer: which element carried it says whether the walk missed a kind of embed or a kind of
+  // element, and those are different bugs.
+  return found.filter(isNtulearnUrl).map((link) => ({ link, context: around(decoded, link) }));
 }
 
-function* stringsIn(value) {
-  if (typeof value === "string") yield value;
-  else if (Array.isArray(value)) for (const each of value) yield* stringsIn(each);
-  else if (value && typeof value === "object")
-    for (const each of Object.values(value)) yield* stringsIn(each);
+function around(text, link) {
+  const at = text.indexOf(link);
+  if (at < 0) return text.slice(0, CONTEXT * 2);
+  return text.slice(Math.max(0, at - CONTEXT), at + link.length + CONTEXT);
+}
+
+// The field as well as the string, so a link found somewhere the walk never reads says where that
+// was — `body.rawText` and `contentDetail…file.permanentUrl` are answers with different fixes.
+function* stringsIn(value, path = "") {
+  if (typeof value === "string") yield { path, text: value };
+  else if (Array.isArray(value)) {
+    for (const [index, each] of value.entries()) yield* stringsIn(each, `${path}[${index}]`);
+  } else if (value && typeof value === "object") {
+    for (const [name, each] of Object.entries(value)) {
+      yield* stringsIn(each, path ? `${path}.${name}` : name);
+    }
+  }
 }
 
 function isNtulearnUrl(link) {

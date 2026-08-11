@@ -75,7 +75,13 @@ function difference(course, walk, reader) {
   const found = new Map(reader.links.map((link) => [comparable(link.link), link]));
   const missedByTheWalk = [...found]
     .filter(([url]) => !expected.has(url))
-    .map(([url, link]) => ({ url, item: link.itemTitle, itemId: link.itemId }));
+    .map(([url, link]) => ({
+      url,
+      item: link.itemTitle,
+      itemId: link.itemId,
+      field: link.field,
+      context: link.context,
+    }));
 
   return {
     key: course.key,
@@ -84,7 +90,10 @@ function difference(course, walk, reader) {
     attachments: { walk: expected.size, reader: found.size },
     missedByTheWalk: {
       fileShaped: missedByTheWalk.filter((each) => FILE_SHAPED.test(each.url)),
-      other: missedByTheWalk.filter((each) => !FILE_SHAPED.test(each.url)),
+      // Without the markup, because this pile is read once for what is in it rather than diagnosed.
+      other: missedByTheWalk
+        .filter((each) => !FILE_SHAPED.test(each.url))
+        .map(({ url, item, itemId, field }) => ({ url, item, itemId, field })),
     },
     missedByTheReader: [...expected.values()].filter((each) => !found.has(each.url)),
     unreadable: reader.unreadable,
