@@ -48,14 +48,21 @@ cp config/courses.example.json config/courses.json
 
 | Field | Required | What it is |
 |-------|----------|------------|
-| `courses[].key` | yes | What you type at `npm run sync -- <key>`. Matched case-insensitively, and must be unique across the file. The course code is the obvious choice. |
+| `courses[].key` | yes | What you type at `npm run sync -- <key>`. Matched case-insensitively, and must be unique across the file under that same matching. The course code is the obvious choice. |
 | `courses[].courseId` | yes | NTULearn's own identifier for the course, of the form `_1234567_1`. Run `npm run discover` to list the ones you can see. |
-| `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. |
+| `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. No two courses may share one, or nest one inside another. |
 | `profilePath` | no | The saved browser session. Defaults to `.data/chrome-profile`. |
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
 
 Point each destination at a dedicated `NTULearn` subfolder, so your own files in that course's
 folder are never touched.
+
+**One folder per NTULearn site, not per course.** A course often has more than one site — a lecture
+site and a tutorial site are separate courses to NTULearn and each needs its own entry. Give the
+main site `NTULearn` and each other site a sibling beside it, `NTULearn_Tutorial` and so on. Two
+entries pointing at one folder, or at a folder inside another's, is refused at startup: they would
+interleave their numbered trees, and a sync never deletes (`docs/adr/0003`), so untangling them
+afterwards is hand work.
 
 ## What a sync does
 
