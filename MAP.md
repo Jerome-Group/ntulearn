@@ -11,6 +11,7 @@ Start here: `README.md`, then `AGENTS.md`.
 | NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Sync | Everything that has a destination in hand: the course walk that writes to it, where each file lands, the Markdown documents, what has already been downloaded, and the read that holds it against NTULearn | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
+| Scratch destinations | Destinations this repository owns, for trying something against a course without writing into a real one. Ignored, never committed | `.scratch/` (untracked) |
 | Tests | One file per module under test, plus the two that spawn the CLI to check what only a process shows | `test/` |
 | Toolchain | Prettier formats this repository's own code, ESLint checks correctness only, and the supported Node range is enforced at install rather than warned about | `.prettierrc.json`, `eslint.config.mjs`, `.npmrc` |
 | Working here | Agent + contributor conventions, commit/attribution rules | `AGENTS.md` (= `CLAUDE.md`) |

@@ -1,5 +1,6 @@
 node_modules/
 .data/
+.scratch/
 package-lock.json
 
 # Prose and the workflows arrive written, and are not this formatter's to reflow.
