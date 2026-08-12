@@ -76,8 +76,11 @@ one. A document is this repository's own sentence about an item, so nothing of t
 lost by correcting it, and a destination written before a fix would otherwise repeat what the fix
 removed forever — which is what ML0004's seven SCORM topics did, still naming a raw handler after
 #49 had translated it and still saying they carried no link after #53 found the one they carry.
-What tells the two apart on disk is the sentence itself: a document says *"there was nothing to
-copy"* and a page does not, and that is the whole of the test (#53).
+
+What tells the two apart on disk is a mark the document carries for the purpose,
+`<!-- ntulearn: nothing to copy -->`, which renders as nothing and is addressed to the next run
+rather than to the student. A document written before the mark existed is recognised by its
+sentence instead — the weaker test, and the reason that sentence is now fixed for good (#53).
 
 ## Consequences
 
@@ -85,12 +88,18 @@ copy"* and a page does not, and that is the whole of the test (#53).
   because ADR-0003 means nothing removes them. If NTULearn later fills the item in, the real page
   is written over the document, and a document may be written over a document. What never happens
   is a document over a page — that is the direction overwriting does not run in.
-- **A run says how many it could not copy, and that count is not a count of new files.** An item
-  whose document is already on disk is counted as uncopied and its document is written again,
-  which changes nothing on disk unless the text has moved. So `uncopied` is about the course and
-  `markdown` counts these documents the way it already counts the course overview and every folder
-  document — every run, changed or not. A report is still a report; it is just no longer the only
-  record.
+- **A run says how many it could not copy, and that count is not a count of new files.** Every
+  uncopied item is counted, whatever is on disk. Its document is written again where the
+  destination holds nothing or holds one of these documents — which changes nothing unless the
+  text has moved — and is not written at all where a page is in the way. So `uncopied` is about
+  the course, and `markdown` counts these documents the way it already counts the course overview
+  and every folder document: every run, changed or not, except where the page guard stops it. A
+  report is still a report; it is just no longer the only record.
+- **The mark in a document is a compatibility surface.** A document carries
+  `<!-- ntulearn: nothing to copy -->` so a later run knows its own writing however the words
+  around it change. What predates the mark is recognised by its sentence instead, so *that*
+  sentence can never be reworded without stranding every destination written before this record —
+  which is the cost of having had no mark for the first year, paid once.
 - **The kind is NTULearn's word for it.** The document names the content handler, translated where
   a student would not recognise the raw key and passed through where they would. A handler nobody
   has seen yet is reported as NTULearn spells it rather than guessed at.

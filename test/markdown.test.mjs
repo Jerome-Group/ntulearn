@@ -6,6 +6,7 @@ import {
   courseDocument,
   htmlToMarkdown,
   isoDate,
+  isUncopiedDocument,
   uncopiedDocument,
 } from "../src/sync/markdown.mjs";
 
@@ -122,8 +123,32 @@ test("writes down an item there was nothing to copy from", () => {
       "- Kind: Test\n" +
       "- Trail: Week 1 › Topic 1\n\n" +
       "This item carries no text, no link and no attachment, so there was nothing to copy. " +
-      "Open it in NTULearn.\n",
+      "Open it in NTULearn.\n\n" +
+      "<!-- ntulearn: nothing to copy -->\n",
   );
+});
+
+// The mark is addressed to the next run, and the sentence is how the runs before it are still
+// recognised — a destination written before the mark existed has to stay correctable (#53).
+test("knows its own writing by the mark, and by the sentence that predates it", () => {
+  const item = { title: "T", contentHandler: "resource/x-bb-asmt-test-link" };
+  assert.equal(isUncopiedDocument(uncopiedDocument(item, "")), true);
+  assert.equal(
+    isUncopiedDocument("# T\n\n- Kind: Test\n\n<!-- ntulearn: nothing to copy -->\n"),
+    true,
+  );
+  assert.equal(
+    isUncopiedDocument(
+      "# T\n\n- Kind: Test\n\nThis item carries no text, no link and no attachment, " +
+        "so there was nothing to copy. Open it in NTULearn.\n",
+    ),
+    true,
+  );
+  assert.equal(
+    isUncopiedDocument("# T\n\n## Content\n\nThe week the quiz still had a page\n"),
+    false,
+  );
+  assert.equal(isUncopiedDocument(null), false);
 });
 
 test("leaves the trail out of an uncopied item that sits at a course's root", () => {
