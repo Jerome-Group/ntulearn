@@ -27,8 +27,10 @@ node prototype/page-vs-walk.mjs 25S2-PS0002-LAB
 ```
 
 The report is Markdown on stdout, one document per run, meant to be pasted back onto #47 whole.
-Progress goes to stderr. It exits `1` when the page carried an object the walk does not have, or
-when a course could not be read at all, and `0` otherwise.
+Progress goes to stderr. It exits `1` when the page carried an **object** the walk does not have,
+or when a course could not be read at all, and `0` otherwise. An object and not a plain link: the
+walk is `expectedAttachments`, so a link was never a thing it could have had, and an exit code that
+went red for one would be red on every course and worth nothing.
 
 The nine courses are configured against `.scratch/<key>/` — destinations inside this repository
 rather than anybody's Drive. This program never writes to one; they are there so that #47's
@@ -43,9 +45,11 @@ one, because Chrome locks the profile directory.
   downloads from and `verify` counts, called exactly as they call it. Not a copy of it: the point
   is to be checking the thing itself.
 - **The rendered page** is `rendered-page.mjs`. It shares the saved session and nothing else — no
-  address, no field name, no idea of the content tree. It never calls the read API and does not
-  even take the session token, because a page needs the cookies and the token is what an API
-  request carries.
+  address, no field name, no idea of the content tree. It never calls the read API, so the XSRF
+  token the session hands it goes unused: a page carries the cookies, and the token is what an API
+  request adds. It takes the session whole all the same, because a reader with its own quieter
+  sign-in would be a second thing that can be wrong about whether the student is signed in, and
+  that is the one failure this must not invent.
 
 The reader works the way the student does. It loads the course outline in the browser, clicks open
 everything that is closed, takes its item set from the links Ultra rendered, and then opens each

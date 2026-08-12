@@ -1,5 +1,5 @@
-const ELEMENT_LIMIT = 300;
-const AUTHORITY = [
+const ELEMENT_IN_REPORT = 300;
+const NOT_AUTHORITATIVE_ABOUT = [
   "the contents of a cross-origin frame, which the browser will not let this read",
   "anything a page loads only after a click, which this never makes",
   "anything not on a content item — a conversation, a gradebook, a tool outside the outline",
@@ -18,7 +18,7 @@ export function renderReport(courses) {
     "",
     "## What the rendered page is not authoritative about",
     "",
-    ...AUTHORITY.map((limit) => `- ${limit}`),
+    ...NOT_AUTHORITATIVE_ABOUT.map((limit) => `- ${limit}`),
     "",
     ...courses.flatMap((course) => [...sectionFor(course), ""]),
   ].join("\n");
@@ -36,12 +36,13 @@ export function foundSomethingNew(courses) {
 function summary(courses) {
   const rows = courses.map((course) =>
     course.failure
-      ? [course.key, "—", "—", "—", "—", "**could not be read**"]
+      ? [course.key, "—", "—", "—", "—", "—", "**could not be read**"]
       : [
           course.key,
           course.items,
           course.difference.onPage.objects,
           course.difference.inWalk,
+          course.difference.onBothSides,
           course.difference.onlyOnThePage.objects.length,
           course.difference.onlyInTheWalk.length,
         ],
@@ -53,6 +54,7 @@ function summary(courses) {
       "Items",
       "Objects on the page",
       "In the walk",
+      "On both sides",
       "Only on the page",
       "Only in the walk",
     ],
@@ -90,11 +92,12 @@ function found(heading, objects) {
     `### ${heading}`,
     "",
     ...objects.flatMap((object) => [
-      `- \`${object.address}\` — ${object.kinds.join(", ")}${offsite(object)}`,
+      `- \`${object.address}\` — ${object.kinds.join(", ")}${shape(object)}`,
       ...object.carriedBy.map(
         (carrier) =>
           `  - on **${carrier.itemTitle}** (${carrier.itemUrl})` +
-          `${carrier.frame ? ` inside ${carrier.frame}` : ""}` +
+          `${carrier.label ? `, as “${carrier.label}”` : ""}` +
+          `${carrier.frame ? `, inside ${carrier.frame}` : ""}` +
           `\n    \`\`\`html\n    ${trimmed(carrier.element)}\n    \`\`\``,
       ),
     ]),
@@ -108,8 +111,8 @@ function missing(attachments) {
     "### In the walk, not on the page",
     "",
     ...table(
-      ["File", "Trail", "Address"],
-      attachments.map((each) => [each.file, each.trail, `\`${each.url}\``]),
+      ["File", "Trail", "Path", "Address"],
+      attachments.map((each) => [each.file, each.trail, each.path, `\`${each.url}\``]),
     ),
     "",
   ];
@@ -128,14 +131,16 @@ function unreadable(items) {
   ];
 }
 
-function offsite(object) {
-  if (!object.offsite) return "";
-  return " — off NTULearn, so what it embeds is not readable from here";
+// The two things that decide what a finding is for #47: whether a sync could have brought it
+// across at all, and whether the address is one NTULearn serves files from.
+function shape(object) {
+  if (object.offsite) return " — off NTULearn, so what it embeds is not readable from here";
+  return object.fileShaped ? " — a file address" : "";
 }
 
 function trimmed(element) {
   const flat = element.replace(/\s+/g, " ").trim();
-  return flat.length > ELEMENT_LIMIT ? `${flat.slice(0, ELEMENT_LIMIT)}…` : flat;
+  return flat.length > ELEMENT_IN_REPORT ? `${flat.slice(0, ELEMENT_IN_REPORT)}…` : flat;
 }
 
 function table(headings, rows) {

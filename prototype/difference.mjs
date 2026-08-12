@@ -8,23 +8,27 @@ const FILE_SHAPED = /\/bbcswebdav\/|\/sessions\/|xid-/i;
 // this file's to produce: the objects come off a rendered page and the attachments out of
 // `expectedAttachments`, and all this does is say where they disagree.
 export function differenceBetween({ objects, attachments }) {
-  const expected = new Map(attachments.map((each) => [comparableUrl(each.url), each]));
+  // A list rather than a map keyed by the address, unlike the page side below. Two attachments the
+  // walk expects are two files even where their addresses normalise to one, and folding them
+  // together here would drop a real gap out of `onlyInTheWalk` and out of the count beside it.
+  const expected = attachments.map((each) => ({ ...each, comparable: comparableUrl(each.url) }));
+  const inWalk = new Set(expected.map((each) => each.comparable));
   const carried = gather(objects);
 
   const onPage = { objects: [], navigation: [] };
   for (const each of carried.values())
     onPage[each.navigation ? "navigation" : "objects"].push(each);
 
-  const unmatched = (each) => !expected.has(each.url);
+  const unmatched = (each) => !inWalk.has(each.url);
   return {
     onPage: { objects: onPage.objects.length, navigation: onPage.navigation.length },
-    inWalk: expected.size,
-    onBothSides: [...carried.keys()].filter((url) => expected.has(url)).length,
+    inWalk: expected.length,
+    onBothSides: [...carried.keys()].filter((url) => inWalk.has(url)).length,
     onlyOnThePage: {
       objects: onPage.objects.filter(unmatched),
       navigation: onPage.navigation.filter(unmatched),
     },
-    onlyInTheWalk: [...expected].filter(([url]) => !carried.has(url)).map(([, each]) => each),
+    onlyInTheWalk: expected.filter((each) => !carried.has(each.comparable)),
   };
 }
 
@@ -66,8 +70,8 @@ function isNavigation(object) {
   return object.kind === "link" && !FILE_SHAPED.test(object.url);
 }
 
-function carrier({ kind, label, element, frame, itemId, itemTitle, itemUrl }) {
-  return { kind, label, element, frame, itemId, itemTitle, itemUrl };
+function carrier({ label, element, frame, itemId, itemTitle, itemUrl }) {
+  return { label, element, frame, itemId, itemTitle, itemUrl };
 }
 
 // Both sides through one normalisation, because the two disagree about a query string on an

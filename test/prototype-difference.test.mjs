@@ -74,6 +74,22 @@ test("an attachment the page does not carry is reported the other way", () => {
   );
 });
 
+test("two files whose addresses normalise to one are still two files", () => {
+  const difference = differenceBetween({
+    objects: [],
+    attachments: [
+      attachment(`${BASE}/bbcswebdav/xid-1_1?name=one`, "One.pdf"),
+      attachment(`${BASE}/bbcswebdav/xid-1_1?name=two`, "Two.pdf"),
+    ],
+  });
+
+  assert.equal(difference.inWalk, 2);
+  assert.deepEqual(
+    difference.onlyInTheWalk.map((each) => each.file),
+    ["One.pdf", "Two.pdf"],
+  );
+});
+
 test("one address carried by two elements is one object", () => {
   const url = `${BASE}/bbcswebdav/xid-1_1`;
   const difference = differenceBetween({

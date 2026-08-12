@@ -1,12 +1,18 @@
 import { openSignedInContext } from "../src/ntulearn/session.mjs";
+import { comparableUrl } from "./difference.mjs";
 
 // What a course's content items carry, read off the pages the student's browser renders rather
 // than off the bodies NTULearn's read API returns (#45). `docs/adr/0007` names this as the
 // candidate authority and refuses to adopt it on one course's evidence; this is what tries it.
 //
 // It shares the saved session with the walk and nothing else — not the addresses, not the tree,
-// not a single field name. It never calls the read API, so it does not take the session token
-// either: a page needs the cookies, and the token is what an API request carries.
+// not a single field name. It never calls the read API, so it never uses the XSRF token the
+// session hands over; a page carries the cookies, and the token is what an API request adds.
+//
+// Taking the session whole is deliberate anyway. `openSignedInContext` will not return until it
+// has captured that token, and a reader with its own quieter sign-in would be a second thing that
+// can be wrong about whether the student is signed in — which is the one failure this must not
+// invent, since it reports a course it cannot read as a failure.
 const BASE_URL = "https://ntulearn.ntu.edu.sg";
 const OUTLINE_TIMEOUT_MS = 30_000;
 const SETTLE_TIMEOUT_MS = 15_000;
@@ -32,13 +38,13 @@ async function readCourse(context, courseId) {
     await outline.close();
   }
 
-  const read = await inPages(context, course.items, (page, item) => readItem(page, item));
+  const readItems = await inPages(context, course.items, (page, item) => readItem(page, item));
   return {
     course: course.title,
-    items: read.length,
-    objects: read.flatMap((each) =>
+    items: readItems.length,
+    objects: readItems.flatMap((each) =>
       each.objects
-        .filter((object) => !course.chrome.has(object.url))
+        .filter((object) => !course.chrome.has(comparableUrl(object.url)))
         .map((object) => ({
           ...object,
           itemId: each.item.id,
@@ -46,12 +52,9 @@ async function readCourse(context, courseId) {
           itemUrl: each.item.url,
         })),
     ),
-    unreadableItems: read
+    unreadableItems: readItems
       .filter((each) => each.reason)
-      .map(({ item, reason }) => ({
-        url: item.url,
-        reason,
-      })),
+      .map(({ item, reason }) => ({ url: item.url, reason })),
   };
 }
 
@@ -118,8 +121,12 @@ async function itemsOn(page, courseId) {
 //
 // The price is stated rather than hidden: an object that is genuinely on an item and also on the
 // bare outline is subtracted with the furniture. `report.mjs` says so in the run's own document.
+//
+// Normalised the same way the comparison normalises, because Ultra writes a cache-busting query
+// onto its own assets: the raw address of a logo differs between two page loads, and subtracting
+// by it would leave the furniture standing on every item.
 async function chromeOn(page) {
-  return new Set((await harvest(page)).map((object) => object.url));
+  return new Set((await harvest(page)).map((object) => comparableUrl(object.url)));
 }
 
 async function readItem(page, item) {
