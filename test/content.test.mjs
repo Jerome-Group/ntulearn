@@ -206,3 +206,20 @@ test("resolves an external link against the NTULearn origin", () => {
   );
   assert.equal(externalLinkOf({}), null);
 });
+
+// A SCORM package is a launch rather than a file, so the link is the whole of what can be kept.
+test("a launch address is a link, whichever of NTULearn's names it arrives under", () => {
+  const scorm = {
+    contentHandler: "resource/x-plugin-scormengine",
+    contentDetail: {
+      "resource/x-plugin-scormengine": {
+        launchUrl: "/webapps/scor-scormengine-BB5/delivery?action=launchPackage&content_id=_1_1",
+      },
+    },
+  };
+  assert.equal(
+    externalLinkOf(scorm),
+    "https://ntulearn.ntu.edu.sg/webapps/scor-scormengine-BB5/delivery" +
+      "?action=launchPackage&content_id=_1_1",
+  );
+});

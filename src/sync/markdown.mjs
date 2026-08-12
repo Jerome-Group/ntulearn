@@ -68,14 +68,31 @@ export function contentDocument(item, externalLink = null) {
   return sections.some(Boolean) ? document(item.title, sections) : "";
 }
 
+// A later run may correct one of these and must never touch a page, so a document says which it is
+// in a mark that survives every rewording of what a reader sees. Comments render as nothing, which
+// is the point: this is addressed to the next run rather than to the student.
+const UNCOPIED_MARK = "<!-- ntulearn: nothing to copy -->";
+
+// Everything written before that mark existed is recognised by its sentence instead. That is the
+// weaker test — a rewording strands whatever the old words are still on disk — so it is here for
+// the destinations that already exist and gains nothing by growing.
+const UNCOPIED_STATEMENT =
+  "This item carries no text, no link and no attachment, so there was nothing to copy. " +
+  "Open it in NTULearn.";
+
 // Written in place of the item itself, so nothing NTULearn returns leaves the destination without
 // a trace of having existed and the numbering has no unexplained gap (ADR-0006).
 export function uncopiedDocument(item, trail) {
   return document(item.title, [
     [`- Kind: ${kindOf(item)}`, trail && `- Trail: ${trail}`].filter(Boolean).join("\n"),
-    "This item carries no text, no link and no attachment, so there was nothing to copy. " +
-      "Open it in NTULearn.",
+    UNCOPIED_STATEMENT,
+    UNCOPIED_MARK,
   ]);
+}
+
+export function isUncopiedDocument(text) {
+  if (typeof text !== "string") return false;
+  return text.includes(UNCOPIED_MARK) || text.includes(UNCOPIED_STATEMENT);
 }
 
 export function announcementDocument(announcement) {

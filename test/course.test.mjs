@@ -156,3 +156,60 @@ test("never writes over a page an earlier run copied", async () => {
   assert.equal(result.uncopied, 1);
   assert.equal(again.uncopied, 1);
 });
+
+// ML0004's seven topics are SCORM packages: no file to fetch, and a launch address NTULearn hands
+// over in a field of its own. The link is the whole of what can be kept, so an item carrying one is
+// a page rather than something there was nothing to copy from (#53).
+test("writes a SCORM topic down as its launch link rather than as nothing to copy", async () => {
+  const scorm = [
+    {
+      id: "_1_1",
+      parentId: null,
+      position: 0,
+      title: "Week 1",
+      contentHandler: "resource/x-bb-folder",
+    },
+    {
+      id: "_2_1",
+      parentId: "_1_1",
+      position: 2,
+      title: "T1 - Welcoming the Future World",
+      contentHandler: "resource/x-plugin-scormengine",
+      contentDetail: {
+        "resource/x-plugin-scormengine": {
+          launchUrl: "/webapps/scor/delivery?action=launchPackage",
+        },
+      },
+    },
+  ];
+  const { destination, result } = await sync(downloads("ppt"), scorm);
+  const written = await readFile(
+    join(destination, "01 Week 1", "03 T1 - Welcoming the Future World.md"),
+    "utf8",
+  );
+
+  assert.match(
+    written,
+    /## External link\n\nhttps:\/\/ntulearn\.ntu\.edu\.sg\/webapps\/scor\/delivery\?action=launchPackage/,
+  );
+  assert.doesNotMatch(written, /nothing to copy/);
+  assert.equal(result.uncopied, 0);
+});
+
+// The statement that there was nothing to copy is the sync's own writing rather than the student's,
+// so correcting it takes nothing from anybody — which is how a destination written before a fix
+// stops repeating what the fix removed (#53).
+test("supersedes its own statement that there was nothing to copy", async () => {
+  const { destination } = await sync(downloads("ppt"), WEEK_1);
+  const written = join(destination, "01 Week 1", QUIZ);
+  const current = await readFile(written, "utf8");
+  await writeFile(written, current.replace("- Kind: Test", "- Kind: resource/x-bb-asmt-test-link"));
+
+  await syncCourse({
+    client: client(downloads("ppt"), WEEK_1),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state: { version: 1, courses: {} },
+  });
+
+  assert.equal(await readFile(written, "utf8"), current);
+});
