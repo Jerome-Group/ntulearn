@@ -91,10 +91,11 @@ sentence instead — the weaker test, and the reason that sentence is now fixed 
 - **A run says how many it could not copy, and that count is not a count of new files.** Every
   uncopied item is counted, whatever is on disk. Its document is written again where the
   destination holds nothing or holds one of these documents — which changes nothing unless the
-  text has moved — and is not written at all where a page is in the way. So `uncopied` is about
-  the course, and `markdown` counts these documents the way it already counts the course overview
-  and every folder document: every run, changed or not, except where the page guard stops it. A
-  report is still a report; it is just no longer the only record.
+  text has moved — and is not written at all where a page is in the way. So `uncopied` and
+  `markdown` are both about the course: the items it could not copy, and the documents the copy
+  holds for it. What this run did is `markdownWritten`, which counts a document only where the
+  bytes on disk actually moved (#55). A report is still a report; it is just no longer the only
+  record.
 - **The mark in a document is a compatibility surface.** A document carries
   `<!-- ntulearn: nothing to copy -->` so a later run knows its own writing however the words
   around it change. What predates the mark is recognised by its sentence instead, so *that*
