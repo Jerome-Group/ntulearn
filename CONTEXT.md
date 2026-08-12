@@ -57,6 +57,23 @@ attachment, and a link out, in any combination.
 _Avoid_: resource, node, entry — and *page* on its own, which names a kind of content item here
 and never the item itself
 
+**Content handler**:
+What a *content item* is, in NTULearn's own key for it — `resource/x-bb-file`,
+`resource/x-bb-folder`, `resource/x-plugin-scormengine`. The set is open rather than fixed: a
+*Building Block* brings its own, so no published list closes it
+(`docs/research/does-blackboard-document-the-content-handlers.md`). What a report shows a student
+is the **kind** — the handler said in a word where somebody has supplied one, and the handler
+itself where nobody has (`docs/adr/0006`).
+_Avoid_: type, content type — and *kind*, which is the word for what a student reads; the two part
+company exactly where a handler has no translation, which is the case worth being clear about
+
+**Building Block**:
+Blackboard's word for a plugin installed into NTULearn. It may bring *content items* of its own
+and a *content handler* to name them — SCORM is one. What is installed is the institution's
+choice, which is why this repository can meet a handler no vendor documentation lists.
+_Avoid_: plugin, extension — and *integration*, which is Blackboard's word for a registered REST
+API client and names a different thing
+
 **Body**:
 A content item's text as NTULearn's read API returns it. It is NTULearn's stored record of the
 item, written when the item was authored and not revisited, so it is not what a student's browser
