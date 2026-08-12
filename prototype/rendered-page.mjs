@@ -1,5 +1,8 @@
+// `document` belongs to the two functions below that Playwright serialises and runs inside the
+// page rather than here. Declared once at the top because ESLint reads the directive per file.
+/* global document */
 import { openSignedInContext } from "../src/ntulearn/session.mjs";
-import { comparableUrl } from "./difference.mjs";
+import { comparableUrl, isFileShaped } from "./difference.mjs";
 
 // What a course's content items carry, read off the pages the student's browser renders rather
 // than off the bodies NTULearn's read API returns (#45). `docs/adr/0007` names this as the
@@ -16,7 +19,10 @@ import { comparableUrl } from "./difference.mjs";
 const BASE_URL = "https://ntulearn.ntu.edu.sg";
 const OUTLINE_TIMEOUT_MS = 30_000;
 const SETTLE_TIMEOUT_MS = 15_000;
-const EXPANSION_ROUNDS = 20;
+const REVEAL_ROUNDS = 20;
+const TREE_DEPTH = 10;
+const SETTLE_PAUSE_MS = 1000;
+const POLL_MS = 500;
 const PAGES_AT_A_TIME = 4;
 const LABEL_LIMIT = 200;
 const ELEMENT_LIMIT = 600;
@@ -38,24 +44,91 @@ async function readCourse(context, courseId) {
     await outline.close();
   }
 
-  const readItems = await inPages(context, course.items, (page, item) => readItem(page, item));
+  const readItems = await readEveryItem(context, courseId, course.items);
+  const onItems = readItems.flatMap((each) =>
+    each.objects.map((object) => ({
+      ...object,
+      itemId: each.item.id,
+      itemTitle: each.item.title,
+      itemUrl: each.item.url,
+    })),
+  );
+
   return {
     course: course.title,
     items: readItems.length,
-    objects: readItems.flatMap((each) =>
-      each.objects
-        .filter((object) => !course.chrome.has(comparableUrl(object.url)))
-        .map((object) => ({
-          ...object,
-          itemId: each.item.id,
-          itemTitle: each.item.title,
-          itemUrl: each.item.url,
-        })),
-    ),
+    objects: onItems.filter(isContent(course.chrome, onItems, readItems.length)),
     unreadableItems: readItems
       .filter((each) => each.reason)
       .map(({ item, reason }) => ({ url: item.url, reason })),
   };
+}
+
+// The outline is not assumed to be the whole tree: every page read is also asked which items it
+// links to, and anything new joins the frontier. A folder that renders as its own page rather than
+// as something the outline opens is reached this way and no other.
+//
+// On PS0002 it found nothing the scrolled outline did not already have. That is a result about one
+// course rather than a reason to drop it, and the run across the nine is what settles whether it
+// earns its place.
+async function readEveryItem(context, courseId, fromOutline) {
+  const seen = new Map(fromOutline.map((item) => [item.id, item]));
+  const read = [];
+  let frontier = fromOutline;
+
+  for (let depth = 0; depth < TREE_DEPTH && frontier.length; depth += 1) {
+    const done = await inPages(context, frontier, (page, item) => readItem(page, courseId, item));
+    read.push(...done);
+
+    frontier = [];
+    for (const each of done) {
+      for (const found of each.links) {
+        if (seen.has(found.id)) continue;
+        seen.set(found.id, found);
+        frontier.push(found);
+      }
+    }
+  }
+
+  return read;
+}
+
+// The application, subtracted twice over, because Ultra renders a deep-linked item inside the
+// whole of itself and half the furniture is not on the bare outline: the notification socket, the
+// LTI placements and the Ally frames are on every item's page and no course's outline.
+//
+// So an address is furniture if the outline carried it, or if **every** item carries it. The
+// second is bounded to what is not file-shaped: a file two items share is a real thing, and on a
+// one-item course "every item" says nothing at all.
+function isContent(chrome, objects, items) {
+  const onEveryItem = new Set();
+  if (items > 1) {
+    const itemsPerUrl = new Map();
+    for (const object of objects) {
+      const url = withoutQuery(object.url);
+      itemsPerUrl.set(url, (itemsPerUrl.get(url) ?? new Set()).add(object.itemId));
+    }
+    for (const [url, on] of itemsPerUrl) if (on.size === items) onEveryItem.add(url);
+  }
+
+  return (object) => {
+    if (chrome.has(comparableUrl(object.url))) return false;
+    return !onEveryItem.has(withoutQuery(object.url)) || isFileShaped(object.url);
+  };
+}
+
+// Furniture is recognised without the query string even off NTULearn, where the comparison keeps
+// it. The notification socket is the same `clientframe.html` on all twenty-seven items with a
+// fresh `ver=` each time, so keeping the query makes twenty-seven distinct objects out of one
+// piece of the application — while dropping it everywhere would make one object out of a course's
+// whole set of Panopto recordings, which is why only this side does it.
+function withoutQuery(url) {
+  try {
+    const { origin, pathname } = new URL(url, BASE_URL);
+    return `${origin}${pathname}`;
+  } catch {
+    return url;
+  }
 }
 
 // The outline is where the item set comes from, and the only place this can tell "the student
@@ -65,38 +138,70 @@ async function readCourse(context, courseId) {
 // course reported as a clean one is the failure that looks like success.
 async function readOutline(page, courseId) {
   await page.goto(courseUrl(courseId), { waitUntil: "domcontentloaded" });
-  const links = itemLinkSelector(courseId);
-  try {
-    await page.waitForSelector(links, { timeout: OUTLINE_TIMEOUT_MS });
-  } catch (error) {
+
+  // Waiting for a content item rather than for the page, because Ultra answers a course the
+  // student cannot reach with a page that loads: the navigation, the course name, and no content.
+  // A selector for the item link is what tells the two apart, and giving up on it is the failure.
+  if (!(await waitForItems(page, courseId)).length) {
     throw new Error(
       `No content item rendered on ${courseId} within ${OUTLINE_TIMEOUT_MS / 1000}s; ` +
         `the browser ended at ${page.url()}`,
-      { cause: error },
     );
   }
 
-  await expandEverything(page, links);
-  const items = await itemsOn(page, courseId);
-  if (!items.length) throw new Error(`The outline of ${courseId} rendered no readable item link`);
-
-  return { title: await page.title(), items, chrome: await chromeOn(page) };
+  await revealEverything(page, courseId);
+  return {
+    title: await page.title(),
+    items: await itemsOn(page, courseId),
+    chrome: await chromeOn(page),
+  };
 }
 
-// A folder or a learning module renders its children only once it is open, so everything closed is
-// clicked until nothing closed is left. Bounded, because a control that reopens itself would
-// otherwise be an unattended run that never ends.
-async function expandEverything(page, links) {
-  for (let round = 0; round < EXPANSION_ROUNDS; round += 1) {
-    const closed = await page.$$('[aria-expanded="false"]');
-    if (!closed.length) return;
+async function waitForItems(page, courseId) {
+  const deadline = Date.now() + OUTLINE_TIMEOUT_MS;
+  for (;;) {
+    const items = await itemsOn(page, courseId);
+    if (items.length || Date.now() > deadline) return items;
+    await page.waitForTimeout(POLL_MS);
+  }
+}
 
-    const before = (await page.$$(links)).length;
+// The outline hides its content two ways at once, and reaching an item means undoing both. A
+// folder renders its children only once it is opened, and the list itself renders only as far as
+// it has been scrolled — on PS0002 that was 27 items where the walk had 43, and everything from
+// `Tutorial & Lab 9` onwards simply was not in the DOM.
+//
+// Bounded, because a control that reopens itself would otherwise be an unattended run that never
+// ends. Nothing here submits anything: `aria-expanded` is what a disclosure widget carries, and a
+// student's course outline has no other kind.
+async function revealEverything(page, courseId) {
+  let before = -1;
+  for (let round = 0; round < REVEAL_ROUNDS; round += 1) {
+    const closed = await page.$$('[aria-expanded="false"]');
     for (const control of closed)
       await control.click({ timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
-    await page.waitForTimeout(1000);
-    if ((await page.$$(links)).length === before) return;
+    await scrollThrough(page);
+    await page.waitForTimeout(SETTLE_PAUSE_MS);
+
+    // Folders and items together, because a round that opens a folder holding only more folders
+    // adds no item and is not finished.
+    const after =
+      (await page.$$("[aria-expanded]")).length + (await itemsOn(page, courseId)).length;
+    if (!closed.length && after === before) return;
+    before = after;
   }
+}
+
+// Every scrolling region to its end, which is what a student does to see the bottom of a list and
+// is the one thing here that is not a click. A page that renders more when it is scrolled is
+// rendering content; a page that renders more when it is clicked is being asked for something.
+function scrollThrough(page) {
+  return page.evaluate(() => {
+    for (const element of document.querySelectorAll("*")) {
+      if (element.scrollHeight > element.clientHeight + 50)
+        element.scrollTop = element.scrollHeight;
+    }
+  });
 }
 
 // Keyed off Ultra's own addresses rather than off a class name: the URL scheme is the part of this
@@ -129,19 +234,24 @@ async function chromeOn(page) {
   return new Set((await harvest(page)).map((object) => comparableUrl(object.url)));
 }
 
-async function readItem(page, item) {
+async function readItem(page, courseId, item) {
   try {
     const response = await page.goto(item.url, { waitUntil: "domcontentloaded" });
     if (response && !response.ok()) {
-      return { item, objects: [], reason: `HTTP ${response.status()}` };
+      return { item, objects: [], links: [], reason: `HTTP ${response.status()}` };
     }
     // Ultra polls while it is open, so idle is a hope rather than a promise. Waiting for it when
     // it comes and carrying on when it does not is the difference between a slow read and a run
     // that dies on one item of nine courses.
     await page.waitForLoadState("networkidle", { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
-    return { item, objects: await harvestEveryFrame(page) };
+    // Scrolled but never clicked, unlike the outline. An item's page carries `aria-expanded` on
+    // its file previews, so sweeping those would be this reader making the page load things a
+    // student had not asked it to — which the report says in as many words that it never does.
+    await scrollThrough(page);
+    await page.waitForTimeout(SETTLE_PAUSE_MS);
+    return { item, objects: await harvestEveryFrame(page), links: await itemsOn(page, courseId) };
   } catch (error) {
-    return { item, objects: [], reason: error.message };
+    return { item, objects: [], links: [], reason: error.message };
   }
 }
 
@@ -159,14 +269,21 @@ async function harvestEveryFrame(page) {
   return objects;
 }
 
-// Read off the DOM properties rather than the attributes: `src` as a property is the address the
-// browser resolved and would fetch, and the attribute is the string an author wrote. The whole
-// question `docs/adr/0007` leaves open is whether those two differ, so taking the attribute here
-// would be measuring the body again through a browser.
+// Two passes over every element, because Ultra needs both. The DOM **property** first — `src` as a
+// property is the address the browser resolved and would fetch, where the attribute is the string
+// an author wrote, and whether those differ is the question `docs/adr/0007` leaves open.
+//
+// Then every attribute, because on Ultra the property is not enough and this was measured rather
+// than guessed: a course's attached file renders as `<a data-ally-file-preview-url="…/xid-…">`
+// with **no `href` at all**, and the preview beside it carries the same address in an
+// `aria-controls`. An element-shaped reader walks straight past a course's actual attachments.
+//
+// This is still the rendered page and not the body. What is being read is the DOM Ultra built out
+// of the body, after it resolved it — the attribute is on an element that only exists because the
+// page ran.
 function harvest(frame) {
   return frame.evaluate(
     ({ labelLimit, elementLimit }) => {
-      /* global document */
       const KINDS = {
         img: "image",
         a: "link",
@@ -178,22 +295,65 @@ function harvest(frame) {
         source: "source",
         track: "track",
       };
-      const ADDRESSES = ["currentSrc", "src", "href", "data"];
+      const ADDRESS_PROPERTIES = ["currentSrc", "src", "href", "data"];
+      const URL_SHAPED = /https?:\/\/[^\s"'<>\\)]+|\/[^\s"'<>\\)]+/g;
+      const FILE_SHAPED = /\/bbcswebdav\/|\/sessions\/|xid-/i;
+      // Inline content rather than an address: there is nothing to fetch and nothing a sync could
+      // have failed to bring across, and one base64 image is longer than the report it lands in.
+      const NOT_AN_ADDRESS = /^(?:data|blob|javascript|about|mailto|tel):/i;
+      // The application loading itself, never a course's object. A `<script>` and a `<link rel>`
+      // are how Ultra arrives — CDN bundles, the Ally client, a stylesheet — and on this course
+      // they were three quarters of everything the page appeared to carry.
+      const MACHINERY = new Set(["script", "link", "style", "meta", "base"]);
       const found = [];
 
-      for (const element of document.querySelectorAll(Object.keys(KINDS).join(","))) {
-        const url = ADDRESSES.map((name) => element[name]).find(
-          (value) => typeof value === "string" && value,
-        );
-        if (!url) continue;
-        const label =
-          element.getAttribute("alt") || element.getAttribute("title") || element.textContent || "";
-        found.push({
-          url,
-          kind: KINDS[element.tagName.toLowerCase()],
-          label: label.replace(/\s+/g, " ").trim().slice(0, labelLimit),
-          element: element.outerHTML.slice(0, elementLimit),
-        });
+      const describe = (element) => ({
+        label: (
+          element.getAttribute("alt") ||
+          element.getAttribute("aria-label") ||
+          element.getAttribute("title") ||
+          element.textContent ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, labelLimit),
+        element: element.outerHTML.slice(0, elementLimit),
+      });
+
+      for (const element of document.querySelectorAll("*")) {
+        const tag = element.tagName.toLowerCase();
+        if (MACHINERY.has(tag)) continue;
+        const seen = new Set();
+
+        const resolved =
+          KINDS[tag] &&
+          ADDRESS_PROPERTIES.map((name) => element[name]).find(
+            (value) => typeof value === "string" && value && !NOT_AN_ADDRESS.test(value),
+          );
+        if (resolved) {
+          seen.add(resolved);
+          found.push({ url: resolved, kind: KINDS[tag], ...describe(element) });
+        }
+
+        for (const attribute of element.attributes) {
+          // `xmlns` is a namespace rather than a fetch, and every `<svg>` on the page carries one.
+          if (attribute.name === "xmlns") continue;
+          for (const [candidate] of attribute.value.matchAll(URL_SHAPED)) {
+            if (NOT_AN_ADDRESS.test(candidate)) continue;
+            // An absolute address wherever it sits, and a relative one only where it is shaped
+            // like a file — the rest of what a class or an id happens to contain is not an
+            // address at all, and this is the one place a slash means nothing in particular.
+            const url = candidate.startsWith("http")
+              ? candidate
+              : FILE_SHAPED.test(candidate)
+                ? new URL(candidate, document.baseURI).href
+                : "";
+            if (!url || seen.has(url)) continue;
+            seen.add(url);
+            found.push({ url, kind: `${tag}[${attribute.name}]`, ...describe(element) });
+          }
+        }
       }
 
       return found;
@@ -229,11 +389,23 @@ function courseUrl(courseId) {
 }
 
 function itemLinkSelector(courseId) {
-  return `a[href*="/ultra/courses/${courseId}/outline/"]`;
+  return `a[href*="/ultra/courses/${courseId}/"]`;
 }
 
+// A content item is `…/courses/<course>/<kind>/<item>` — `document`, `file`, `scorm`, and whatever
+// else a Building Block brings. Everything the outline links to that is not one is either a course
+// tool, which is `/outline/…`, or the course itself.
+//
+// The path only. `…/outline/message?recipientIds=_27476_1` and `…/outline/booksAndTools?parentId=`
+// both carry an id in the query, and reading those as items is what a looser match would do.
+const ITEM_PATH = /^\/ultra\/courses\/[^/]+\/(?!outline(?:\/|$))[^/]+\/(_\d+_\d+)(?:\/[^/]*)?$/;
+
 function itemIdIn(url) {
-  return url.match(/\/outline\/(?:[^/?#]+\/)*(_\d+_\d+)/)?.[1] ?? "";
+  try {
+    return new URL(url, BASE_URL).pathname.match(ITEM_PATH)?.[1] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function clean(text) {

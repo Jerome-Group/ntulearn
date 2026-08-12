@@ -52,16 +52,37 @@ one, because Chrome locks the profile directory.
   that is the one failure this must not invent.
 
 The reader works the way the student does. It loads the course outline in the browser, clicks open
-everything that is closed, takes its item set from the links Ultra rendered, and then opens each
-item's own page. On each page it reads every `<img>`, `<a>`, `<iframe>`, `<object>`, `<embed>`,
-`<video>`, `<audio>`, `<source>` and `<track>` — off the DOM **properties** rather than the
-attributes, so what it records is the address the browser resolved and would fetch rather than the
-string an author wrote. That distinction is the whole question `docs/adr/0007` leaves open; taking
-the attribute would be measuring the body again through a browser.
+every folder and scrolls every list to its end, takes its item set from the links Ultra rendered,
+and then opens each item's own page. It asks each of those pages what *it* links to as well, so a
+folder that renders as its own page is still reached.
 
-Ultra renders a deep-linked item inside the whole application, so the item's page carries the
-navigation, the logos and the links to its siblings. Those are subtracted by harvesting the bare
-outline first and dropping anything that appeared there.
+Both halves of that were measured rather than assumed. On PS0002 the unscrolled, unexpanded outline
+offers 3 items; expanding gets 27; scrolling as well gets 43, and the walk has 90 attachments
+across exactly those 43. Everything from `Tutorial & Lab 9` onwards is simply not in the DOM until
+the list has been scrolled to it.
+
+On each page it reads two things off every element. The DOM **property** first — `src` as a
+property is the address the browser resolved and would fetch, where the attribute is the string an
+author wrote, and whether those two differ is the question `docs/adr/0007` leaves open. Then every
+attribute, because on Ultra the property alone finds nothing: a course's attached file renders as
+
+```html
+<a data-ally-file-preview-url="…/bbcswebdav/pid-5569511-…/xid-58395685_1" style="display: none;"></a>
+```
+
+with **no `href` at all**, and the preview control beside it carries the same address in an
+`aria-controls`. An element-shaped reader walks past every attachment in the course — the run that
+proved it had 90 attachments in the walk and *zero* addresses in common with the page.
+
+This is still the rendered page and not the body. What is read is the DOM Ultra built out of the
+body, after it resolved it; the attribute sits on an element that exists only because the page ran.
+
+**The application is subtracted twice.** Ultra renders a deep-linked item inside the whole of
+itself, so an item's page carries the navigation, the notification socket, the Ally client and the
+LTI placements. An address is treated as furniture if the bare outline also carried it, or if
+*every* item carries it and it is not shaped like a file. `<script>` and `<link>` are skipped
+outright: they are how Ultra arrives, never a course's object. Without those three rules the same
+course reported 111 page-only objects, and every one of them was Blackboard loading itself.
 
 ## Reading the output
 
@@ -89,7 +110,24 @@ An object is anything embedded; a plain link is navigation. An `<a>` into `/bbcs
 
 Stated in the report itself, every run, because a limit that lives only here is a limit nobody
 reads at the moment it matters: the contents of a cross-origin frame, anything a page loads only
-after a click, anything not on a content item, and anything the bare outline also carries.
+after a click, anything not on a content item, a `data:` address, and whatever the two furniture
+rules subtract.
+
+Scrolling is not a click, and the difference is the line this draws. A page that renders more when
+it is scrolled is rendering what is already there; a page that renders more when it is clicked is
+being asked for something. So the outline is scrolled and clicked open, and an item's page is only
+ever scrolled — its `aria-expanded` controls are file previews, and sweeping those would make this
+reader fetch things the student never asked for.
+
+## What one course has shown so far
+
+`25S2-PS0002-LAB`, the only course this has been run against: **43 items, 90 attachments in the
+walk, all 90 also on the page.** Nothing the walk expects is missing from the page, and the three
+addresses the page has that the walk does not are Zoom's LTI error assets. **No aliases**, which is
+what `docs/adr/0007` predicts and what #47 exists to test properly.
+
+One course is not the answer to anything — it is the same mistake #29 made, and `docs/adr/0007`
+says so in as many words. It is recorded here because it is what the calibration cost.
 
 ## It is not merged, and that is deliberate
 

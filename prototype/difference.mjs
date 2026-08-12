@@ -4,6 +4,10 @@ const BASE_URL = "https://ntulearn.ntu.edu.sg";
 // upload's session address, and the `xid-` a stored file is identified by anywhere it appears.
 const FILE_SHAPED = /\/bbcswebdav\/|\/sessions\/|xid-/i;
 
+export function isFileShaped(url) {
+  return FILE_SHAPED.test(url);
+}
+
 // What the page carries, held against what the walk expects, in both directions. Neither side is
 // this file's to produce: the objects come off a rendered page and the attachments out of
 // `expectedAttachments`, and all this does is say where they disagree.

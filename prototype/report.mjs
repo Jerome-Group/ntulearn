@@ -1,10 +1,14 @@
 const ELEMENT_IN_REPORT = 300;
+const CARRIERS_IN_REPORT = 3;
 const NOT_AUTHORITATIVE_ABOUT = [
   "the contents of a cross-origin frame, which the browser will not let this read",
   "anything a page loads only after a click, which this never makes",
   "anything not on a content item — a conversation, a gradebook, a tool outside the outline",
-  "anything also carried by the bare course outline, which is subtracted as the application's own" +
-    " furniture and would take a genuine object with it",
+  "anything the bare outline also carries, or that every item carries and is not shaped like a" +
+    " file — both are subtracted as the application's own furniture, and either could take a" +
+    " genuine object with it",
+  "a `data:` or `blob:` address, which is content inlined into the page rather than a file any" +
+    " sync could have brought across",
 ];
 
 // One document per run, Markdown, so the Owner pastes it back onto #47 whole. It is the whole
@@ -93,16 +97,28 @@ function found(heading, objects) {
     "",
     ...objects.flatMap((object) => [
       `- \`${object.address}\` — ${object.kinds.join(", ")}${shape(object)}`,
-      ...object.carriedBy.map(
-        (carrier) =>
-          `  - on **${carrier.itemTitle}** (${carrier.itemUrl})` +
-          `${carrier.label ? `, as “${carrier.label}”` : ""}` +
-          `${carrier.frame ? `, inside ${carrier.frame}` : ""}` +
-          `\n    \`\`\`html\n    ${trimmed(carrier.element)}\n    \`\`\``,
-      ),
+      ...object.carriedBy
+        .slice(0, CARRIERS_IN_REPORT)
+        .map(
+          (carrier) =>
+            `  - on **${carrier.itemTitle}** (${carrier.itemUrl})` +
+            `${carrier.label ? `, as “${carrier.label}”` : ""}` +
+            `${carrier.frame ? `, inside ${carrier.frame}` : ""}` +
+            `\n    \`\`\`html\n    ${trimmed(carrier.element)}\n    \`\`\``,
+        ),
+      ...alsoOn(object.carriedBy),
     ]),
     "",
   ];
+}
+
+// An address on many items is listed on a few of them and counted for the rest. The element is
+// what diagnoses a finding and it is the same element every time, so the forty-third copy of it
+// costs the document the one property it has to have: that the Owner can paste it back whole.
+function alsoOn(carriers) {
+  const rest = carriers.length - CARRIERS_IN_REPORT;
+  if (rest <= 0) return [];
+  return [`  - and on ${rest} further ${rest === 1 ? "item" : "items"}`];
 }
 
 function missing(attachments) {
