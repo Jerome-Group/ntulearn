@@ -42,8 +42,16 @@ spot-check has somewhere to sync a course to that is not a real destination.
 one, because Chrome locks the profile directory.
 
 - **The walk** is `expectedAttachments` from `src/sync/attachments.mjs` — the same generator a sync
-  downloads from and `verify` counts, called exactly as they call it. Not a copy of it: the point
-  is to be checking the thing itself.
+  downloads from and `verify` counts, called exactly as they call it — **plus `externalLinkOf`**,
+  called exactly as `src/sync/course.mjs` calls it. Neither is a copy: the point is to be checking
+  the things themselves.
+
+  The second one is not what #45 asked for, and it is there because attachments alone made both
+  sides blind at once. An external-link item carries no attachment, so 44 of PS0002's 126 items
+  were invisible to the walk — and every one of the 44 is a video lecture. The page missed them
+  too, for its own reasons, so the two agreed perfectly on 90 addresses and neither had seen a
+  single recording. A page and a walk that agree because neither can see something is the failure
+  #29 exists to prevent.
 - **The rendered page** is `rendered-page.mjs`. It shares the saved session and nothing else — no
   address, no field name, no idea of the content tree. It never calls the read API, so the XSRF
   token the session hands it goes unused: a page carries the cookies, and the token is what an API
@@ -77,12 +85,23 @@ proved it had 90 attachments in the walk and *zero* addresses in common with the
 This is still the rendered page and not the body. What is read is the DOM Ultra built out of the
 body, after it resolved it; the attribute sits on an element that exists only because the page ran.
 
+**The outline is a page too, not only an index.** Its own objects count, attributed to *the course
+outline*. That is not a nicety: a course's video lectures are external-link items, and on PS0002
+all 44 are anchors straight to Kaltura on the outline and nowhere else. Read as an index alone, the
+outline contributes nothing and the recordings do not exist.
+
 **The application is subtracted twice.** Ultra renders a deep-linked item inside the whole of
 itself, so an item's page carries the navigation, the notification socket, the Ally client and the
-LTI placements. An address is treated as furniture if the bare outline also carried it, or if
-*every* item carries it and it is not shaped like a file. `<script>` and `<link>` are skipped
-outright: they are how Ultra arrives, never a course's object. Without those three rules the same
-course reported 111 page-only objects, and every one of them was Blackboard loading itself.
+LTI placements. An address is furniture if the **bare** outline carried it — captured before
+anything is expanded or scrolled — or if *every* item carries it and it is not shaped like a file.
+`<script>`, `<link>` and `<use>` are skipped outright: the first two are how Ultra arrives, and the
+third is how an SVG icon is drawn, with the current page's own address in its `xlink:href`.
+
+**Nothing off NTULearn is ever subtracted as furniture.** An offsite address on a course page is
+the one population that cannot be the application — it is the embedded player, the recording, the
+external reading. Taking the chrome baseline from the *revealed* outline broke exactly this: it put
+40 Kaltura addresses into the subtract-set, so the noise reduction was deleting the population #33
+exists about.
 
 ## Reading the output
 
@@ -121,13 +140,32 @@ reader fetch things the student never asked for.
 
 ## What one course has shown so far
 
-`25S2-PS0002-LAB`, the only course this has been run against: **43 items, 90 attachments in the
-walk, all 90 also on the page.** Nothing the walk expects is missing from the page, and the three
-addresses the page has that the walk does not are Zoom's LTI error assets. **No aliases**, which is
-what `docs/adr/0007` predicts and what #47 exists to test properly.
+`25S2-PS0002-LAB`, the only course this has been run against: **43 items, 134 things in the walk —
+90 attachments and 44 external links — and all 134 on the page.** Nothing the walk expects is
+missing. **No aliases**, which is what `docs/adr/0007` predicts and what #47 exists to test
+properly.
+
+Five addresses the page carries and the walk does not. Four are furniture that survived the rules:
+an instructor's avatar, and three assets of Zoom's LTI placement rendering its *unauthorised* state
+— `error_tip.png`, "Back To Home", "Contact us". The fifth is a real finding of the #33 family:
+
+```
+https://www.rstudio.com/wp-content/uploads/2015/02/data-wrangling-cheatsheet.pdf
+  on Lecture 02: Data Preparation and Coding Essentials with R
+```
+
+A PDF linked in a document **body**. `externalLinkOf` reads an item's own link field, so a link
+written inside page text is invisible to the walk: no sync brings it across and no `verify` counts
+it.
 
 One course is not the answer to anything — it is the same mistake #29 made, and `docs/adr/0007`
-says so in as many words. It is recorded here because it is what the calibration cost.
+says so in as many words. It is recorded here because it is what the calibration cost, and because
+the first version of this reader reported that same course as a clean 90 out of 90 while both sides
+were blind to every one of its recordings.
+
+**It never fetches anything.** Every number here is about addresses. Whether an address returns
+bytes is untested — that is what #40 did by digest for CC0006, and what #47's spot-check is for.
+"No items could not be read" means every page loaded, and nothing more than that.
 
 ## It is not merged, and that is deliberate
 

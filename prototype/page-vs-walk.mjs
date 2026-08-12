@@ -3,8 +3,10 @@ import { stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "../src/config.mjs";
 import { openClient } from "../src/ntulearn/client.mjs";
+import { externalLinkOf, kindOf } from "../src/ntulearn/content.mjs";
 import { writeLine } from "../src/output.mjs";
 import { expectedAttachments } from "../src/sync/attachments.mjs";
+import { placementsIn } from "../src/sync/placement.mjs";
 import { differenceBetween } from "./difference.mjs";
 import { foundSomethingNew, renderReport } from "./report.mjs";
 import { openRenderedPageReader } from "./rendered-page.mjs";
@@ -40,6 +42,7 @@ async function walkedCourse(client, course) {
   try {
     const snapshot = await client.readCourse(course.courseId);
     const attachments = [];
+
     for await (const { attachment, placement } of expectedAttachments({
       client,
       courseId: course.courseId,
@@ -47,15 +50,47 @@ async function walkedCourse(client, course) {
     })) {
       attachments.push({
         url: attachment.resourceUrl,
-        file: placement.file,
+        kind: "attachment",
+        name: placement.file,
         trail: placement.trail,
         path: placement.path,
       });
     }
-    return { course: snapshot.course.displayName, attachments };
+
+    return {
+      course: snapshot.course.displayName,
+      attachments: [...attachments, ...linked(snapshot)],
+    };
   } catch (error) {
     return { failure: `the walk could not read it: ${error.message}` };
   }
+}
+
+// The links as well as the attachments, and `externalLinkOf` called exactly as `src/sync/course.mjs`
+// calls it. Attachments alone was the shape of #45's fourth criterion and it made the comparison
+// blind on both sides at once: an external-link item carries no attachment, so 44 of PS0002's 126
+// items were invisible to the walk — and every one of them is a video lecture.
+//
+// A page and a walk that agree because neither can see something is the failure #29 exists to
+// prevent. Whether the criterion or the comparison was wrong is #33's to settle; what is not in
+// question is that a number counted this way says nothing about a course's recordings.
+function linked(snapshot) {
+  const placements = placementsIn(snapshot.items);
+  const links = [];
+
+  for (const item of snapshot.items) {
+    const url = externalLinkOf(item);
+    if (!url) continue;
+    links.push({
+      url,
+      kind: kindOf(item),
+      name: item.title,
+      trail: placements.get(item.id)?.trail ?? "",
+      path: "—",
+    });
+  }
+
+  return links;
 }
 
 async function rendered(profilePath, courses) {

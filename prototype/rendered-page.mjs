@@ -24,6 +24,7 @@ const TREE_DEPTH = 10;
 const SETTLE_PAUSE_MS = 1000;
 const POLL_MS = 500;
 const PAGES_AT_A_TIME = 4;
+const OUTLINE = "OUTLINE";
 const LABEL_LIMIT = 200;
 const ELEMENT_LIMIT = 600;
 
@@ -45,19 +46,31 @@ async function readCourse(context, courseId) {
   }
 
   const readItems = await readEveryItem(context, courseId, course.items);
-  const onItems = readItems.flatMap((each) =>
-    each.objects.map((object) => ({
+  // The outline is a page the student reads, not only an index of other pages, and its own objects
+  // count. A course's video lectures are the case that proves it: on PS0002 all forty-four are
+  // external-link items, and every one is an anchor straight to Kaltura on the outline and nowhere
+  // else. Read as an index alone, the outline contributes no object and the videos do not exist.
+  const carried = [
+    ...course.objects.map((object) => ({
       ...object,
-      itemId: each.item.id,
-      itemTitle: each.item.title,
-      itemUrl: each.item.url,
+      itemId: OUTLINE,
+      itemTitle: "the course outline",
+      itemUrl: courseUrl(courseId),
     })),
-  );
+    ...readItems.flatMap((each) =>
+      each.objects.map((object) => ({
+        ...object,
+        itemId: each.item.id,
+        itemTitle: each.item.title,
+        itemUrl: each.item.url,
+      })),
+    ),
+  ];
 
   return {
     course: course.title,
     items: readItems.length,
-    objects: onItems.filter(isContent(course.chrome, onItems, readItems.length)),
+    objects: carried.filter(isContent(course.chrome, carried, readItems.length + 1)),
     unreadableItems: readItems
       .filter((each) => each.reason)
       .map(({ item, reason }) => ({ url: item.url, reason })),
@@ -149,11 +162,17 @@ async function readOutline(page, courseId) {
     );
   }
 
+  // Before anything is revealed, so that what is subtracted as furniture is the application the
+  // outline arrives as, rather than the content it is about to show. Taking it afterwards is what
+  // put forty Kaltura addresses into the subtract-set and deleted the course's video lectures.
+  const chrome = await chromeOn(page);
+
   await revealEverything(page, courseId);
   return {
     title: await page.title(),
     items: await itemsOn(page, courseId),
-    chrome: await chromeOn(page),
+    objects: await harvestEveryFrame(page),
+    chrome,
   };
 }
 
@@ -220,18 +239,24 @@ async function itemsOn(page, courseId) {
   return [...items.values()];
 }
 
-// Everything an item's page shows that is not the item: the navigation, the logos, and the links
-// to its siblings. Ultra renders a deep-linked item inside the whole application, so without this
-// every item would report the entire course's furniture as objects it carries.
+// The application the outline arrives as: the navigation, the logos, the tool links. Ultra renders
+// a deep-linked item inside the whole of itself, so without this every item would report the
+// course's entire furniture as objects it carries.
 //
-// The price is stated rather than hidden: an object that is genuinely on an item and also on the
-// bare outline is subtracted with the furniture. `report.mjs` says so in the run's own document.
+// **NTULearn's own addresses only.** Nothing off NTULearn is ever subtracted as furniture, because
+// an offsite address on a course page is the one population that cannot be the application — it is
+// the embedded player, the recording, the external reading. That rule is what the Kaltura lectures
+// cost to learn.
 //
-// Normalised the same way the comparison normalises, because Ultra writes a cache-busting query
-// onto its own assets: the raw address of a logo differs between two page loads, and subtracting
-// by it would leave the furniture standing on every item.
+// Normalised the way the comparison normalises, because Ultra writes a cache-busting query onto
+// its own assets: a logo's raw address differs between two page loads, and subtracting by it would
+// leave the furniture standing on every item.
 async function chromeOn(page) {
-  return new Set((await harvest(page)).map((object) => comparableUrl(object.url)));
+  return new Set(
+    (await harvest(page))
+      .map((object) => comparableUrl(object.url))
+      .filter((url) => url.startsWith(BASE_URL)),
+  );
 }
 
 async function readItem(page, courseId, item) {
@@ -301,10 +326,12 @@ function harvest(frame) {
       // Inline content rather than an address: there is nothing to fetch and nothing a sync could
       // have failed to bring across, and one base64 image is longer than the report it lands in.
       const NOT_AN_ADDRESS = /^(?:data|blob|javascript|about|mailto|tel):/i;
-      // The application loading itself, never a course's object. A `<script>` and a `<link rel>`
+      // The application drawing itself, never a course's object. A `<script>` and a `<link rel>`
       // are how Ultra arrives — CDN bundles, the Ally client, a stylesheet — and on this course
-      // they were three quarters of everything the page appeared to carry.
-      const MACHINERY = new Set(["script", "link", "style", "meta", "base"]);
+      // they were three quarters of everything the page appeared to carry. A `<use>` is how an
+      // SVG icon is drawn: its `xlink:href` is the current page's address with `#icon-…` on the
+      // end, so every assessment on the outline reported its own page as an object it carries.
+      const MACHINERY = new Set(["script", "link", "style", "meta", "base", "use"]);
       const found = [];
 
       const describe = (element) => ({

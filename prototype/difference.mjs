@@ -67,11 +67,16 @@ function gather(objects) {
   return byUrl;
 }
 
-// A link is a link — the Markdown keeps it, so a reader still has it and nothing is lost. Every
-// other element embeds something the conversion removes, which is the population #33 is about, and
-// so is an `<a>` into a file address whatever NTULearn wrote around it.
+// Navigation is moving around NTULearn: the calendar, the gradebook, the item you came from. That
+// is all it is, and everything else on a course page is something the student was meant to have.
+//
+// An `<a>` off NTULearn is not navigation, however plain the element. A course's video lectures
+// are anchors to Kaltura and nothing else — no `<iframe>`, no `<video>` — so a rule that files
+// every link under "the Markdown keeps it, nothing is lost" files the whole recorded course there.
+// The walk reads an item's external link too, so both sides can now see them and the comparison
+// means something.
 function isNavigation(object) {
-  return object.kind === "link" && !FILE_SHAPED.test(object.url);
+  return object.kind === "link" && !FILE_SHAPED.test(object.url) && isNtulearnUrl(object.url);
 }
 
 function carrier({ label, element, frame, itemId, itemTitle, itemUrl }) {

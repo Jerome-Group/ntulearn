@@ -8,8 +8,8 @@ function object(url, kind = "image", extra = {}) {
   return { url, kind, label: "", element: `<${kind}>`, frame: null, ...extra };
 }
 
-function attachment(url, file = "Week 1.pdf") {
-  return { url, file, trail: "Lectures", path: `01 Lectures/01 ${file}` };
+function attachment(url, name = "Week 1.pdf") {
+  return { url, kind: "attachment", name, trail: "Lectures", path: `01 Lectures/01 ${name}` };
 }
 
 test("an address on both sides is on neither difference", () => {
@@ -69,7 +69,7 @@ test("an attachment the page does not carry is reported the other way", () => {
   });
 
   assert.deepEqual(
-    difference.onlyInTheWalk.map((each) => each.file),
+    difference.onlyInTheWalk.map((each) => each.name),
     ["Notes.pdf"],
   );
 });
@@ -85,7 +85,7 @@ test("two files whose addresses normalise to one are still two files", () => {
 
   assert.equal(difference.inWalk, 2);
   assert.deepEqual(
-    difference.onlyInTheWalk.map((each) => each.file),
+    difference.onlyInTheWalk.map((each) => each.name),
     ["One.pdf", "Two.pdf"],
   );
 });
@@ -101,12 +101,36 @@ test("one address carried by two elements is one object", () => {
   assert.deepEqual(difference.onlyOnThePage.objects[0].kinds, ["image", "link"]);
 });
 
+test("a video the course links to is an object, not navigation", () => {
+  const lecture = "https://api.sg.kaltura.com/p/117/sp/11700/embedIframeJs/uiconf_id/23448394";
+  const difference = differenceBetween({
+    objects: [object(lecture, "link")],
+    attachments: [],
+  });
+
+  assert.deepEqual(
+    difference.onlyOnThePage.objects.map((each) => each.address),
+    [lecture],
+  );
+  assert.deepEqual(difference.onlyOnThePage.navigation, []);
+});
+
+test("a video the walk also has is on neither difference", () => {
+  const lecture = "https://api.sg.kaltura.com/p/117/sp/11700/embedIframeJs/uiconf_id/23448394";
+  const difference = differenceBetween({
+    objects: [object(lecture, "link")],
+    attachments: [{ url: lecture, kind: "web link", name: "Video Lecture: Topic 1" }],
+  });
+
+  assert.equal(difference.onBothSides, 1);
+  assert.deepEqual(difference.onlyInTheWalk, []);
+});
+
 test("an address that is not a URL is classified rather than thrown over", () => {
   const difference = differenceBetween({
     objects: [object("javascript:void(0)", "link"), object("blob:nowhere", "iframe")],
     attachments: [],
   });
 
-  assert.equal(difference.onlyOnThePage.navigation.length, 1);
-  assert.equal(difference.onlyOnThePage.objects.length, 1);
+  assert.equal(difference.onlyOnThePage.objects.length, 2);
 });

@@ -133,14 +133,14 @@ function alsoOn(items) {
   return [`  - and on ${rest} further ${rest === 1 ? "item" : "items"}`];
 }
 
-function missing(attachments) {
-  if (!attachments.length) return [];
+function missing(expected) {
+  if (!expected.length) return [];
   return [
     "### In the walk, not on the page",
     "",
     ...table(
-      ["File", "Trail", "Path", "Address"],
-      attachments.map((each) => [each.file, each.trail, each.path, `\`${each.url}\``]),
+      ["What", "Kind", "Trail", "Path", "Address"],
+      expected.map((each) => [each.name, each.kind, each.trail, each.path, `\`${each.url}\``]),
     ),
     "",
   ];
