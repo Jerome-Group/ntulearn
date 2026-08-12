@@ -27,5 +27,10 @@ config/courses.json
 # the file this rule protects, so it exists exactly when the identifiers are in play.
 config/courses.json.*
 
+# A destination this repository owns, for a prototype that must not write into a real one. It is
+# the one folder `docs/adr/0003`'s reopening trigger names — created here, written by nothing else,
+# and holding a course somebody is trying an idea against rather than a copy anybody keeps.
+.scratch/
+
 # Partial downloads
 *.part-*

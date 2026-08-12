@@ -2,7 +2,7 @@ import js from "@eslint/js";
 
 // Correctness only. Formatting is Prettier's, so nothing here has an opinion about whitespace.
 export default [
-  { ignores: ["node_modules/", ".data/"] },
+  { ignores: ["node_modules/", ".data/", ".scratch/"] },
   js.configs.recommended,
   {
     files: ["**/*.mjs"],
