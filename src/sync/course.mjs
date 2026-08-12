@@ -23,7 +23,15 @@ const ANNOUNCEMENTS_FOLDER = "Announcements";
 export async function syncCourse({ client, course, state }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
-  const tally = { downloaded: 0, skipped: 0, bytes: 0, markdown: 0, uncopied: 0, failures: [] };
+  const tally = {
+    downloaded: 0,
+    skipped: 0,
+    bytes: 0,
+    markdown: 0,
+    markdownWritten: 0,
+    uncopied: 0,
+    failures: [],
+  };
   const downloads = {};
 
   await mkdir(course.destination, { recursive: true });
@@ -164,9 +172,12 @@ function attachmentFingerprint(item, attachment) {
   return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
 }
 
+// Two numbers because they answer different questions: how big the copy is, and what this run did
+// to it. Only the second is worth a reader's attention on a run nobody watched, and a count that
+// reads the same whether everything or nothing was written cannot be it.
 async function writeDocument(path, content, tally) {
   if (!content) return;
-  await writeIfChanged(path, content);
+  if (await writeIfChanged(path, content)) tally.markdownWritten += 1;
   tally.markdown += 1;
 }
 

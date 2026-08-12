@@ -157,6 +157,38 @@ test("never writes over a page an earlier run copied", async () => {
   assert.equal(again.uncopied, 1);
 });
 
+// The largest number in a run's report was the same whether it wrote everything or nothing, which
+// is the number a reader of an unattended run learns to skip (#55).
+test("says what it wrote, not only what the copy holds", async () => {
+  const { destination, result } = await sync(downloads("ppt"), WEEK_1);
+  const overview = join(destination, "Course.md");
+  const quiz = join(destination, "01 Week 1", QUIZ);
+
+  // The course overview and the quiz's document; the folder's own document is empty and the
+  // file's trace is its attachment, so neither is written at all.
+  assert.equal(result.markdown, 2);
+  assert.equal(result.markdownWritten, 2);
+
+  const [overviewBefore, quizBefore] = await Promise.all([
+    readFile(overview, "utf8"),
+    readFile(quiz, "utf8"),
+  ]);
+  const again = await syncCourse({
+    client: client(downloads("ppt"), WEEK_1),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state: { version: 1, courses: {} },
+  });
+
+  // Everything whose text comes from the course is unchanged and goes unwritten. `Course.md` is
+  // the exception by construction — it records when the sync ran — so it is the only document a
+  // second run can write, and the count is asserted against whether it actually moved rather
+  // than against a number that would also pass if something else had moved instead (#55).
+  assert.equal(await readFile(quiz, "utf8"), quizBefore);
+  const overviewMoved = (await readFile(overview, "utf8")) !== overviewBefore;
+  assert.equal(again.markdown, 2);
+  assert.equal(again.markdownWritten, overviewMoved ? 1 : 0);
+});
+
 // ML0004's seven topics are SCORM packages: no file to fetch, and a launch address NTULearn hands
 // over in a field of its own. The link is the whole of what can be kept, so an item carrying one is
 // a page rather than something there was nothing to copy from (#53).
