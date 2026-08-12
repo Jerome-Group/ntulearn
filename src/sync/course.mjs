@@ -173,8 +173,8 @@ function attachmentFingerprint(item, attachment) {
 }
 
 // Two numbers because they answer different questions: how big the copy is, and what this run did
-// to it. A run nobody watches is read only when something looks wrong, and a count that reads the
-// same whether everything or nothing was written cannot be the thing that looks wrong (ADR-0005).
+// to it. Only the second is worth a reader's attention on a run nobody watched, and a count that
+// reads the same whether everything or nothing was written cannot be it.
 async function writeDocument(path, content, tally) {
   if (!content) return;
   if (await writeIfChanged(path, content)) tally.markdownWritten += 1;
