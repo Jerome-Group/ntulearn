@@ -65,9 +65,21 @@ and then opens each item's own page. It asks each of those pages what *it* links
 folder that renders as its own page is still reached.
 
 Both halves of that were measured rather than assumed. On PS0002 the unscrolled, unexpanded outline
-offers 3 items; expanding gets 27; scrolling as well gets 43, and the walk has 90 attachments
-across exactly those 43. Everything from `Tutorial & Lab 9` onwards is simply not in the DOM until
-the list has been scrolled to it.
+offers 3 items; expanding gets 27; scrolling as well gets 43. Everything from `Tutorial & Lab 9`
+onwards is simply not in the DOM until the list has been scrolled to it.
+
+**It stops when Ultra says every list is finished, not when a count stops moving.** Each list
+carries one control — `Load 6 more content items` while it has more, `No more content items to
+load` when it does not — and revealing ends when none of them is still offering. If the round bound
+is reached with one outstanding, the course is reported as a **failure**: a partially rendered
+outline is a course that could not be read, never a course with fewer items.
+
+That replaced a settle heuristic, and the heuristic is why one run read 43 items and the next 42 —
+it stopped while a `Load 6 more` was still pending. `src/ntulearn/client.mjs` has had the
+equivalent all along on the API side, where it follows `paging.nextPage` until there is no next
+page; this is the same discipline applied to the DOM. It is weaker in one way worth knowing: it
+matches the control's accessible name, so it is sensitive to NTULearn's language and to a
+Blackboard release renaming a button, where `paging.nextPage` is not.
 
 On each page it reads two things off every element. The DOM **property** first — `src` as a
 property is the address the browser resolved and would fetch, where the attribute is the string an
@@ -162,6 +174,12 @@ One course is not the answer to anything — it is the same mistake #29 made, an
 says so in as many words. It is recorded here because it is what the calibration cost, and because
 the first version of this reader reported that same course as a clean 90 out of 90 while both sides
 were blind to every one of its recordings.
+
+**Run three times, it gives the same answer — nearly.** All three: 43 items, 134 and 134, nothing
+only in the walk. The one thing that moved was an instructor's avatar, present twice and absent
+once because the image did not load that time. So the item set and both sides' content are stable,
+and the residue is in the furniture. A difference of one address between two runs of the same
+course is noise of that kind before it is anything else.
 
 **It never fetches anything.** Every number here is about addresses. Whether an address returns
 bytes is untested — that is what #40 did by digest for CC0006, and what #47's spot-check is for.

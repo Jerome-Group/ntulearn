@@ -20,6 +20,9 @@ const BASE_URL = "https://ntulearn.ntu.edu.sg";
 const OUTLINE_TIMEOUT_MS = 30_000;
 const SETTLE_TIMEOUT_MS = 15_000;
 const REVEAL_ROUNDS = 20;
+const STABLE_ROUNDS = 2;
+// `Load 6 more content items`, and never `No more content items to load`.
+const MORE_TO_LOAD = /^\s*load\b/i;
 const TREE_DEPTH = 10;
 const SETTLE_PAUSE_MS = 1000;
 const POLL_MS = 500;
@@ -194,21 +197,51 @@ async function waitForItems(page, courseId) {
 // ends. Nothing here submits anything: `aria-expanded` is what a disclosure widget carries, and a
 // student's course outline has no other kind.
 async function revealEverything(page, courseId) {
+  let unchanged = 0;
   let before = -1;
+
   for (let round = 0; round < REVEAL_ROUNDS; round += 1) {
+    const waiting = await unloaded(page);
     const closed = await page.$$('[aria-expanded="false"]');
-    for (const control of closed)
+    if (!waiting.length && !closed.length) return;
+
+    for (const control of [...waiting, ...closed])
       await control.click({ timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
     await scrollThrough(page);
     await page.waitForTimeout(SETTLE_PAUSE_MS);
 
-    // Folders and items together, because a round that opens a folder holding only more folders
-    // adds no item and is not finished.
-    const after =
-      (await page.$$("[aria-expanded]")).length + (await itemsOn(page, courseId)).length;
-    if (!closed.length && after === before) return;
-    before = after;
+    // A control that reopens itself would otherwise spend the whole bound, and a disclosure widget
+    // that is not a folder — the page's own help — is one. Rounds that add no item, with every
+    // list saying it has no more to give, is finished.
+    const items = (await itemsOn(page, courseId)).length;
+    unchanged = items === before ? unchanged + 1 : 0;
+    before = items;
+    if (unchanged >= STABLE_ROUNDS && !(await unloaded(page)).length) return;
   }
+
+  const waiting = await unloaded(page);
+  if (waiting.length) {
+    throw new Error(
+      `${waiting.length} list(s) on ${courseId} still had items to load after ` +
+        `${REVEAL_ROUNDS} rounds; the outline was never fully rendered`,
+    );
+  }
+}
+
+// Ultra says outright whether a list is finished, and this is the end condition rather than a
+// count that stopped moving. Each list carries one control: `Load 6 more content items` while it
+// has more, `No more content items to load` when it does not.
+//
+// The count-based guess it replaces is why one run read 43 items and the next 42 — it stopped
+// while a `Load 6 more` was outstanding. `src/ntulearn/client.mjs` has had the equivalent all
+// along on the API side, where it follows `paging.nextPage` until there is no next page; this is
+// the same discipline on the DOM, and a partially-rendered outline is now a course that could not
+// be read rather than a course with fewer items.
+//
+// It matches on the control's accessible name, so unlike `paging.nextPage` it is sensitive to
+// NTULearn's language and to a Blackboard release renaming a button.
+function unloaded(page) {
+  return page.getByRole("button", { name: MORE_TO_LOAD }).all();
 }
 
 // Every scrolling region to its end, which is what a student does to see the bottom of a list and
