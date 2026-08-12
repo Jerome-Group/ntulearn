@@ -1,5 +1,5 @@
 const ELEMENT_IN_REPORT = 300;
-const CARRIERS_IN_REPORT = 3;
+const ITEMS_IN_REPORT = 3;
 const NOT_AUTHORITATIVE_ABOUT = [
   "the contents of a cross-origin frame, which the browser will not let this read",
   "anything a page loads only after a click, which this never makes",
@@ -95,28 +95,40 @@ function found(heading, objects) {
   return [
     `### ${heading}`,
     "",
-    ...objects.flatMap((object) => [
-      `- \`${object.address}\` — ${object.kinds.join(", ")}${shape(object)}`,
-      ...object.carriedBy
-        .slice(0, CARRIERS_IN_REPORT)
-        .map(
-          (carrier) =>
-            `  - on **${carrier.itemTitle}** (${carrier.itemUrl})` +
-            `${carrier.label ? `, as “${carrier.label}”` : ""}` +
-            `${carrier.frame ? `, inside ${carrier.frame}` : ""}` +
-            `\n    \`\`\`html\n    ${trimmed(carrier.element)}\n    \`\`\``,
-        ),
-      ...alsoOn(object.carriedBy),
-    ]),
+    ...objects.flatMap((object) => {
+      const items = itemsCarrying(object.carriedBy);
+      return [
+        `- \`${object.address}\` — ${object.kinds.join(", ")}${shape(object)}`,
+        ...items
+          .slice(0, ITEMS_IN_REPORT)
+          .map(
+            (carrier) =>
+              `  - on **${carrier.itemTitle}** (${carrier.itemUrl})` +
+              `${carrier.label ? `, as “${carrier.label}”` : ""}` +
+              `${carrier.frame ? `, inside ${carrier.frame}` : ""}` +
+              `\n    \`\`\`html\n    ${trimmed(carrier.element)}\n    \`\`\``,
+          ),
+        ...alsoOn(items.length),
+      ];
+    }),
     "",
   ];
 }
 
-// An address on many items is listed on a few of them and counted for the rest. The element is
-// what diagnoses a finding and it is the same element every time, so the forty-third copy of it
-// costs the document the one property it has to have: that the Owner can paste it back whole.
-function alsoOn(carriers) {
-  const rest = carriers.length - CARRIERS_IN_REPORT;
+// One line per item, not per element. An address on a page twice — on the element and on the
+// control beside it — is the same finding about the same item, and saying it twice reads as two.
+function itemsCarrying(carriers) {
+  const byItem = new Map();
+  for (const carrier of carriers)
+    if (!byItem.has(carrier.itemId)) byItem.set(carrier.itemId, carrier);
+  return [...byItem.values()];
+}
+
+// An address on many items is shown on a few of them and counted for the rest. The element is what
+// diagnoses a finding and it is the same element every time, so the forty-third copy of it costs
+// the document the one property it has to have: that the Owner can paste it back whole.
+function alsoOn(items) {
+  const rest = items - ITEMS_IN_REPORT;
   if (rest <= 0) return [];
   return [`  - and on ${rest} further ${rest === 1 ? "item" : "items"}`];
 }
@@ -150,7 +162,7 @@ function unreadable(items) {
 // The two things that decide what a finding is for #47: whether a sync could have brought it
 // across at all, and whether the address is one NTULearn serves files from.
 function shape(object) {
-  if (object.offsite) return " — off NTULearn, so what it embeds is not readable from here";
+  if (object.offsite) return " — off NTULearn, so whatever it loads is not readable from here";
   return object.fileShaped ? " — a file address" : "";
 }
 

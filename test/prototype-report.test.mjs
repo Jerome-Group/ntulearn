@@ -59,6 +59,32 @@ test("an object the walk does not have is named with the element that carried it
   assert.match(report, /Week 1/);
 });
 
+test("an address carried twice on one item is one line about one item", () => {
+  const twice = {
+    ...MISSED,
+    carriedBy: [MISSED.carriedBy[0], { ...MISSED.carriedBy[0], element: "<div></div>" }],
+  };
+  const report = renderReport([read({ onlyOnThePage: { objects: [twice], navigation: [] } })]);
+
+  assert.equal(report.match(/- on \*\*Week 1\*\*/g).length, 1);
+  assert.doesNotMatch(report, /further item/);
+});
+
+test("the rest are counted as items rather than as elements", () => {
+  const carriedBy = Array.from({ length: 10 }, (_, each) => ({
+    ...MISSED.carriedBy[0],
+    itemId: `_${each}_1`,
+    itemTitle: `Week ${each}`,
+  }));
+  const many = {
+    ...MISSED,
+    carriedBy: [...carriedBy, { ...carriedBy[0], element: "<div></div>" }],
+  };
+  const report = renderReport([read({ onlyOnThePage: { objects: [many], navigation: [] } })]);
+
+  assert.match(report, /and on 7 further items/);
+});
+
 test("a course that could not be read is a failure rather than a course with no content", () => {
   const report = renderReport([
     { key: "CC0001", courseId: "_9_1", failure: "The outline never rendered" },
