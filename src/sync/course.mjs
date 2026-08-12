@@ -132,7 +132,7 @@ async function saveAttachment({ client, course, placement, item, attachment, rec
   }
 
   try {
-    const { body, headers } = await client.download(attachment.resourceUrl);
+    const { body, headers } = await client.download(attachment);
     await writeAtomically(target, body);
     tally.downloaded += 1;
     tally.bytes += body.length;

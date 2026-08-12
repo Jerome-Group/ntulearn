@@ -1,4 +1,5 @@
 import { attachmentsOf, isFile, isFolder } from "./content.mjs";
+import { downloadRefusal } from "./download.mjs";
 import { openSignedInContext } from "./session.mjs";
 import { absoluteUrl, courseUrl } from "./urls.mjs";
 
@@ -71,10 +72,17 @@ class NtulearnClient {
     return attachmentsOf(await this.#readContentItem(courseId, item.id));
   }
 
-  async download(resourceUrl) {
-    const response = await this.#context.request.get(absoluteUrl(resourceUrl));
+  async download(attachment) {
+    const response = await this.#context.request.get(absoluteUrl(attachment.resourceUrl));
     if (!response.ok()) throw new Error(`Download failed: HTTP ${response.status()}`);
-    return { body: await response.body(), headers: response.headers() };
+    const headers = response.headers();
+    const refusal = downloadRefusal({
+      attachment,
+      url: response.url(),
+      contentType: headers["content-type"],
+    });
+    if (refusal) throw new Error(refusal);
+    return { body: await response.body(), headers };
   }
 
   #readContentItem(courseId, itemId) {
