@@ -156,3 +156,21 @@ test("never writes over a page an earlier run copied", async () => {
   assert.equal(result.uncopied, 1);
   assert.equal(again.uncopied, 1);
 });
+
+// The statement that there was nothing to copy is the sync's own writing rather than the student's,
+// so correcting it takes nothing from anybody — which is how a destination written before a fix
+// stops repeating what the fix removed (#53).
+test("supersedes its own statement that there was nothing to copy", async () => {
+  const { destination } = await sync(downloads("ppt"), WEEK_1);
+  const written = join(destination, "01 Week 1", QUIZ);
+  const current = await readFile(written, "utf8");
+  await writeFile(written, current.replace("- Kind: Test", "- Kind: resource/x-bb-asmt-test-link"));
+
+  await syncCourse({
+    client: client(downloads("ppt"), WEEK_1),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state: { version: 1, courses: {} },
+  });
+
+  assert.equal(await readFile(written, "utf8"), current);
+});

@@ -56,9 +56,13 @@ export function attachmentName(item, attachment) {
   );
 }
 
+// NTULearn has four names for the same thing, and which one an item uses is its handler's business
+// rather than anything the item declares — a SCORM package says `launchUrl` where an LTI placement
+// says `launchLink`. A name missing from this list is not a link that does not exist; it is a link
+// this repository throws away, which is what ML0004's seven SCORM topics were (#53).
 export function externalLinkOf(item) {
   const detail = Object.values(item.contentDetail ?? {})[0] ?? {};
-  const link = detail.url || detail.launchLink || detail.placement?.launchLink;
+  const link = detail.url || detail.launchUrl || detail.launchLink || detail.placement?.launchLink;
   return link ? absoluteUrl(link) : null;
 }
 

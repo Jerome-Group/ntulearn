@@ -63,22 +63,34 @@ the directory is the trace.
 
 An item hidden behind a release rule comes back carrying nothing, which is indistinguishable from
 an item there was never anything to copy from — the failure mode ADR-0003 builds its case on. So
-the document is written only where the destination holds nothing at that path. A page an earlier
-run copied stays exactly as it was, and the item is still counted as uncopied for the run that saw
-it empty.
+the document is written only where the destination holds nothing at that path, **or where what it
+holds is one of these documents already**. A page an earlier run copied stays exactly as it was,
+and the item is still counted as uncopied for the run that saw it empty.
 
 This is the same asymmetry ADR-0003 draws, one level down: a stale page costs a reader nothing,
 and replacing a student's copy of a week with the sentence "there was nothing to copy" destroys
 material they may no longer be able to reach.
 
+The asymmetry is between a **page** and a **document**, and not between a first write and a second
+one. A document is this repository's own sentence about an item, so nothing of the student's is
+lost by correcting it, and a destination written before a fix would otherwise repeat what the fix
+removed forever — which is what ML0004's seven SCORM topics did, still naming a raw handler after
+#49 had translated it and still saying they carried no link after #53 found the one they carry.
+What tells the two apart on disk is the sentence itself: a document says *"there was nothing to
+copy"* and a page does not, and that is the whole of the test (#53).
+
 ## Consequences
 
 - **The destination gains files that hold no course content.** One per uncopied item, forever,
   because ADR-0003 means nothing removes them. If NTULearn later fills the item in, the real page
-  is written over the document — the one direction that overwriting runs in.
-- **A run says how many it could not copy, and that count is not a count of files.** An item whose
-  document is already on disk is counted and not written, so `uncopied` is about the course and
-  `markdown` is about the run. A report is still a report; it is just no longer the only record.
+  is written over the document, and a document may be written over a document. What never happens
+  is a document over a page — that is the direction overwriting does not run in.
+- **A run says how many it could not copy, and that count is not a count of new files.** An item
+  whose document is already on disk is counted as uncopied and its document is written again,
+  which changes nothing on disk unless the text has moved. So `uncopied` is about the course and
+  `markdown` counts these documents the way it already counts the course overview and every folder
+  document — every run, changed or not. A report is still a report; it is just no longer the only
+  record.
 - **The kind is NTULearn's word for it.** The document names the content handler, translated where
   a student would not recognise the raw key and passed through where they would. A handler nobody
   has seen yet is reported as NTULearn spells it rather than guessed at.

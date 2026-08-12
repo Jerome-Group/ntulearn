@@ -70,12 +70,22 @@ export function contentDocument(item, externalLink = null) {
 
 // Written in place of the item itself, so nothing NTULearn returns leaves the destination without
 // a trace of having existed and the numbering has no unexplained gap (ADR-0006).
+const UNCOPIED_STATEMENT =
+  "This item carries no text, no link and no attachment, so there was nothing to copy. " +
+  "Open it in NTULearn.";
+
 export function uncopiedDocument(item, trail) {
   return document(item.title, [
     [`- Kind: ${kindOf(item)}`, trail && `- Trail: ${trail}`].filter(Boolean).join("\n"),
-    "This item carries no text, no link and no attachment, so there was nothing to copy. " +
-      "Open it in NTULearn.",
+    UNCOPIED_STATEMENT,
   ]);
+}
+
+// What the sync wrote is superseded and what a student has is not, so something has to tell them
+// apart on disk, with only the file to go on. The statement is what does it: it is this sentence
+// and nothing else that a document says because a run had nothing to write.
+export function isUncopiedDocument(text) {
+  return typeof text === "string" && text.includes(UNCOPIED_STATEMENT);
 }
 
 export function announcementDocument(announcement) {

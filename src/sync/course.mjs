@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
 import { expectedAttachments } from "./attachments.mjs";
-import { isFilePresent, writeAtomically, writeIfChanged } from "./files.mjs";
+import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import {
   announcementDocument,
   contentDocument,
   courseDocument,
+  isUncopiedDocument,
   isoDate,
   uncopiedDocument,
 } from "./markdown.mjs";
@@ -74,8 +75,11 @@ export async function syncCourse({ client, course, state }) {
     tally.uncopied += 1;
     // An item hidden by a release rule reads exactly like one there was never anything to copy
     // from, so a page the student already has is never replaced by the statement that there is
-    // nothing to copy — additive in the direction ADR-0003 argues for.
-    if (await isFilePresent(target)) continue;
+    // nothing to copy — additive in the direction ADR-0003 argues for. That statement is the
+    // sync's own writing, though, and correcting it costs the student nothing, so a destination
+    // written before a fix stops repeating what the fix removed (#53).
+    const existing = await readText(target);
+    if (existing !== null && !isUncopiedDocument(existing)) continue;
     await writeDocument(target, uncopiedDocument(item, placements.get(item.id).trail), tally);
   }
 

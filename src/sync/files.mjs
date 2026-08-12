@@ -25,7 +25,7 @@ export async function isFilePresent(path, expectedBytes) {
   return Boolean(info?.isFile()) && (expectedBytes == null || info.size === expectedBytes);
 }
 
-function readText(path) {
+export function readText(path) {
   return readFile(path, "utf8").catch(missingAsNull);
 }
 
