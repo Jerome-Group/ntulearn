@@ -147,6 +147,9 @@ narrowly as that says. The report carries a `notCovered` list saying so on every
   saw, so the count it is missing from is a count it was never in. This is the blind spot the four
   gaps found so far all came out of, and every one was found by opening NTULearn in a browser
   rather than by the tool disagreeing with itself.
+- **A category NTULearn would not return** — a course whose announcements the student may not read
+  — expects nothing for the same reason, so the count passes over it. The course says `unread` when
+  that has happened.
 - **Recorded lecture videos and their transcripts** are not read at all. The page naming the
   lecture is counted; whatever is on the other side of the link is absent from both sides of the
   number rather than counted as missing.

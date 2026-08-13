@@ -153,6 +153,28 @@ test("says nothing about a file NTULearn no longer returns an item for", async (
   assert.deepEqual(result.missing, []);
 });
 
+// The same vacuity one level down: a category nobody could read hands back the empty list a course
+// with nothing in it hands back, and a count made from that one is complete by expecting nothing.
+test("says when a category the count is made of could not be read", async () => {
+  const refused = {
+    ...clientReading([]),
+    readCourse: async () => ({
+      course: { displayName: "Lectures" },
+      announcements: [],
+      conversations: [],
+      unavailable: { announcements: true, conversations: true },
+      items: [],
+    }),
+  };
+  const result = await verify(await destinationHolding("Course.md"), refused);
+
+  // Conversations are never copied, so a course that would not hand them over is one this command
+  // expected nothing of to begin with.
+  assert.deepEqual(result.unread, ["announcements"]);
+  assert.equal(result.files, 1);
+  assert.deepEqual(result.missing, []);
+});
+
 test("adds the courses up and says whether the whole of what was asked for is there", () => {
   const short = { files: 10, attachments: 6, documents: 4, present: 4, missing: [{}, {}] };
   const whole = { files: 49, attachments: 40, documents: 9, present: 49, missing: [] };

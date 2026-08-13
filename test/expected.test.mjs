@@ -100,8 +100,8 @@ test("expects a page for an item whose only content is a link out", async () => 
   assert.match(page.content, /https:\/\/kaltura\.example\/one/);
 });
 
-// The folder's document is written only where the folder describes itself, so expecting one for
-// every folder would invent a gap under each bare one — crying wolf at the smallest scale.
+// Expecting one under every folder would invent a gap beneath each bare one, which is the crying
+// wolf ADR-0005 refuses at a larger scale.
 test("expects a folder's own document only where the folder has something to say", async () => {
   const bare = {
     id: "_1_1",
@@ -120,7 +120,10 @@ test("expects a folder's own document only where the folder has something to say
   const found = await expected([bare, described]);
 
   assert.deepEqual(pathsOf(found, "document"), ["Course.md", "02 Week 2/_NTULearn.md"]);
-  assert.deepEqual(pathsOf(found, "folder"), ["01 Week 1", "02 Week 2"]);
+  assert.deepEqual(
+    found.filter((each) => each.kind === "folder").map((each) => each.placement.segments),
+    [["01 Week 1"], ["02 Week 2"]],
+  );
 });
 
 // An item whose attachment is its own trace gets no document beside it, and one with nothing at all

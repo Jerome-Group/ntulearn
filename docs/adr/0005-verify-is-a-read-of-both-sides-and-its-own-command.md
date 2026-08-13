@@ -89,7 +89,9 @@ verify that consulted it would answer from the same record that was already wron
   something, unlike a failure count that a retried transient download reddens forever.
 - **It costs a session and a full read of the course.** An item that claims an attached file is
   re-read in full, exactly as a sync does, so verifying is roughly the cost of a sync that
-  downloads nothing.
+  downloads nothing. Since #32 it also converts every body to Markdown and throws the result away,
+  because whether a document is expected is decided by whether the conversion produced one. That is
+  local work against a network-bound command, and it is the price of the two walks being one.
 - **A present file is never inspected.** A truncated, corrupt or superseded file counts as
   present. What this command detects is absence.
 - **The path it predicts is the path a sync writes**, because both walk the course through

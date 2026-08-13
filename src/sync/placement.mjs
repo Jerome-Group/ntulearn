@@ -15,9 +15,8 @@ export function attachmentPlacement(placement, item, attachment) {
   return placedFile(placement, orderedName(item.position, file), file);
 }
 
-// One file inside the folders a placement names. `name` is what it is called on disk, numbered as
-// the destination numbers everything; `file` is what a report calls it, in NTULearn's own words —
-// an attachment's file name, or the title a student reads at the top of a page.
+// One file inside the folders a placement names: `name` on disk, numbered as the destination
+// numbers everything, and `file` in a report, in NTULearn's own words.
 export function placedFile(placement, name, file = name) {
   const segments = [...placement.segments, name];
   return { file, trail: placement.trail, segments, path: segments.join("/") };
@@ -33,10 +32,8 @@ function placementOf(item, itemsById) {
   for (let each = item; each; each = itemsById.get(each.parentId)) {
     if (isFolder(each)) folders.unshift(each);
   }
-  const segments = folders.map((folder) => orderedName(folder.position, folder.title));
   return {
     trail: folders.map((folder) => folder.title).join(TRAIL_SEPARATOR),
-    segments,
-    path: segments.join("/"),
+    segments: folders.map((folder) => orderedName(folder.position, folder.title)),
   };
 }

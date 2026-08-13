@@ -45,8 +45,8 @@ export async function* expectedFiles({ client, courseId, snapshot }) {
 }
 
 // A folder is a directory on disk whether or not it says anything, and the directory is its trace
-// (ADR-0006). Its document is written only where it describes itself, so expecting one for every
-// folder would report a gap under each bare one — crying wolf at the smallest possible scale.
+// (ADR-0006). Its document is conditional, so what is expected of it has to be too — ADR-0005's
+// amended second section is why.
 function* expectedOfFolder(item, placement) {
   yield { kind: "folder", placement };
 
