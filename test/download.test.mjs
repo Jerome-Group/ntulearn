@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { downloadRefusal } from "../src/ntulearn/download.mjs";
+import { downloadedType, downloadRefusal } from "../src/ntulearn/download.mjs";
 
 const PDF = { fileName: "05 Week 1.pdf", mimeType: "application/pdf" };
 const RESOURCE_URL = "https://ntulearn.ntu.edu.sg/bbcswebdav/xid-1234_1";
@@ -106,4 +106,29 @@ test("a file whose size NTULearn misreports is judged the same way", () => {
     downloadRefusal({ attachment, url: RESOURCE_URL, contentType: "text/html" }),
     /05 Week 1\.pdf/,
   );
+});
+
+// What a run saw is the `content-type` that came back; NTULearn's claim is evidence of nothing but
+// itself, and the two are only ever interesting where they differ (#60).
+test("the type a download arrived with is what is recorded", () => {
+  assert.deepEqual(downloadedType(PDF, { "content-type": "application/octet-stream" }), {
+    mimeType: "application/octet-stream",
+    claimedMimeType: "application/pdf",
+  });
+});
+
+// A charset says how the type was sent rather than what it is, so it is no disagreement — and
+// where there is none there is no second field to read.
+test("a claim the download bore out is not kept a second time", () => {
+  assert.deepEqual(downloadedType(PDF, { "content-type": "application/pdf; charset=binary" }), {
+    mimeType: "application/pdf; charset=binary",
+  });
+});
+
+// NTULearn writes the word `undefined` where it has no value, so a claim that reads as supplied
+// until it is asked for is no claim to hold against what arrived.
+test("a claim NTULearn never made is not recorded as a disagreement", () => {
+  assert.deepEqual(downloadedType({ fileName: "notes", mimeType: "undefined" }, {}), {
+    mimeType: null,
+  });
 });
