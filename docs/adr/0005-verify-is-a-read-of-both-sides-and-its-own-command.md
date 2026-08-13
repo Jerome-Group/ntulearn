@@ -128,11 +128,16 @@ Three parts to it:
 - **It is said out loud rather than passed over.** The numbering on disk no longer matches
   NTULearn's order, nothing here will put that back, and a reader who runs `ls` should not have to
   work out why. The list says where the file would be written today and where it actually is.
-- **A guess is refused.** A file may stand in for one at another number only among the names its own
-  folder expects, only where no other expectation is waiting for that same file, and only where no
-  two of those names are the same inside their numbers. Where any of those fails, the file is
-  reported missing — which is the noise this section removes, pointed the safe way. Two items in one
-  folder sharing a title is the case, and NTULearn allows it.
+- **A guess is refused.** A file stands in for one at another number only inside the folder that
+  expects it, and only where the name inside the number is that folder's alone. Two items in one
+  folder may share a title — NTULearn allows it — and then the name identifies neither, so the file
+  is reported missing rather than guessed at: the noise this section removes, pointed the safe way.
+
+The limit is worth saying rather than discovering. A file left behind for an item NTULearn has
+stopped returning (ADR-0003) may carry the title of one that moved, and nothing but the bytes
+separates the two — which this command never reads. It is counted present, and `notCovered` says so
+on every run. That is the same trade *Presence, not content* makes below, at the same odds: the
+alternative it replaces called ninety-one files absent that were on disk.
 
 This narrows *`verify` still never enumerates the destination* above, and does not drop it. The
 command reads a folder's listing to answer one question about a name **NTULearn gave it** — is it

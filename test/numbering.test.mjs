@@ -86,6 +86,15 @@ test("refuses to guess when two expected files share a name", async () => {
   assert.equal(await numbers.find(segmentsOf("07 Notes.md")), null);
 });
 
+// A course reordered twice leaves more than one older number, and two scheduled runs are diffed
+// against each other, so the answer may not be whichever the filesystem happened to list first.
+test("names the same older number on every run", async () => {
+  const destination = await destinationHolding("05 Notes.md", "02 Notes.md");
+  const found = await numbering(destination, "07 Notes.md").find(segmentsOf("07 Notes.md"));
+
+  assert.equal(found, "02 Notes.md");
+});
+
 test("does not take a directory for the file it expects", async () => {
   const destination = await destinationHolding("02 Week 1.pdf/kept.txt");
   const found = await numbering(destination, "03 Week 1.pdf").find(segmentsOf("03 Week 1.pdf"));

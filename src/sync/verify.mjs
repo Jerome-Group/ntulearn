@@ -12,6 +12,7 @@ const NOT_COVERED = [
   "A course NTULearn would not hand over — named under `refused` below — is absent from both numbers entirely: it was never read, so nothing of it is counted, present or missing.",
   "An object that is neither an attachment nor a document — a recorded lecture's video, whatever an external tool holds — is read by neither side.",
   "A file at the path is never opened, so a truncated or since-replaced one counts as present (docs/adr/0005).",
+  "A file named under `renumbered` is the same name at another number and never the same bytes: one left behind for an item NTULearn has stopped returning, carrying the title of one that moved, is counted present.",
 ];
 
 // The categories this count is made of. A conversation is never copied, so a course that would not
@@ -33,29 +34,25 @@ const COUNTED_AS = { attachment: "attachments", document: "documents", uncopied:
 export async function verifyCourse({ client, course }) {
   const snapshot = await client.readCourse(course.courseId);
   const counted = { attachments: 0, documents: 0 };
-  const placements = [];
+  const expected = [];
+  const countable = [];
   const missing = [];
   const renumbered = [];
 
-  for await (const expected of expectedFiles({
-    client,
-    courseId: course.courseId,
-    snapshot,
-  })) {
-    const number = COUNTED_AS[expected.kind];
-    if (number) counted[number] += 1;
-    placements.push({ counted: Boolean(number), ...expected.placement });
+  for await (const each of expectedFiles({ client, courseId: course.courseId, snapshot })) {
+    const number = COUNTED_AS[each.kind];
+    if (number) {
+      counted[number] += 1;
+      countable.push(each.placement);
+    }
+    expected.push(each.placement.segments);
   }
 
   // Every expected name at once, because whether one may stand for another is decided among the
   // names a folder expects rather than by either name alone.
-  const numbering = numberingOf(
-    course.destination,
-    placements.map((placement) => placement.segments),
-  );
+  const numbering = numberingOf(course.destination, expected);
 
-  for (const { counted: isCounted, file, trail, path, segments } of placements) {
-    if (!isCounted) continue;
+  for (const { file, trail, path, segments } of countable) {
     if (await isFilePresent(safeResolve(course.destination, ...segments))) continue;
 
     const onDisk = await numbering.find(segments);

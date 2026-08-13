@@ -10,10 +10,12 @@ import { safeSegment, unnumbered } from "./paths.mjs";
 // at the new name would call the whole tail of a course absent (#67), and this is what tells that
 // file from one that is genuinely not there.
 //
-// It needs the other expected names to answer at all: a file may stand in for one at another
-// number only where no second expectation is competing for it, and only where the name inside the
-// number identifies something. Where either fails it finds nothing, so the answer is a file that
-// moved or no answer, and never a guess that would call an absent file present.
+// It needs the other expected names to answer at all: a file stands in for one at another number
+// only where the name inside the number is that folder's alone. Two items in a folder may share a
+// title — NTULearn allows it — and then the name identifies neither, so this finds nothing rather
+// than guess. What it cannot tell apart is a file left behind for an item NTULearn has stopped
+// returning (ADR-0003) that carries the same title: nothing but the bytes separates the two, and
+// this command never opens a file (ADR-0005).
 export function numberingOf(destination, expected) {
   const tree = treeOf(expected);
   const listings = new Map();
@@ -41,17 +43,17 @@ async function fileAt(path) {
   return (await isFilePresent(path)) ? path : null;
 }
 
-// The name the sync would write first, then the names on disk that are the same name at another
-// number — excluding any that another expectation is itself waiting for.
 async function standIns(directory, siblings, segment, listings) {
   const entries = await listing(directory, listings);
   const exact = entries.has(segment) ? [segment] : [];
   if (namedTwice(siblings, segment)) return exact;
 
   const name = unnumbered(segment);
-  const moved = [...entries].filter(
-    (entry) => entry !== segment && !siblings.has(entry) && unnumbered(entry) === name,
-  );
+  // Sorted, because a course reordered twice leaves more than one older number and a report two
+  // scheduled runs are diffed against may not depend on the order a directory happens to list in.
+  const moved = [...entries]
+    .filter((entry) => entry !== segment && unnumbered(entry) === name)
+    .sort();
   return [...exact, ...moved];
 }
 

@@ -123,8 +123,8 @@ _Avoid_: dead link, broken link, duplicate — the first two say the file is gon
 A file in a *destination* whose name carries a number the course has since moved — an item inserted
 above it moved every later *position* by one, and a *sync* never renames, so the file stays at the
 number it was written with. Nothing is missing because of one: it is the file, at another number.
-`verify` counts it present and names it, and only where the name inside the number identifies it
-among the names its own folder expects (`docs/adr/0005`).
+`verify` counts it present and names it, and only where the name inside the number is its own
+folder's alone (`docs/adr/0005`).
 _Avoid_: misplaced, stale, out of date — all three say the file is wrong, and only its position in
 an `ls` is
 

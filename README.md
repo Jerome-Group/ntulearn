@@ -183,9 +183,14 @@ almost all noise, and worse: the remedy it prints is `npm run sync`, which would
 of them again under its new number and leave the destination holding two of each, for good.
 
 What it does not do is repair the numbering, so `ls` shows the course in the order it had when each
-file was written. The one case it will not answer is two items in the same folder sharing a title:
-the name inside the number identifies neither, so a file that is not at its own number is reported
-missing rather than guessed at.
+file was written — and a sync run for any other reason still writes the new number beside the old
+one. When the report is red for something else, the stderr line says how many files that sync would
+write a second time.
+
+Two limits. It will not answer at all where two items in the same folder share a title: the name
+inside the number identifies neither, so the file is reported missing rather than guessed at. And a
+file left behind for an item NTULearn has stopped returning may carry the title of one that moved —
+nothing but the bytes separates them, and `verify` never opens a file — so it is counted present.
 
 ### What `complete: true` does not cover
 
