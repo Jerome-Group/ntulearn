@@ -126,6 +126,7 @@ downloads nothing and writes nothing on either side, and it exits `1` when anyth
   "attachments": 128,
   "documents": 118,
   "present": 236,
+  "renumbered": 1,
   "complete": false,
   "courses": [
     {
@@ -147,6 +148,14 @@ downloads nothing and writes nothing on either side, and it exits `1` when anyth
           "trail": "Week 1",
           "path": "01 Week 1/04 Video Lecture_ Topic 1 - Introduction.md"
         }
+      ],
+      "renumbered": [
+        {
+          "file": "Cengage WebAssign.md",
+          "trail": "",
+          "path": "02 Cengage WebAssign.md",
+          "onDisk": "01 Cengage WebAssign.md"
+        }
       ]
     }
   ],
@@ -162,6 +171,21 @@ downloads nothing and writes nothing on either side, and it exits `1` when anyth
 ```
 
 The gaps it names are fixed by running the sync again; it never repairs anything itself.
+
+### A file whose number moved is not a gap
+
+A file's name carries its item's position in the course, so one item inserted upstream moves every
+later name by one — and nothing on disk moves with it, because a sync never renames
+(`docs/adr/0003`). Those files are on disk under the number they were written with, so `verify`
+counts them **present** and names them under `renumbered`, with `path` where a sync would write the
+file today and `onDisk` where it actually is. Reporting them as missing would be a red that is
+almost all noise, and worse: the remedy it prints is `npm run sync`, which would download every one
+of them again under its new number and leave the destination holding two of each, for good.
+
+What it does not do is repair the numbering, so `ls` shows the course in the order it had when each
+file was written. The one case it will not answer is two items in the same folder sharing a title:
+the name inside the number identifies neither, so a file that is not at its own number is reported
+missing rather than guessed at.
 
 ### What `complete: true` does not cover
 
@@ -190,7 +214,9 @@ narrowly as that says. The report carries a `notCovered` list saying so on every
   expects, so both are silent about it together.
 - **What the destination holds beyond the course is never looked at.** `verify` reads only at the
   paths NTULearn named, so a file kept for an item NTULearn has stopped returning is correct rather
-  than reported — a destination only ever grows (`docs/adr/0003`).
+  than reported — a destination only ever grows (`docs/adr/0003`). It reads a folder's listing for
+  one question only, and about a name NTULearn did give it: whether the file is there under a
+  number that has since moved.
 
 So `complete: true` says that every file this tool knows to look for arrived. It does not say the
 copy is the course.

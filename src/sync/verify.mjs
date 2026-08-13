@@ -1,5 +1,6 @@
 import { expectedFiles } from "./expected.mjs";
 import { isFilePresent } from "./files.mjs";
+import { numberingOf } from "./numbering.mjs";
 import { safeResolve } from "./paths.mjs";
 
 // Where the number stops. Completeness is only ever relative to the authority behind it — here, one
@@ -26,12 +27,15 @@ const COUNTED_AS = { attachment: "attachments", document: "documents", uncopied:
 // cannot answer whether a course is complete — the gaps worth knowing about are the older ones.
 // This reads both sides and writes to neither, which is why it is safe under ADR-0003.
 //
-// It looks only where NTULearn told it to look, and never walks the destination: a file the course
-// has stopped returning an item for is correctly on disk (ADR-0003) and is invisible here.
+// It looks only where NTULearn told it to look: a file the course has stopped returning an item for
+// is correctly on disk (ADR-0003) and is invisible here. The one thing it reads a directory for is
+// the number in a name having moved, which is a name NTULearn did give it (ADR-0005, #67).
 export async function verifyCourse({ client, course }) {
   const snapshot = await client.readCourse(course.courseId);
   const counted = { attachments: 0, documents: 0 };
+  const placements = [];
   const missing = [];
+  const renumbered = [];
 
   for await (const expected of expectedFiles({
     client,
@@ -39,12 +43,24 @@ export async function verifyCourse({ client, course }) {
     snapshot,
   })) {
     const number = COUNTED_AS[expected.kind];
-    if (!number) continue;
-    counted[number] += 1;
+    if (number) counted[number] += 1;
+    placements.push({ counted: Boolean(number), ...expected.placement });
+  }
 
-    const { file, trail, path, segments } = expected.placement;
+  // Every expected name at once, because whether one may stand for another is decided among the
+  // names a folder expects rather than by either name alone.
+  const numbering = numberingOf(
+    course.destination,
+    placements.map((placement) => placement.segments),
+  );
+
+  for (const { counted: isCounted, file, trail, path, segments } of placements) {
+    if (!isCounted) continue;
     if (await isFilePresent(safeResolve(course.destination, ...segments))) continue;
-    missing.push({ file, trail, path });
+
+    const onDisk = await numbering.find(segments);
+    if (onDisk) renumbered.push({ file, trail, path, onDisk });
+    else missing.push({ file, trail, path });
   }
 
   const files = counted.attachments + counted.documents;
@@ -62,6 +78,10 @@ export async function verifyCourse({ client, course }) {
     ...counted,
     present: files - missing.length,
     missing,
+    // A file the numbering moved is present — it is the file, at the number it was written with —
+    // and it is still said out loud, because `ls` no longer shows the course in NTULearn's order
+    // and nothing here will put that back (ADR-0003).
+    ...(renumbered.length ? { renumbered } : {}),
     ...(unread.length ? { unread } : {}),
   };
 }
@@ -72,11 +92,16 @@ export async function verifyCourse({ client, course }) {
 export function verifyReport(courses, refused = []) {
   const files = total(courses, "files");
   const present = total(courses, "present");
+  const renumbered = courses.reduce(
+    (running, course) => running + (course.renumbered?.length ?? 0),
+    0,
+  );
   return {
     files,
     attachments: total(courses, "attachments"),
     documents: total(courses, "documents"),
     present,
+    ...(renumbered ? { renumbered } : {}),
     complete: present === files,
     courses,
     ...(refused.length ? { refused } : {}),

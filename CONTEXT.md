@@ -119,6 +119,15 @@ page stores one in a `data-bbfile` attribute even while it fetches the live addr
 alias is a property of a stored address rather than of either artefact.
 _Avoid_: dead link, broken link, duplicate — the first two say the file is gone, and it is not
 
+**Renumbered file**:
+A file in a *destination* whose name carries a number the course has since moved — an item inserted
+above it moved every later *position* by one, and a *sync* never renames, so the file stays at the
+number it was written with. Nothing is missing because of one: it is the file, at another number.
+`verify` counts it present and names it, and only where the name inside the number identifies it
+among the names its own folder expects (`docs/adr/0005`).
+_Avoid_: misplaced, stale, out of date — all three say the file is wrong, and only its position in
+an `ls` is
+
 **Uncopied item**:
 A content item there is nothing to bring across from — no text, no link, no attachment — because
 what it is lives behind an NTULearn interaction: a quiz, a test, a submission point. A sync writes
