@@ -23,6 +23,9 @@ const ANNOUNCEMENTS_FOLDER = "Announcements";
 export async function syncCourse({ client, course, state }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
+  const unread = Object.entries(snapshot.unavailable ?? {})
+    .filter(([, couldNotBeRead]) => couldNotBeRead)
+    .map(([category]) => category);
   const tally = {
     downloaded: 0,
     skipped: 0,
@@ -99,8 +102,16 @@ export async function syncCourse({ client, course, state }) {
     syncedAt: new Date().toISOString(),
     downloads,
     contentIds: snapshot.items.map((item) => item.id),
-    announcementIds: snapshot.announcements.map((announcement) => announcement.id),
-    conversationIds: snapshot.conversations.map((conversation) => conversation.id),
+    // A category nobody could read yields the same empty list as a category with nothing in it, and
+    // the two are not the same fact. Recording the empty one would report every announcement as new
+    // on the run after the permission comes back, so an unread category keeps what the last run
+    // recorded — ADR-0003's direction, one level up from the files.
+    announcementIds: unread.includes("announcements")
+      ? previous.announcementIds
+      : snapshot.announcements.map((announcement) => announcement.id),
+    conversationIds: unread.includes("conversations")
+      ? previous.conversationIds
+      : snapshot.conversations.map((conversation) => conversation.id),
   };
   state.courses[course.key] = current;
 
@@ -114,6 +125,9 @@ export async function syncCourse({ client, course, state }) {
     newContent: newIds(current.contentIds, previous.contentIds).length,
     newAnnouncements: newIds(current.announcementIds, previous.announcementIds).length,
     newConversations: newIds(current.conversationIds, previous.conversationIds).length,
+    // Said only when there is something to say, because a category nobody could read is the one
+    // thing in this result a count cannot show: it looks exactly like a category with nothing in it.
+    ...(unread.length ? { unread } : {}),
     ...tally,
   };
 }

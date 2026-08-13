@@ -245,3 +245,43 @@ test("supersedes its own statement that there was nothing to copy", async () => 
 
   assert.equal(await readFile(written, "utf8"), current);
 });
+
+// A read the student may not make yields nothing, and nothing is not the same as "there are none".
+// Overwriting the recorded ids with an empty list would report every announcement as new on the run
+// after the permission comes back, and would call the course cleanly synced while a whole category
+// of it went unread.
+test("keeps what the last run recorded when a category could not be read", async () => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-"));
+  const state = {
+    version: 1,
+    courses: {
+      CC0006: {
+        announcementIds: ["a1", "a2"],
+        conversationIds: ["c1"],
+        contentIds: [],
+        downloads: {},
+      },
+    },
+  };
+  const unreadable = {
+    ...client(downloads("ppt"), []),
+    readCourse: async () => ({
+      course: { displayName: "Career Pathways" },
+      announcements: [],
+      conversations: [],
+      unavailable: { announcements: true, conversations: true },
+      items: [],
+    }),
+  };
+
+  const result = await syncCourse({
+    client: unreadable,
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state,
+  });
+
+  assert.deepEqual(state.courses.CC0006.announcementIds, ["a1", "a2"]);
+  assert.deepEqual(state.courses.CC0006.conversationIds, ["c1"]);
+  assert.equal(result.newAnnouncements, 0);
+  assert.deepEqual(result.unread, ["announcements", "conversations"]);
+});

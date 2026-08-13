@@ -1,5 +1,6 @@
 import { attachmentsOf, isFile, isFolder } from "./content.mjs";
 import { downloadRefusal } from "./download.mjs";
+import { optionalIsMissing, readRefusal } from "./read.mjs";
 import { openSignedInContext } from "./session.mjs";
 import { absoluteUrl, courseUrl } from "./urls.mjs";
 
@@ -61,6 +62,12 @@ class NtulearnClient {
       course,
       announcements: announcements.results ?? [],
       conversations: conversations.results ?? [],
+      // Which optional reads yielded nothing because nothing could be read, rather than because
+      // there is nothing there. The two are the same empty list and they are not the same fact.
+      unavailable: {
+        announcements: announcements.unavailable === true,
+        conversations: conversations.unavailable === true,
+      },
       items,
     };
   }
@@ -95,13 +102,10 @@ class NtulearnClient {
     const response = await this.#context.request.get(absoluteUrl(path), {
       headers: { Accept: "application/json", "X-Blackboard-XSRF": this.#token },
     });
-    if (optional && response.status() === 404) return { results: [], unavailable: true };
-    if (response.status() === 401 || response.status() === 403) {
-      throw new Error(`Authentication rejected for ${path}. Run: npm run login`);
-    }
-    if (!response.ok()) {
-      throw new Error(`NTULearn request failed for ${path}: HTTP ${response.status()}`);
-    }
+    const status = response.status();
+    if (optional && optionalIsMissing(status)) return { results: [], unavailable: true };
+    const refusal = readRefusal({ status, path });
+    if (refusal) throw new Error(refusal);
     return response.json();
   }
 
