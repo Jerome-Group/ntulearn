@@ -22,12 +22,44 @@ Drive folder is read-only, and when the person asking does not want a download.
 The separation also keeps `sync` from growing a mode that turns its writes off, which is a flag
 whose failure mode is that somebody believes it and it was not honoured.
 
-## Attachments only
+## Attachments only — amended: the documents too (#32)
 
-The report counts attachments and names the ones that are absent. Markdown documents are written
-from the snapshot on every run, so a missing document means a missing content item — which is a
-different defect, in the walk rather than in a download, and one the sync itself would have to
-have been blind to. The gap this answers is the file that did not arrive.
+> The report counts attachments and names the ones that are absent. Markdown documents are written
+> from the snapshot on every run, so a missing document means a missing content item — which is a
+> different defect, in the walk rather than in a download, and one the sync itself would have to
+> have been blind to. The gap this answers is the file that did not arrive.
+
+That was this section, and this record's *Revisit when* named the condition that would change it.
+The condition arrived. The report now counts every file a sync promises to write — the course
+overview, a folder's own document where it has one, each content item's page, the document an
+uncopied item gets (ADR-0006), and each announcement — alongside the attachments.
+
+What the paragraph above gets wrong is the word *different*. A missing document does mean a defect
+in the walk rather than in a download, and the walk is the part with the history: three silent skips
+(#17), a Learning Module whose children were never walked at all (#18), an item that wrote no file
+(#20). Every one was found by opening NTULearn in a browser. Worse, the blind spot fed itself — an
+item the walk misses expects no attachment, so the count it is missing from is a count it was never
+in — which left the number vacuously satisfiable. `ML0004-TUT` is fourteen content items and no
+attachments, so the entire check was `0 === 0`: it reported the course complete, and would have
+reported exactly that if the destination were empty or the volume unmounted. On `25S2-PS0002-LAB`,
+44 of 126 items are recorded lectures held as external links, carrying no attachment between them;
+deleting every one of those pages left the course reading complete.
+
+Counting documents does not detect what the walk missed, and nothing here claims it does — an item
+that was never returned still expects nothing, which is why the report now says so out loud. What it
+removes is the case where the number is empty of its own accord, and it holds the destination
+against everything the run it is checking actually wrote.
+
+Two things bound it, and both are in the code rather than in this prose:
+
+- **A document is expected only where a sync would write one.** A folder's own document exists only
+  where the folder describes itself, so expecting one beneath every bare folder would invent a gap
+  under each — crying wolf at the smallest possible scale, which is the failure *Presence, not
+  content* refuses below for a bigger one.
+- **`verify` still never enumerates the destination.** It reads at the paths NTULearn named and
+  nowhere else, so a document left behind for an item NTULearn has stopped returning is invisible to
+  it rather than excused by it. ADR-0003's additive rule holds here by construction, not by a
+  carve-out that some later walk could be written against.
 
 ## What a permanent failure does to the exit code is left open
 
@@ -61,10 +93,17 @@ verify that consulted it would answer from the same record that was already wron
 - **A present file is never inspected.** A truncated, corrupt or superseded file counts as
   present. What this command detects is absence.
 - **The path it predicts is the path a sync writes**, because both walk the course through
-  `src/sync/attachments.mjs`, which names the files a course is expected to hold and where each
+  `src/sync/expected.mjs`, which names the files a course is expected to hold and where each
   one belongs. Sharing the naming alone would not have been enough: what a walk *counts* can drift
   from what a walk *downloads* just as easily, and a folder whose own body carries an embed is
-  exactly that case — no run downloads it, so nothing may expect it either.
+  exactly that case — no run downloads it, so nothing may expect it either. For the same reason
+  that walk yields each document with the *text* a run would write rather than only its path: a
+  document written conditionally is one whose expectation has to be decided by the code that
+  decides the writing.
+- **The report says where it stops.** A completeness number is only ever relative to the authority
+  behind it, and this one's is a single read of the course, so what that read does not reach is
+  part of the answer rather than a caveat on it: an item the walk never returned, an object that is
+  neither attachment nor document, and a file present at the path but truncated or since replaced.
 - **It reports the destination and never repairs it.** The repair is `npm run sync`, which is the
   same separation ADR-0003 draws between reporting and acting.
 
@@ -79,8 +118,12 @@ verify that consulted it would answer from the same record that was already wron
 - **A gap is found that `verify` calls present** — a truncated download, a file replaced upstream
   with different bytes. That is the argument for checking content, and it needs a real instance
   rather than the theory, because the check costs a download of everything.
-- **Markdown documents go missing in a way the sync does not report.** Then the walk extends to
-  them and this record's second section is what changes.
+- ~~**Markdown documents go missing in a way the sync does not report.**~~ This one fired: #32, and
+  the second section above is what it changed.
+- **An authority arrives that is not this walk.** Everything here is measured against one read of
+  the course, so the walk cannot catch its own blindness — and the four gaps found so far were all
+  found by a person in a browser. A second reading of the same course, from somewhere the walk does
+  not go, is what would turn "everything I saw is here" into "nothing was missed" (#33).
 - **A `verify` run wants to be a step in a `sync`** — for instance, one that finishes by saying
   what is still absent after it has written everything it could. That is a sync reporting on its
   own destination rather than a flag that turns its writes off, and the objection above does not

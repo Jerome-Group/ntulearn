@@ -97,31 +97,42 @@ permission-restricted and ignored by Git. The university expires it periodically
 ## Is a course complete?
 
 A sync says what that run did. `npm run verify -- all` says what the destination holds: it walks
-each configured course in NTULearn, works out the path every attachment would be written to, and
-reports which of those paths hold a file. It downloads nothing and writes nothing on either side,
-and it exits `1` when anything is absent — `docs/adr/0005`.
+each configured course in NTULearn, works out the path of every file a sync would write there — the
+attachments and the Markdown documents both — and reports which of those paths hold a file. It
+downloads nothing and writes nothing on either side, and it exits `1` when anything is absent —
+`docs/adr/0005`.
 
 ```json
 {
+  "files": 246,
   "attachments": 128,
-  "present": 118,
+  "documents": 118,
+  "present": 236,
   "complete": false,
   "courses": [
     {
       "key": "CC0006",
       "course": "Sustainability: Seeing Through the Haze",
       "destination": "/…/CC0006/NTULearn",
+      "files": 24,
       "attachments": 10,
-      "present": 4,
+      "documents": 14,
+      "present": 22,
       "missing": [
         {
           "file": "Career_Platform_User_Guide.pdf",
           "trail": "Career Pathways Platform › Instruction Manual",
           "path": "09 Career Pathways Platform/03 Instruction Manual/01 Career_Platform_User_Guide.pdf"
+        },
+        {
+          "file": "Video Lecture: Topic 1 - Introduction.md",
+          "trail": "Week 1",
+          "path": "01 Week 1/04 Video Lecture_ Topic 1 - Introduction.md"
         }
       ]
     }
-  ]
+  ],
+  "notCovered": ["A content item this walk did not return expects nothing, …"]
 }
 ```
 
@@ -129,23 +140,25 @@ The gaps it names are fixed by running the sync again; it never repairs anything
 
 ### What `complete: true` does not cover
 
-The number counts **attachments, present at a path**, and it is worth reading as narrowly as that
-says.
+The number counts **the files a sync would write, present at a path**, and it is worth reading as
+narrowly as that says. The report carries a `notCovered` list saying so on every run.
 
-- **Recorded lecture videos and their transcripts** are not read at all. They are absent from both
-  sides of the number rather than counted as missing.
-- **Quizzes, tests and submission points** hold nothing to download. A sync writes a Markdown file
-  naming each one where it sat (`docs/adr/0006`), and there is no file for `verify` to count either
-  way.
-- **External tools** — anything reached through LTI — are recorded as a link. Whatever is on the
-  other side of that link is never fetched and never counted.
+- **A content item the walk did not return** is in neither number: nothing expects what nothing
+  saw, so the count it is missing from is a count it was never in. This is the blind spot the four
+  gaps found so far all came out of, and every one was found by opening NTULearn in a browser
+  rather than by the tool disagreeing with itself.
+- **Recorded lecture videos and their transcripts** are not read at all. The page naming the
+  lecture is counted; whatever is on the other side of the link is absent from both sides of the
+  number rather than counted as missing.
+- **External tools** — anything reached through LTI — are recorded as a link, on the same terms.
 - **Presence is not content.** `verify` asks the filesystem whether a file is at the path and
   nothing more, so a truncated, corrupt or since-replaced file counts as present
   (`docs/adr/0005`).
-- **The count is attachments as this tool reads them.** A kind of embed it does not recognise is
-  one a sync never downloads and `verify` never expects, so both are silent about it together.
-  Four such gaps have been found so far, and every one was found by opening NTULearn in a browser
-  rather than by the tool disagreeing with itself.
+- **An embed this tool does not recognise** is one a sync never downloads and `verify` never
+  expects, so both are silent about it together.
+- **What the destination holds beyond the course is never looked at.** `verify` reads only at the
+  paths NTULearn named, so a file kept for an item NTULearn has stopped returning is correct rather
+  than reported — a destination only ever grows (`docs/adr/0003`).
 
 So `complete: true` says that every file this tool knows to look for arrived. It does not say the
 copy is the course.

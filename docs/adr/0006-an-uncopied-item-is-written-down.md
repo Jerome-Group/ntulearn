@@ -51,8 +51,11 @@ record leans on something outside the destination. The run names the failure and
 the argument above says a run report is read once — so the reason the case is different is
 `verify`, not the report. A file that ought to be in the destination and is not is exactly what
 `verify` counts, on every future run, for as long as it stays absent (ADR-0005). An uncopied item
-is invisible to it: there is no attachment to expect, so nothing is ever held against anything.
-That asymmetry is the whole of why one gets a document and the other does not. Writing one for the
+was invisible to it: there was no attachment to expect, so nothing was ever held against anything.
+That asymmetry is the whole of why one gets a document and the other does not, and it survives #32
+— which closed the blindness rather than the asymmetry, since the failed download is still covered
+by the attachment `verify` expects and the uncopied item is now covered by the document this record
+has it write. Writing one for the
 failed download would also put a false sentence on disk — the item does carry an attachment — and
 ADR-0003 means nothing would ever take it back off.
 
@@ -104,9 +107,13 @@ sentence instead — the weaker test, and the reason that sentence is now fixed 
 - **The kind is NTULearn's word for it.** The document names the content handler, translated where
   a student would not recognise the raw key and passed through where they would. A handler nobody
   has seen yet is reported as NTULearn spells it rather than guessed at.
-- **`verify` is unchanged.** It reads attachments against the destination, and an uncopied item has
-  none — there is nothing for it to hold the destination against. What this record changes is what
-  a sync writes, not what a verify counts.
+- ~~**`verify` is unchanged.**~~ Amended by #32. It was true of the command as it stood: `verify`
+  read attachments against the destination, and an uncopied item has none, so there was nothing for
+  it to hold the destination against. But the document this record requires is a file a sync now
+  promises to write, which makes it exactly the kind of thing `verify` can hold a destination
+  against — so it counts one, and the *asymmetry* above holds for the reason it always did. An item
+  whose attachment failed to download is covered by that attachment; an item there was nothing to
+  copy from is covered by its document. Neither is invisible now.
 
 ## Revisit when
 

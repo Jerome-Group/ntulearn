@@ -57,7 +57,7 @@ async function verify(config, key) {
   await writeLine(stdout, asJson(report));
   if (report.complete) return 0;
 
-  await writeLine(stderr, `Attachments are absent. Run: npm run sync -- ${key || "all"}`);
+  await writeLine(stderr, `Files are absent. Run: npm run sync -- ${key || "all"}`);
   return 1;
 }
 
