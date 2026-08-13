@@ -162,6 +162,14 @@ one inside another — a course with a lecture site and a tutorial site is two c
 two trees written into one folder is a tangle a sync cannot undo (`docs/adr/0003`).
 _Avoid_: output directory, target, vault
 
+**Renumbered file**:
+A file in a *destination* whose name differs from the one the course would give it today only by
+the number in front of it — an item was inserted upstream, every later name moved, and nothing on
+disk moved with it. It is the file: `verify` counts it present, and a sync writes to where it is
+rather than beside it (`docs/adr/0005`, `docs/adr/0009`). Both commands report how many there were.
+_Avoid_: stale, orphaned, duplicate — the first two say the file is wrong and it is not, and the
+third is what happens when neither command recognises it
+
 **Session**:
 Proof that the student is signed in, reusable across runs. It is this repository's one secret.
 _Avoid_: login, credentials, cookie, token — a token is one part of a session, not a word for it

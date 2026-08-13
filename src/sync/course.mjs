@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
+import { numberingOf } from "./numbering.mjs";
 import { safeResolve } from "./paths.mjs";
 import { courseState, newIds } from "./state.mjs";
 
@@ -26,18 +28,43 @@ export async function syncCourse({ client, course, state }) {
     markdown: 0,
     markdownWritten: 0,
     uncopied: 0,
+    renumbered: 0,
     failures: [],
   };
   const downloads = {};
 
   await mkdir(course.destination, { recursive: true });
 
-  for await (const expected of expectedFiles({
-    client,
-    courseId: course.courseId,
-    snapshot,
-  })) {
-    const target = safeResolve(course.destination, ...expected.placement.segments);
+  // Read whole before written, because where a file belongs is decided among every name the course
+  // expects rather than by that name alone — the sibling `numberingOf` needs and the reason
+  // `verify` walks the same way (ADR-0005).
+  const walked = [];
+  for await (const expected of expectedFiles({ client, courseId: course.courseId, snapshot })) {
+    walked.push(expected);
+  }
+  const numbering = numberingOf(
+    course.destination,
+    walked.map((expected) => expected.placement.segments),
+  );
+
+  for (const expected of walked) {
+    // Where the destination already holds this file under a name that differs only by the number in
+    // front of it, that is where the run writes. A name carries its item's position, so one item
+    // inserted upstream moves every later name while nothing on disk moves (ADR-0003) — and a run
+    // that wrote to today's number instead left a second copy of the same file beside the first,
+    // with nothing to say which is current (ADR-0009).
+    //
+    // A folder is never asked about: it is a directory rather than a file, and one standing beside
+    // an older number costs a listing rather than a second copy of anything (ADR-0003).
+    const onDisk =
+      expected.kind === "folder" ? null : await numbering.find(expected.placement.segments);
+    const at = onDisk ?? expected.placement.path;
+    if (at !== expected.placement.path) tally.renumbered += 1;
+    // `resolve` rather than `safeResolve` on the left: that name came off a listing of the
+    // destination itself, so it is already a name on disk rather than anything NTULearn said.
+    const target = onDisk
+      ? resolve(course.destination, onDisk)
+      : safeResolve(course.destination, ...expected.placement.segments);
 
     switch (expected.kind) {
       case "folder":
@@ -56,6 +83,7 @@ export async function syncCourse({ client, course, state }) {
         const saved = await saveAttachment({
           client,
           target,
+          at,
           placement,
           item,
           attachment,
@@ -111,16 +139,18 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, target, placement, item, attachment, record, tally }) {
+async function saveAttachment({ client, target, at, placement, item, attachment, record, tally }) {
   const fingerprint = attachmentFingerprint(item, attachment);
 
+  // Where the file is, rather than where the run that recorded it put the file. The path a record
+  // names had to match the path this run would write, and the number in that path moves under it —
+  // so an item pushed down the course read as changed and was downloaded a second time beside
+  // itself, sixty-one of them in one course (#70, ADR-0009).
   const unchanged =
-    record?.fingerprint === fingerprint &&
-    record.relativePath === placement.path &&
-    (await isFilePresent(target, attachment.fileSize));
+    record?.fingerprint === fingerprint && (await isFilePresent(target, attachment.fileSize));
   if (unchanged) {
     tally.skipped += 1;
-    return record;
+    return { ...record, relativePath: at };
   }
 
   try {
@@ -130,7 +160,7 @@ async function saveAttachment({ client, target, placement, item, attachment, rec
     tally.bytes += body.length;
     return {
       fingerprint,
-      relativePath: placement.path,
+      relativePath: at,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       // Written, never read: what a run may consult `State` for is ADR-0005's, not this line's.
@@ -142,7 +172,7 @@ async function saveAttachment({ client, target, placement, item, attachment, rec
     tally.failures.push({
       file: placement.file,
       trail: placement.trail,
-      path: placement.path,
+      path: at,
       error: error.message,
     });
     // No record, so the next run treats this attachment as never downloaded and tries again.
