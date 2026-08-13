@@ -7,6 +7,7 @@ import {
   htmlToMarkdown,
   isoDate,
   isUncopiedDocument,
+  syncStamp,
   uncopiedDocument,
 } from "../src/sync/markdown.mjs";
 
@@ -93,6 +94,22 @@ test("writes a course overview that points back at the source", () => {
     markdown,
     /- Source: https:\/\/ntulearn\.ntu\.edu\.sg\/ultra\/courses\/_1_1\/outline\n/,
   );
+});
+
+// The overview used to stamp the current time into itself, which made it differ from itself on
+// every run and put a permanent floor of one per course under `markdownWritten` (#57, ADR-0008).
+test("writes a course overview that is the same twice for the same course", () => {
+  const course = { id: "_1_1", displayId: "AB1234", displayName: "Analysis" };
+
+  assert.equal(courseDocument(course), courseDocument(course));
+  assert.doesNotMatch(courseDocument(course), /Synced/);
+});
+
+test("writes the run's own time down as a stamp of its own", () => {
+  const markdown = syncStamp("2026-08-13T09:14:22.481Z");
+
+  assert.match(markdown, /^# Last synced\n/);
+  assert.match(markdown, /- Synced: 2026-08-13T09:14:22\.481Z\n/);
 });
 
 test("writes a content item's description, body and link", () => {

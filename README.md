@@ -73,6 +73,10 @@ announcements become Markdown; attachments keep their original file type. Each c
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.
 
+A `Last synced.md` beside the overview records when the sync last ran. It is the only file in a
+destination rewritten on every run — everything else is written only when the course moved, so a
+run over a course with nothing new writes nothing at all; `docs/adr/0008` argues both halves.
+
 An item a sync cannot copy — a quiz, a test, a submission point, anything holding no text, no link
 and no attachment — still gets a Markdown file at its own numbered place, naming it and saying
 there was nothing to bring across. The numbering stays continuous, and the copy never leaves out

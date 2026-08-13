@@ -13,6 +13,7 @@ const NOT_COVERED = [
   "An object that is neither an attachment nor a document — a recorded lecture's video, whatever an external tool holds — is read by neither side.",
   "A file at the path is never opened, so a truncated or since-replaced one counts as present (docs/adr/0005).",
   "A file named under `renumbered` is the same name at another number and never the same bytes: one left behind for an item NTULearn has stopped returning, carrying the title of one that moved, is counted present.",
+  "`Last synced.md` is a record of the run rather than a document of the course, so it is written by a sync and counted by neither number here (docs/adr/0008).",
 ];
 
 // The categories this count is made of. A conversation is never copied, so a course that would not

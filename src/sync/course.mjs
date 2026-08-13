@@ -3,9 +3,14 @@ import { mkdir } from "node:fs/promises";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
-import { isUncopiedDocument } from "./markdown.mjs";
+import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { safeResolve } from "./paths.mjs";
 import { courseState, newIds } from "./state.mjs";
+
+// Alone here rather than beside the other destination filenames in `expected.mjs`, because that
+// walk is what `verify` holds a destination against and a stamp is no part of what a course is
+// expected to hold (ADR-0008).
+const SYNC_STAMP = "Last synced.md";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
 export async function syncCourse({ client, course, state }) {
@@ -63,10 +68,17 @@ export async function syncCourse({ client, course, state }) {
     }
   }
 
+  const syncedAt = new Date().toISOString();
+  // Outside the walk, counted in neither number, and written whatever the run found: a run whose
+  // downloads failed is still a run that happened, and this is the only place the destination says
+  // so. `state.syncedAt` records the same moment, but `.data/` is disposable and no part of the
+  // copy (ADR-0008).
+  await writeAtomically(safeResolve(course.destination, SYNC_STAMP), syncStamp(syncedAt));
+
   const current = {
     courseId: course.courseId,
     destination: course.destination,
-    syncedAt: new Date().toISOString(),
+    syncedAt,
     downloads,
     contentIds: snapshot.items.map((item) => item.id),
     // A category nobody could read yields the same empty list as a category with nothing in it, and

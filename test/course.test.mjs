@@ -182,14 +182,29 @@ test("says what it wrote, not only what the copy holds", async () => {
     state: { version: 1, courses: {} },
   });
 
-  // Everything whose text comes from the course is unchanged and goes unwritten. `Course.md` is
-  // the exception by construction — it records when the sync ran — so it is the only document a
-  // second run can write, and the count is asserted against whether it actually moved rather
-  // than against a number that would also pass if something else had moved instead (#55).
+  // Every document's text comes from the course and nothing in the course moved, so a second run
+  // writes none of them. `Course.md` used to be the exception — it stamped the run's own time into
+  // itself — which put a floor of one per course under this number and left it unable to say that
+  // a run changed nothing at all (#57, ADR-0008).
   assert.equal(await readFile(quiz, "utf8"), quizBefore);
-  const overviewMoved = (await readFile(overview, "utf8")) !== overviewBefore;
+  assert.equal(await readFile(overview, "utf8"), overviewBefore);
   assert.equal(again.markdown, 2);
-  assert.equal(again.markdownWritten, overviewMoved ? 1 : 0);
+  assert.equal(again.markdownWritten, 0);
+});
+
+// The time the run happened is the one thing in a destination that is not a fact about the course,
+// so it lives in a file of its own rather than in the overview it was making unstable (ADR-0008).
+test("records when the run happened in a file of its own, outside the document counts", async () => {
+  const { destination, result } = await sync(downloads("ppt"), WEEK_1);
+  const stamp = join(destination, "Last synced.md");
+
+  assert.match(await readFile(stamp, "utf8"), /^# Last synced\n/);
+  assert.match(await readFile(stamp, "utf8"), /- Synced: \d{4}-\d\d-\d\dT[\d:.]+Z\n/);
+
+  // The overview and the quiz's document; a stamp is a record of the run rather than a document of
+  // the course, so counting it would put back the floor this record removed.
+  assert.equal(result.markdown, 2);
+  assert.equal(result.markdownWritten, 2);
 });
 
 // ML0004's seven topics are SCORM packages: no file to fetch, and a launch address NTULearn hands
