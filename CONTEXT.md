@@ -107,7 +107,8 @@ A Markdown file this repository writes about a course rather than one NTULearn h
 course overview, a folder's own page, a *content item*'s page, an *uncopied item*'s stand-in, an
 *announcement*. That authorship is the whole of what separates it from an *attachment*, and it is
 why a later run may correct its own sentence in one (`docs/adr/0006`). Both are files a
-*destination* is expected to hold, so `verify` counts both.
+*destination* is expected to hold, so `verify` counts both. A *stamp* is neither, for all that it
+is Markdown this repository writes: it says nothing about the course.
 _Avoid_: note, markdown file, page — the last names one kind of document and not the set
 
 **Alias**:
@@ -170,6 +171,14 @@ What a previous sync recorded about a destination, so the next one can skip what
 It is a cache and never a source of truth: losing it costs time and nothing else.
 _Avoid_: database, index, manifest, cache — the last is what it behaves like, but "the cache"
 already means the browser's
+
+**Stamp**:
+The one file in a *destination* that records when the sync last ran rather than anything about the
+course, and so the one file rewritten on every run — everything beside it is written only when the
+course moved. It is what makes an unwatched run's freshness readable from the folder itself, where
+*state* is disposable and no part of the copy (`docs/adr/0008`).
+_Avoid_: document — a *document* is about the course, which is the whole distinction; also
+timestamp, log — it records one moment, not what happened
 
 ### Organisation-wide
 

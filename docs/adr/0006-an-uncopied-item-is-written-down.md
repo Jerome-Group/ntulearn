@@ -98,7 +98,10 @@ sentence instead — the weaker test, and the reason that sentence is now fixed 
   `markdown` are both about the course: the items it could not copy, and the documents the copy
   holds for it. What this run did is `markdownWritten`, which counts a document only where the
   bytes on disk actually moved (#55). A report is still a report; it is just no longer the only
-  record.
+  record. **Amended by #57:** that number had a floor of one per course when this was written,
+  because the course overview stamped the run's own time into itself and so differed from itself
+  every run. The stamp is now a file of its own and the floor is gone, so a run that changed
+  nothing counts zero — `docs/adr/0008`.
 - **The mark in a document is a compatibility surface.** A document carries
   `<!-- ntulearn: nothing to copy -->` so a later run knows its own writing however the words
   around it change. What predates the mark is recognised by its sentence instead, so *that*
