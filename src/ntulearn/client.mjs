@@ -62,6 +62,12 @@ class NtulearnClient {
       course,
       announcements: announcements.results ?? [],
       conversations: conversations.results ?? [],
+      // Which optional reads yielded nothing because nothing could be read, rather than because
+      // there is nothing there. The two are the same empty list and they are not the same fact.
+      unavailable: {
+        announcements: announcements.unavailable === true,
+        conversations: conversations.unavailable === true,
+      },
       items,
     };
   }
