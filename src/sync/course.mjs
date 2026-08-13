@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
-import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
+import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { safeResolve } from "./paths.mjs";
@@ -48,42 +48,26 @@ export async function syncCourse({ client, course, state }) {
   );
 
   for (const expected of walked) {
-    // Where the destination already holds this file under a name that differs only by the number in
-    // front of it, that is where the run writes. A name carries its item's position, so one item
-    // inserted upstream moves every later name while nothing on disk moves (ADR-0003) — and a run
-    // that wrote to today's number instead left a second copy of the same file beside the first,
-    // with nothing to say which is current (ADR-0009).
-    //
-    // A folder is never asked about: it is a directory rather than a file, and one standing beside
-    // an older number costs a listing rather than a second copy of anything (ADR-0003).
-    const onDisk =
-      expected.kind === "folder" ? null : await numbering.find(expected.placement.segments);
-    const at = onDisk ?? expected.placement.path;
-    if (at !== expected.placement.path) tally.renumbered += 1;
-    // `resolve` rather than `safeResolve` on the left: that name came off a listing of the
-    // destination itself, so it is already a name on disk rather than anything NTULearn said.
-    const target = onDisk
-      ? resolve(course.destination, onDisk)
-      : safeResolve(course.destination, ...expected.placement.segments);
+    const place = await placeOf(numbering, course.destination, expected);
+    if (place.heldAt) tally.renumbered += 1;
 
     switch (expected.kind) {
       case "folder":
-        await mkdir(target, { recursive: true });
+        await mkdir(place.target, { recursive: true });
         break;
       case "document":
-        await writeDocument(target, expected.content, tally);
+        await writeDocument(place, expected.content, tally);
         break;
       case "uncopied":
         tally.uncopied += 1;
-        await writeUncopied(target, expected.content, tally);
+        await writeUncopied(place, expected.content, tally);
         break;
       case "attachment": {
         const { item, attachment, placement } = expected;
         const record = previous.downloads?.[attachment.resourceUrl];
         const saved = await saveAttachment({
           client,
-          target,
-          at,
+          place,
           placement,
           item,
           attachment,
@@ -139,28 +123,59 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, target, at, placement, item, attachment, record, tally }) {
-  const fingerprint = attachmentFingerprint(item, attachment);
+// Where a run writes one file the course expects, and where the destination already holds it. The
+// two are the same name until an item is inserted upstream: a name carries its item's position, so
+// every later name moves by one while nothing on disk moves with it (ADR-0003). `heldAt` is the
+// older file when there is one, and it is never written over — a run keeps it where it is, or
+// writes at today's number beside it (ADR-0009).
+//
+// A folder is not asked about. It is a directory rather than a file, and one standing beside an
+// older number costs a listing rather than a second copy of anything.
+async function placeOf(numbering, destination, expected) {
+  const { path, segments } = expected.placement;
+  const target = safeResolve(destination, ...segments);
+  // `resolve` rather than `safeResolve`: this name came off a listing of the destination itself, so
+  // it is already a name on disk rather than anything NTULearn said.
+  const found = expected.kind === "folder" ? null : await numbering.find(segments);
+  const older = found === null ? null : resolve(destination, found);
+  return older === null || older === target
+    ? { at: path, target, heldAt: null }
+    : { at: found, target, heldAt: older };
+}
 
-  // Where the file is, rather than where the run that recorded it put the file. The path a record
-  // names had to match the path this run would write, and the number in that path moves under it —
-  // so an item pushed down the course read as changed and was downloaded a second time beside
-  // itself, sixty-one of them in one course (#70, ADR-0009).
-  const unchanged =
-    record?.fingerprint === fingerprint && (await isFilePresent(target, attachment.fileSize));
-  if (unchanged) {
+async function saveAttachment({ client, place, placement, item, attachment, record, tally }) {
+  const fingerprint = attachmentFingerprint(item, attachment);
+  // A record used to have to name the path this run would write, and the number in that path moves
+  // under it — so an item pushed down the course read as changed and was fetched a second time
+  // beside itself, sixty-one of them in one course (#70, ADR-0009).
+  const known = record?.fingerprint === fingerprint;
+
+  if (known && (await isFilePresent(place.target, attachment.fileSize))) {
     tally.skipped += 1;
-    return { ...record, relativePath: at };
+    return { ...record, relativePath: place.at };
+  }
+  if (known && place.heldAt !== null && (await isFilePresent(place.heldAt, attachment.fileSize))) {
+    tally.skipped += 1;
+    return record;
   }
 
   try {
     const { body, headers } = await client.download(attachment);
-    await writeAtomically(target, body);
-    tally.downloaded += 1;
-    tally.bytes += body.length;
+    // A run with no record of these bytes is what deleting `State` leaves, and asking the
+    // destination rather than the record is what lets that run keep the file where it is instead of
+    // writing a second copy of it. The bytes are compared rather than assumed, because nothing this
+    // run did not just fetch is ever written over (ADR-0003, ADR-0009).
+    const alreadyThere = place.heldAt !== null && (await fileHolds(place.heldAt, body));
+    if (alreadyThere) {
+      tally.skipped += 1;
+    } else {
+      await writeAtomically(place.target, body);
+      tally.downloaded += 1;
+      tally.bytes += body.length;
+    }
     return {
       fingerprint,
-      relativePath: at,
+      relativePath: alreadyThere ? place.at : placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       // Written, never read: what a run may consult `State` for is ADR-0005's, not this line's.
@@ -172,7 +187,7 @@ async function saveAttachment({ client, target, at, placement, item, attachment,
     tally.failures.push({
       file: placement.file,
       trail: placement.trail,
-      path: at,
+      path: placement.path,
       error: error.message,
     });
     // No record, so the next run treats this attachment as never downloaded and tries again.
@@ -185,10 +200,13 @@ async function saveAttachment({ client, target, at, placement, item, attachment,
 // additive in the direction ADR-0003 argues for. That statement is the sync's own writing, though,
 // and correcting it costs the student nothing, so a destination written before a fix stops
 // repeating what the fix removed (#53).
-async function writeUncopied(path, content, tally) {
-  const existing = await readText(path);
+//
+// The page it must not write over is wherever the earlier run left it, which a reorder moves away
+// from the name today's numbering gives it (ADR-0009).
+async function writeUncopied(place, content, tally) {
+  const existing = await readText(place.heldAt ?? place.target);
   if (existing !== null && !isUncopiedDocument(existing)) return;
-  await writeDocument(path, content, tally);
+  await writeDocument(place, content, tally);
 }
 
 function attachmentFingerprint(item, attachment) {
@@ -198,8 +216,17 @@ function attachmentFingerprint(item, attachment) {
 // Two numbers because they answer different questions: how big the copy is, and what this run did
 // to it. Only the second is worth a reader's attention on a run nobody watched, and a count that
 // reads the same whether everything or nothing was written cannot be it.
-async function writeDocument(path, content, tally) {
+//
+// A document under an earlier number holding these very words is this document, and writing it
+// again at today's number would put a second copy of the same text in the folder with nothing to
+// say which is current. Where the words differ the older file is left exactly as it is — it may be
+// the student's — and the run writes beside it (ADR-0003, ADR-0009).
+async function writeDocument(place, content, tally) {
   if (!content) return;
-  if (await writeIfChanged(path, content)) tally.markdownWritten += 1;
+  if (place.heldAt !== null && (await readText(place.heldAt)) === content) {
+    tally.markdown += 1;
+    return;
+  }
+  if (await writeIfChanged(place.target, content)) tally.markdownWritten += 1;
   tally.markdown += 1;
 }

@@ -1,10 +1,12 @@
 # A sync writes to where a file already is, not to the number the course gives it today
 
 Before writing anything a course expects, a sync asks the destination whether it already holds that
-file under a name differing only by the number in front of it. Where it does, that is the path the
-run writes: the attachment is skipped rather than fetched again, and the document is written over
-itself rather than beside itself. The number in a name stays the item's `position`, nothing on disk
-is renamed, and nothing is deleted, so ADR-0003 holds exactly as it did.
+file under a name differing only by the number in front of it. Where it does, and the bytes there
+are the bytes the run would write, the run writes nothing: the file stays where it is and is counted
+as skipped. Where the bytes differ, the older file is left exactly as it is and the run writes at
+today's number beside it, as it always did. The number in a name stays the item's `position`,
+nothing on disk is renamed, nothing is deleted, and nothing this run did not itself just fetch is
+written over — ADR-0003 holds exactly as it did.
 
 It answers the duplication ADR-0005 named and deferred. A file's name carries its item's position,
 so one item inserted at the top of a course moves every later name by one while nothing on disk
@@ -36,6 +38,14 @@ That shared lookup is the point. `verify` calls such a file **present**; a sync 
 writing it a second time. The two commands disagreeing about whether a file is there was the defect,
 not the numbering.
 
+Where the two commands part is what they do with the answer. `verify` never opens a file, so a file
+left behind for an item NTULearn has stopped returning may carry the title of one that moved and be
+counted present — the limit ADR-0005 accepts and prints on every run. A sync cannot accept that
+limit, because behind its answer is a write: it would be overwriting a file it did not put there,
+possibly annotated, on nothing better than a matching title. So a sync **compares the bytes** before
+it leaves anything in place, and writes at today's number whenever they differ. The check is loose
+enough to find the file and the write is strict enough to be safe.
+
 ## Why not the alternatives
 
 **Record the position at first write, in `State`.** The number would stop moving. It would also make
@@ -62,22 +72,33 @@ version of something.
   is permanent: nothing renumbers a destination, so a course reordered often enough drifts as far
   as the reordering goes. `verify`'s `renumbered` list is where that drift is legible, and it is
   now the only reason that list exists.
-- **A run reports a `renumbered` count** — how many of the files it expected were already in the
-  destination under an earlier number. It is a subset of `skipped` and of `markdown` rather than a
-  number beside them, and it is what says the destination's numbering has moved without a `verify`.
+- **A run reports a `renumbered` count** — how many of the files it expected the destination already
+  held under an earlier number. It says the numbering has moved without anybody running `verify`,
+  and it is deliberately not a count of what was skipped: a file whose bytes differ is renumbered
+  and written anyway.
 - **A course is read whole before any of it is written.** Where a file belongs is decided among
   every name the course expects, so the walk is collected before the first download rather than
-  written as it streams. A run that dies mid-walk now writes nothing instead of part of a course,
-  which is a change nobody asked for and an improvement either way.
+  written as it streams. Two things follow. A run that dies mid-walk now writes nothing instead of
+  part of a course, which is an improvement nobody asked for; and every document's rendered text for
+  one course is held in memory at once, which is a page each and a course at a time.
+- **A reordered course still gains an empty folder per renumbered folder.** A folder is a directory
+  rather than a file, and this asks about files, so `mkdir` at the new number still runs. The
+  duplication that costs something — a second copy of the bytes — is what this record removes; a
+  directory holding nothing is ADR-0003's accepted untidiness.
+- **An attachment with no record is fetched to compare against.** Where `State` is gone and the
+  numbering has moved, the run spends the download and then writes nothing. That is the cost of the
+  answer coming off the disk rather than out of a cache, and it is bounded by how often `State` is
+  thrown away.
 - **The stale numbering is now invisible in the ordinary case.** Before, a reordered course
   announced itself by growing; now it quietly stays as it was. Anybody who wants NTULearn's order
   in the destination has to ask for it, and asking for it is a rename.
 - **`verify`'s warning is gone.** The stderr line saying how many files a sync would write a second
   time described a cost this record removes.
-- **A file left behind for an item NTULearn has stopped returning may carry the title of one that
-  moved**, and a sync will now write over it rather than beside it — the same limit ADR-0005
-  accepts for the check, with a write behind it. Nothing but the bytes separates the two, and what
-  gets written is the current course's file at a name the current course expects.
+- **A file left behind for an item NTULearn has stopped returning is never written over**, even
+  where it carries the title of one that moved: the bytes decide, and the run writes at today's
+  number when they disagree. So the duplication this record removes comes back in exactly that case
+  — which is the trade taken deliberately, because the alternative is overwriting somebody's file
+  on the strength of a name.
 
 ## Revisit when
 

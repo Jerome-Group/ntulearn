@@ -73,11 +73,13 @@ announcements become Markdown; attachments keep their original file type. Each c
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.
 
-A file already in the destination under an earlier number is written where it is rather than a
+A file already in the destination under an earlier number is left where it is rather than written a
 second time. A name carries its item's position in the course, so one item inserted upstream moves
 every later name by one while nothing on disk moves — and a run that wrote to the new number would
-leave the destination holding two of each, for good. The run counts those files as `renumbered`;
-`docs/adr/0009` argues it, and `ls` keeps showing the order the files arrived in.
+leave the destination holding two of each, for good. The run counts those files as `renumbered`. It
+compares the bytes before leaving anything in place, so a file whose contents differ is written at
+today's number beside the older one and nothing is ever written over; `docs/adr/0009` argues it,
+and `ls` keeps showing the order the files arrived in.
 
 A `Last synced.md` beside the overview records when the sync last ran. It is the only file in a
 destination rewritten on every run — everything else is written only when the course moved, so a
@@ -192,7 +194,7 @@ file today and `onDisk` where it actually is. Reporting them as missing would be
 almost all noise.
 
 What it does not do is repair the numbering, so `ls` shows the course in the order it had when each
-file was written. A sync does not repair it either — it writes to where the file already is, so a
+file was written. A sync does not repair it either — it leaves those files where they are, so a
 reordered course stops duplicating itself and stays in the order it arrived in (`docs/adr/0009`).
 This list is what makes that drift legible.
 

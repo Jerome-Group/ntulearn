@@ -336,16 +336,38 @@ test("writes nothing a second time when every number in the course has moved", a
 
 // `State` is a cache that costs nothing to delete (`CONTEXT.md`, ADR-0003), so the duplication has
 // to be answered by what is on disk rather than by what a record remembers. Without one the run
-// fetches the bytes again — and writes them where the file already is, not beside it.
-test("re-downloads to where the file is when no record says it was ever downloaded", async () => {
+// fetches the bytes again, finds them already there under the earlier number, and writes nothing.
+test("keeps the file where it is when no record says it was ever downloaded", async () => {
   const { destination } = await sync(downloads("ppt"), WEEK_1);
 
   const second = await again(destination, { version: 1, courses: {} }, REORDERED);
 
-  assert.equal(second.downloaded, 1);
+  assert.equal(second.downloaded, 0);
+  assert.equal(second.skipped, 1);
   assert.equal(second.renumbered, 2);
   assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
   assert.deepEqual(await readdir(join(destination, "02 Week 1")), []);
+});
+
+// The bytes are what makes an older file the same file, and nothing else does: two items in a
+// folder may carry the same title, one of them left behind for something NTULearn has stopped
+// returning (ADR-0003). So a run that finds different bytes there leaves them exactly as they are
+// and writes at today's number, which is what a sync did with everything before this (#70).
+test("writes beside a file under an earlier number rather than over it", async () => {
+  const { destination } = await sync(downloads("ppt"), WEEK_1);
+
+  const second = await syncCourse({
+    client: client(downloads("a different deck"), REORDERED),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state: { version: 1, courses: {} },
+  });
+
+  assert.equal(second.downloaded, 1);
+  assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
+  assert.equal(
+    await readFile(join(destination, "02 Week 1", "06 Week 1 PPT.pptx"), "utf8"),
+    "a different deck",
+  );
 });
 
 // A record's `relativePath` is where the file is, so the run after a reorder finds it there rather
