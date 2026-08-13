@@ -93,6 +93,14 @@ A file hanging off a content item. It is copied as it is, never converted. It is
 address it was fetched from — one file may have several addresses and only one of them need work.
 _Avoid_: asset, document, upload
 
+**Document**:
+A Markdown file this repository writes about a course rather than one NTULearn hands over: the
+course overview, a folder's own page, a *content item*'s page, an *uncopied item*'s stand-in, an
+*announcement*. That authorship is the whole of what separates it from an *attachment*, and it is
+why a later run may correct its own sentence in one (`docs/adr/0006`). Both are files a
+*destination* is expected to hold, so `verify` counts both.
+_Avoid_: note, markdown file, page — the last names one kind of document and not the set
+
 **Alias**:
 A second address for an attachment, written down when an embed was authored and since moved off by
 the file. It answers `404` or `403` where another address the same course carries serves the bytes,

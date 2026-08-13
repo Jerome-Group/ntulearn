@@ -1,23 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
-import { expectedAttachments } from "./attachments.mjs";
+import { expectedFiles } from "./expected.mjs";
 import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
-import {
-  announcementDocument,
-  contentDocument,
-  courseDocument,
-  isUncopiedDocument,
-  isoDate,
-  uncopiedDocument,
-} from "./markdown.mjs";
-import { orderedName, safeResolve, safeSegment } from "./paths.mjs";
-import { placementsIn } from "./placement.mjs";
+import { isUncopiedDocument } from "./markdown.mjs";
+import { safeResolve } from "./paths.mjs";
 import { courseState, newIds } from "./state.mjs";
-
-const COURSE_DOCUMENT = "Course.md";
-const FOLDER_DOCUMENT = "_NTULearn.md";
-const ANNOUNCEMENTS_FOLDER = "Announcements";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
 export async function syncCourse({ client, course, state }) {
@@ -38,63 +25,42 @@ export async function syncCourse({ client, course, state }) {
   const downloads = {};
 
   await mkdir(course.destination, { recursive: true });
-  const overview = safeResolve(course.destination, COURSE_DOCUMENT);
-  await writeDocument(overview, courseDocument(snapshot.course), tally);
 
-  const placements = placementsIn(snapshot.items);
-  // An item that wrote no page, until an attachment below claims it. Whatever is still here
-  // afterwards would leave the destination holding nothing for it at all (ADR-0006).
-  const unwritten = new Map();
-
-  for (const item of snapshot.items) {
-    // A folder's own placement is the folder it makes; anything else's is the folder it lands in.
-    const folder = safeResolve(course.destination, ...placements.get(item.id).segments);
-
-    if (isFolder(item)) {
-      await mkdir(folder, { recursive: true });
-      await writeDocument(safeResolve(folder, FOLDER_DOCUMENT), contentDocument(item), tally);
-      continue;
-    }
-
-    const page = contentDocument(item, externalLinkOf(item));
-    const target = safeResolve(folder, `${orderedName(item.position, item.title)}.md`);
-    if (page) await writeDocument(target, page, tally);
-    else unwritten.set(item.id, { item, target });
-  }
-
-  for await (const { item, attachment, placement } of expectedAttachments({
+  for await (const expected of expectedFiles({
     client,
     courseId: course.courseId,
-    items: snapshot.items,
+    snapshot,
   })) {
-    // Its file is the trace, and a download that fails leaves a failure naming where it belonged.
-    unwritten.delete(item.id);
-    const record = previous.downloads?.[attachment.resourceUrl];
-    const saved = await saveAttachment({
-      course,
-      client,
-      placement,
-      item,
-      attachment,
-      record,
-      tally,
-    });
-    if (saved) downloads[attachment.resourceUrl] = saved;
-  }
+    const target = safeResolve(course.destination, ...expected.placement.segments);
 
-  for (const { item, target } of unwritten.values()) {
-    tally.uncopied += 1;
-    // An item hidden by a release rule reads exactly like one there was never anything to copy
-    // from, so a page the student already has is never replaced by the statement that there is
-    // nothing to copy — additive in the direction ADR-0003 argues for. That statement is the
-    // sync's own writing, though, and correcting it costs the student nothing, so a destination
-    // written before a fix stops repeating what the fix removed (#53).
-    const existing = await readText(target);
-    if (existing !== null && !isUncopiedDocument(existing)) continue;
-    await writeDocument(target, uncopiedDocument(item, placements.get(item.id).trail), tally);
+    switch (expected.kind) {
+      case "folder":
+        await mkdir(target, { recursive: true });
+        break;
+      case "document":
+        await writeDocument(target, expected.content, tally);
+        break;
+      case "uncopied":
+        tally.uncopied += 1;
+        await writeUncopied(target, expected.content, tally);
+        break;
+      case "attachment": {
+        const { item, attachment, placement } = expected;
+        const record = previous.downloads?.[attachment.resourceUrl];
+        const saved = await saveAttachment({
+          client,
+          target,
+          placement,
+          item,
+          attachment,
+          record,
+          tally,
+        });
+        if (saved) downloads[attachment.resourceUrl] = saved;
+        break;
+      }
+    }
   }
-
-  await writeAnnouncements(course.destination, snapshot.announcements, tally);
 
   const current = {
     courseId: course.courseId,
@@ -132,8 +98,7 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-async function saveAttachment({ client, course, placement, item, attachment, record, tally }) {
-  const target = safeResolve(course.destination, ...placement.segments);
+async function saveAttachment({ client, target, placement, item, attachment, record, tally }) {
   const fingerprint = attachmentFingerprint(item, attachment);
 
   const unchanged =
@@ -171,15 +136,15 @@ async function saveAttachment({ client, course, placement, item, attachment, rec
   }
 }
 
-async function writeAnnouncements(destination, announcements, tally) {
-  if (!announcements.length) return;
-  const folder = safeResolve(destination, ANNOUNCEMENTS_FOLDER);
-  await mkdir(folder, { recursive: true });
-  for (const announcement of announcements) {
-    const date = datePrefix(announcement.createdDate || announcement.modifiedDate);
-    const name = `${date} ${safeSegment(announcement.title)}.md`;
-    await writeDocument(safeResolve(folder, name), announcementDocument(announcement), tally);
-  }
+// An item hidden by a release rule reads exactly like one there was never anything to copy from, so
+// a page the student already has is never replaced by the statement that there is nothing to copy —
+// additive in the direction ADR-0003 argues for. That statement is the sync's own writing, though,
+// and correcting it costs the student nothing, so a destination written before a fix stops
+// repeating what the fix removed (#53).
+async function writeUncopied(path, content, tally) {
+  const existing = await readText(path);
+  if (existing !== null && !isUncopiedDocument(existing)) return;
+  await writeDocument(path, content, tally);
 }
 
 function attachmentFingerprint(item, attachment) {
@@ -193,8 +158,4 @@ async function writeDocument(path, content, tally) {
   if (!content) return;
   if (await writeIfChanged(path, content)) tally.markdownWritten += 1;
   tally.markdown += 1;
-}
-
-function datePrefix(value) {
-  return isoDate(value)?.slice(0, 10) ?? "undated";
 }

@@ -12,7 +12,13 @@ export function placementsIn(items) {
 
 export function attachmentPlacement(placement, item, attachment) {
   const file = attachmentName(item, attachment);
-  const segments = [...placement.segments, orderedName(item.position, file)];
+  return placedFile(placement, orderedName(item.position, file), file);
+}
+
+// One file inside the folders a placement names: `name` on disk, numbered as the destination
+// numbers everything, and `file` in a report, in NTULearn's own words.
+export function placedFile(placement, name, file = name) {
+  const segments = [...placement.segments, name];
   return { file, trail: placement.trail, segments, path: segments.join("/") };
 }
 
