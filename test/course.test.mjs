@@ -81,7 +81,9 @@ function client(download, items) {
   };
 }
 
-const downloads = (content) => async () => ({ body: Buffer.from(content), headers: {} });
+const downloads =
+  (content, headers = {}) =>
+  async () => ({ body: Buffer.from(content), headers });
 
 async function sync(download, items = ITEMS) {
   const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-"));
@@ -89,6 +91,7 @@ async function sync(download, items = ITEMS) {
   const state = { version: 1, courses: {} };
   return {
     destination,
+    state,
     result: await syncCourse({ client: client(download, items), course, state }),
   };
 }
@@ -284,4 +287,57 @@ test("keeps what the last run recorded when a category could not be read", async
   assert.deepEqual(state.courses.CC0006.conversationIds, ["c1"]);
   assert.equal(result.newAnnouncements, 0);
   assert.deepEqual(result.unread, ["announcements", "conversations"]);
+});
+
+// NTULearn's claim about a file is a claim; the `content-type` that came back is what the run
+// actually saw. A cache of a run holds the second, and the first only where they disagree — which
+// is the one moment either is worth reading (#60).
+const CLAIMS_PDF = [
+  { ...ITEMS[0] },
+  { ...ITEMS[1] },
+  {
+    ...ITEMS[2],
+    contentDetail: {
+      "resource/x-bb-file": {
+        file: { ...ITEMS[2].contentDetail["resource/x-bb-file"].file, mimeType: "application/pdf" },
+      },
+    },
+  },
+];
+const RESOURCE = "/bbcswebdav/guide";
+
+test("records the type the download arrived with, not the type NTULearn claimed", async () => {
+  const { state } = await sync(
+    downloads("pdf", { "content-type": "application/octet-stream" }),
+    CLAIMS_PDF,
+  );
+
+  const record = state.courses.CC0006.downloads[RESOURCE];
+
+  assert.equal(record.mimeType, "application/octet-stream");
+  assert.equal(record.claimedMimeType, "application/pdf");
+});
+
+// The type is no part of what decides whether a file is fetched again, so a record written before
+// this change — one field, holding the claim — still matches and is not downloaded twice
+// (ADR-0003).
+test("does not download again a file whose record was written before the type moved", async () => {
+  const { destination, state } = await sync(downloads("pdf"), CLAIMS_PDF);
+  const { fingerprint, relativePath, bytes, sha256 } = state.courses.CC0006.downloads[RESOURCE];
+  state.courses.CC0006.downloads[RESOURCE] = {
+    fingerprint,
+    relativePath,
+    bytes,
+    sha256,
+    mimeType: "application/pdf",
+  };
+
+  const again = await syncCourse({
+    client: client(downloads("pdf"), CLAIMS_PDF),
+    course: { key: "CC0006", courseId: "_9_1", destination },
+    state,
+  });
+
+  assert.equal(again.downloaded, 0);
+  assert.equal(again.skipped, 1);
 });

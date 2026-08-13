@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument } from "./markdown.mjs";
@@ -120,7 +121,8 @@ async function saveAttachment({ client, target, placement, item, attachment, rec
       relativePath: placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
-      mimeType: attachment.mimeType || headers["content-type"] || null,
+      // Written, never read: what a run may consult `State` for is ADR-0005's, not this line's.
+      ...downloadedType(attachment, headers),
     };
   } catch (error) {
     // Where it was and where it would have gone, because the item's own title is `ultraDocumentBody`

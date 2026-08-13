@@ -1,3 +1,4 @@
+import { isSupplied } from "./content.mjs";
 import { absoluteUrl, isSignInUrl } from "./urls.mjs";
 
 const HTML_TYPES = new Set(["text/html", "application/xhtml+xml"]);
@@ -27,6 +28,19 @@ export function downloadRefusal({ attachment, url, contentType }) {
   return null;
 }
 
+// What arrived, verbatim, because a record of a run holds what the run saw and NTULearn's claim is
+// evidence of nothing but itself. The claim is kept beside it only where the two disagree, which is
+// the one moment either is worth reading: the refusal above is narrow by design, so a response that
+// is neither the file nor a web page arrives, and this is what says so (#60). Parameters are how a
+// type was sent rather than what it is, so they are no disagreement.
+export function downloadedType(attachment, headers) {
+  const arrived = headers["content-type"] || null;
+  const { type } = attachmentClaim(attachment);
+  const claimed = isSupplied(type) ? type : null;
+  const disagrees = claimed !== null && mediaType(claimed) !== mediaType(arrived);
+  return { mimeType: arrived, ...(disagrees ? { claimedMimeType: claimed } : {}) };
+}
+
 // Four fields for one name and one type, because which pair an attachment uses is its kind's
 // business: a file attached to an item states a `fileName`, an embed in a body a `linkName`.
 function attachmentClaim(attachment) {
@@ -42,7 +56,13 @@ function isWebPage(attachment) {
 }
 
 function isHtml(contentType) {
-  return HTML_TYPES.has((contentType ?? "").split(";")[0].trim().toLowerCase());
+  return HTML_TYPES.has(mediaType(contentType));
+}
+
+// The type without its parameters, which are how it was sent rather than what it is: a `charset`
+// is not a different file from the same type without one.
+function mediaType(contentType) {
+  return (contentType ?? "").split(";")[0].trim().toLowerCase();
 }
 
 // Without the query string, which on the way back from an identity provider is the entire request
