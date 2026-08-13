@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { attachmentsOf } from "../src/ntulearn/content.mjs";
 import { verifyCourse, verifyReport } from "../src/sync/verify.mjs";
@@ -66,8 +66,9 @@ const CLIENT = clientReading(ITEMS);
 async function destinationHolding(...files) {
   const destination = await mkdtemp(join(tmpdir(), "ntulearn-verify-"));
   for (const file of files) {
-    await mkdir(join(destination, "01 Lecture Notes"), { recursive: true });
-    await writeFile(join(destination, file), "written");
+    const path = join(destination, file);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "written");
   }
   return destination;
 }
@@ -151,6 +152,70 @@ test("says nothing about a file NTULearn no longer returns an item for", async (
 
   assert.equal(result.files, 4);
   assert.deepEqual(result.missing, []);
+});
+
+// MH2100: an item inserted at the top of the course moved every later name by one, and the report
+// called ninety-one files absent that were on disk under the number before (#67).
+test("tells a file whose number moved from one that is not there", async () => {
+  const destination = await destinationHolding(
+    "Course.md",
+    "02 Lecture Notes/01 Week 1.pdf",
+    "02 Lecture Notes/02 Week 2.pdf",
+  );
+  const result = await verify(destination);
+
+  assert.equal(result.files, 4);
+  assert.equal(result.present, 3);
+  assert.deepEqual(result.renumbered, [
+    {
+      file: "Week 1.pdf",
+      trail: "Lecture Notes",
+      path: "01 Lecture Notes/01 Week 1.pdf",
+      onDisk: "02 Lecture Notes/01 Week 1.pdf",
+    },
+    {
+      file: "Week 2.pdf",
+      trail: "Lecture Notes",
+      path: "01 Lecture Notes/02 Week 2.pdf",
+      onDisk: "02 Lecture Notes/02 Week 2.pdf",
+    },
+  ]);
+  assert.deepEqual(result.missing, [
+    { file: "Video Lecture: Topic 1.md", trail: "Lecture Notes", path: LECTURE },
+  ]);
+});
+
+// The cost of getting this wrong is not only the noise: the remedy a red report prints is
+// `npm run sync`, which downloads every one of them again under its new number — and a destination
+// only grows (ADR-0003), so both copies stay for good.
+test("a course whose numbering moved is complete, and says so", async () => {
+  const destination = await destinationHolding(
+    "Course.md",
+    "02 Lecture Notes/01 Week 1.pdf",
+    "02 Lecture Notes/02 Week 2.pdf",
+    "02 Lecture Notes/03 Video Lecture_ Topic 1.md",
+  );
+  const result = await verify(destination);
+  const report = verifyReport([result]);
+
+  assert.equal(result.present, 4);
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.renumbered.length, 3);
+  assert.equal(report.renumbered, 3);
+  assert.equal(report.complete, true);
+});
+
+test("says nothing about numbering that has not moved", async () => {
+  const destination = await destinationHolding(
+    "Course.md",
+    "01 Lecture Notes/01 Week 1.pdf",
+    "01 Lecture Notes/02 Week 2.pdf",
+    LECTURE,
+  );
+  const result = await verify(destination);
+
+  assert.ok(!("renumbered" in result));
+  assert.ok(!("renumbered" in verifyReport([result])));
 });
 
 // The same vacuity one level down: a category nobody could read hands back the empty list a course

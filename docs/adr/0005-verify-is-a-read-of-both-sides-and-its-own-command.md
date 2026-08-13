@@ -106,6 +106,52 @@ not make a refusal invisible: a run whose every course refused reports zero file
 and a `refused` list as long as the configuration — which is honest, and is why the list is beside
 the number rather than behind a flag.
 
+## A file whose number moved is present — added (#67)
+
+A file's name carries its item's `position`, so one item inserted at the top of a course moves every
+later name by one while nothing on disk moves: a sync never renames (ADR-0003). Held against the new
+numbering, the old files are all at the wrong path. `MH2100` reported **92 missing of 95**, and
+ninety-one of the ninety-two were the same file sitting at another number. Across five courses, 100
+of 112 were.
+
+That is the failure *Presence, not content* refuses below, at the largest scale this command has
+produced: a red that is 99% noise trains a reader to stop looking. And the second cost is worse than
+the noise, because the remedy the report prints is `npm run sync` — which downloads all of them
+again under their new numbers, into a destination that only grows. Two copies of everything, no way
+to tell which is current, and nothing takes it back off.
+
+So a renumbered file **counts as present**, and is named in a `renumbered` list beside `missing`.
+Three parts to it:
+
+- **It is present because it is the file.** The bytes are on disk, under the number they were
+  written with. `complete` and the exit code are about what a destination holds, and it holds this.
+- **It is said out loud rather than passed over.** The numbering on disk no longer matches
+  NTULearn's order, nothing here will put that back, and a reader who runs `ls` should not have to
+  work out why. The list says where the file would be written today and where it actually is.
+- **A guess is refused.** A file stands in for one at another number only inside the folder that
+  expects it, and only where the name inside the number is that folder's alone. Two items in one
+  folder may share a title — NTULearn allows it — and then the name identifies neither, so the file
+  is reported missing rather than guessed at: the noise this section removes, pointed the safe way.
+
+The limit is worth saying rather than discovering. A file left behind for an item NTULearn has
+stopped returning (ADR-0003) may carry the title of one that moved, and nothing but the bytes
+separates the two — which this command never reads. It is counted present, and `notCovered` says so
+on every run. That is the same trade *Presence, not content* makes below, at the same odds: the
+alternative it replaces called ninety-one files absent that were on disk.
+
+This narrows *`verify` still never enumerates the destination* above, and does not drop it. The
+command reads a folder's listing to answer one question about a name **NTULearn gave it** — is it
+here under another number — and takes nothing else from what it sees. An entry that matches no
+expected name is still invisible rather than excused, so ADR-0003's additive rule holds exactly as
+it did.
+
+What this does not settle is the numbering itself. An identity that moves is an identity that cannot
+be checked, and this makes the check survive the movement rather than stopping it: a sync still
+writes the new number beside the old one, because `saveAttachment` re-downloads whenever the path it
+would write differs from the one it recorded. Whether the number should be the item's position at
+all — against a stable id, or the position recorded in `State` at first write — reaches what a sync
+writes rather than what a check reads, and is its own decision.
+
 ## Presence, not content
 
 `verify` asks the filesystem whether a file is at the path, and nothing more. It does not compare
@@ -123,6 +169,9 @@ verify that consulted it would answer from the same record that was already wron
   downloads nothing. Since #32 it also converts every body to Markdown and throws the result away,
   because whether a document is expected is decided by whether the conversion produced one. That is
   local work against a network-bound command, and it is the price of the two walks being one.
+- **A renumbered file is present and named.** It counts toward `complete`, so no sync is sent to
+  fix a file that is already there — and the `renumbered` list is what says the destination's order
+  has drifted from NTULearn's.
 - **A present file is never inspected.** A truncated, corrupt or superseded file counts as
   present. What this command detects is absence.
 - **The path it predicts is the path a sync writes**, because both walk the course through
@@ -148,6 +197,8 @@ verify that consulted it would answer from the same record that was already wron
 - **A folder's own body turns out to carry an attachment somebody wanted.** Today neither side
   expects it. The fix would be in the sync, which would download it, and `verify` would follow
   without being told — but it is a change to what a sync writes, so it is its own issue.
+- **The number in a name stops being the item's position.** Then a name that moved is a name that
+  changed, this stand-in has nothing left to stand for, and the section it belongs to goes with it.
 - **A gap is found that `verify` calls present** — a truncated download, a file replaced upstream
   with different bytes. That is the argument for checking content, and it needs a real instance
   rather than the theory, because the check costs a download of everything.
