@@ -94,10 +94,12 @@ address it was fetched from — one file may have several addresses and only one
 _Avoid_: asset, document, upload
 
 **Alias**:
-A second address for an attachment, written into a *body* when an embed was authored and since
-moved off by the file. It answers `404` or `403` where the address the *rendered page* uses serves
-the bytes, and the file it names is already in the destination under its own name. An alias is not
-a defect and nothing is missing because of one.
+A second address for an attachment, written down when an embed was authored and since moved off by
+the file. It answers `404` or `403` where another address the same course carries serves the bytes,
+and the file it names is already in the destination under its own name. An alias is not a defect
+and nothing is missing because of one. A *body* carries them and so does a *rendered page* — the
+page stores one in a `data-bbfile` attribute even while it fetches the live address (#47), so an
+alias is a property of a stored address rather than of either artefact.
 _Avoid_: dead link, broken link, duplicate — the first two say the file is gone, and it is not
 
 **Uncopied item**:
