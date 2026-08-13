@@ -8,6 +8,7 @@ import { safeResolve } from "./paths.mjs";
 const NOT_COVERED = [
   "A content item this walk did not return expects nothing, so it is missing from the count it is missing from.",
   "A category NTULearn would not return — named as `unread` on the course below — expects nothing either, for the same reason.",
+  "A course NTULearn would not hand over — named under `refused` below — is absent from both numbers entirely: it was never read, so nothing of it is counted, present or missing.",
   "An object that is neither an attachment nor a document — a recorded lecture's video, whatever an external tool holds — is read by neither side.",
   "A file at the path is never opened, so a truncated or since-replaced one counts as present (docs/adr/0005).",
 ];
@@ -65,7 +66,10 @@ export async function verifyCourse({ client, course }) {
   };
 }
 
-export function verifyReport(courses) {
+// A refused course is beside the courses rather than among them, and leaves `complete` alone:
+// it has no files and no present, so a row like the others would be zeroes nobody read off a
+// course. ADR-0005 argues both halves.
+export function verifyReport(courses, refused = []) {
   const files = total(courses, "files");
   const present = total(courses, "present");
   return {
@@ -75,6 +79,7 @@ export function verifyReport(courses) {
     present,
     complete: present === files,
     courses,
+    ...(refused.length ? { refused } : {}),
     notCovered: NOT_COVERED,
   };
 }

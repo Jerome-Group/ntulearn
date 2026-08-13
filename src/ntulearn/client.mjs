@@ -105,7 +105,7 @@ class NtulearnClient {
     const status = response.status();
     if (optional && optionalIsMissing(status)) return { results: [], unavailable: true };
     const refusal = readRefusal({ status, path });
-    if (refusal) throw new Error(refusal);
+    if (refusal) throw refusal;
     return response.json();
   }
 
