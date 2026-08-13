@@ -42,11 +42,32 @@ Every real candidate was false. A check built on a body's links would have repor
 gaps across two courses, which is the report `docs/adr/0005` refuses on the grounds that one nobody
 trusts is one nobody runs.
 
-The rate is a property of reading the **body**, not of following links. An alias is a body artefact:
-it is what NTULearn stored, not what loads. The rendered page has none of them — it resolves to the
-live address, which is why all fourteen digests matched. This is the whole reason the two artefacts
-are separated above, and it is why disqualifying the body settles the check without settling which
-authority replaces it.
+The rate is a property of reading a **stored address**, not of following links. An alias is what
+NTULearn wrote down, not what loads.
+
+> **Corrected by #47.** This paragraph originally read *"The rendered page has none of them — it
+> resolves to the live address, which is why all fourteen digests matched."* That was a falsifiable
+> prediction and it was tested against nine courses and **falsified: the rendered page produced nine
+> aliases** on `25S1_SLAC03`. Each answers `403` on a `/sessions/…` address while the
+> `/bbcswebdav/…/xid-…` the walk holds answers `200` and digests identical to the file already in
+> the destination — the same measurement #40 made on CC0006, with the opposite result.
+>
+> The prediction failed for a reason worth keeping. It is still true of what the browser **resolves
+> and fetches**; all nine arrive instead on a `data-bbfile` JSON **attribute**. The gap is that a
+> reader on the rendered page cannot live on resolved properties alone: Ultra renders an attached
+> file as `<a data-ally-file-preview-url="…">` with no `href`, so an element-shaped reader finds
+> *zero* of a course's attachments — measured on `25S2-PS0002-LAB`, where the walk had 90 and the
+> page shared none of them until attributes were read. Reading attributes is not optional, and it is
+> what carries the stale addresses in.
+>
+> So the generalisation the evidence supports is stronger than the one made here: **both artefacts
+> store aliases, and what removes an alias is fetching the address rather than choosing a different
+> place to read it from.**
+
+This is the whole reason the two artefacts are separated above, and it is why disqualifying the body
+settles the check without settling which authority replaces it. Nothing in #47 rehabilitates the
+body: it was disqualified for being NTULearn's model of a view rather than the view, and that is
+untouched.
 
 ## Why not the Markdown's place
 
@@ -79,6 +100,12 @@ construction. It is not adopted here: it costs a page load per item, and the cas
 one course's four images. Validating it against a corpus chosen for variety is its own work, and
 fixing an authority on the strength of it sounding true is the mistake #29 already made once.
 
+That work has since been done — #47, nine courses — and it came back against the candidate on three
+counts: it produced the nine aliases above, it lost 45 attachments, 5 SCORM packages and 1 LTI
+placement while reporting nothing wrong, and on the largest course it ran long enough to trip
+NTULearn's own idle-logout. Not adopting it here was right, and #33 is still where an authority is
+chosen.
+
 ## Consequences
 
 - **The lossy conversion stays lossy, and nothing on disk records what was lost.** An `<iframe>`,
@@ -87,6 +114,11 @@ fixing an authority on the strength of it sounding true is the mistake #29 alrea
   would have been reached for first.
 - **A body's links are never a completeness signal.** Anything that comes to depend on them is
   depending on something this record denies, and the number against it is ten out of ten.
+- **No artefact's links are one either, because an alias is not escaped by changing artefact.** A
+  stored address is stale wherever it is stored, and the rendered page stores them too — nine, where
+  this record predicted none (#47). What tells an alias from a gap is fetching the address: a check
+  that compares address sets and stops there reports the aliases as missing files, which is the
+  report `docs/adr/0005` refuses.
 - **The destination gains no artefact that goes stale.** A rewritten link is derived from what one
   run downloaded, and `docs/adr/0003` means nothing would ever correct it. Not writing it is what
   avoids owning it.
