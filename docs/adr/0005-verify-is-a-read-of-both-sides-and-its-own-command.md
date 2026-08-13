@@ -75,6 +75,37 @@ is absent on every run, so `verify` goes red on it forever, exactly as the issue
 did. The difference is only that a red `verify` says something that stays true — a file is not
 there — where a red `sync` said a download failed once. That is a better red, not an answer.
 
+## A course NTULearn refuses is a fact the report carries — added (#66)
+
+The section above is about a *file*, and it stays open. One course above it is now settled, because
+the example the file-level question never got is ordinary at the course level: a course closes at
+the end of its semester, answers `403` from then on, and `npm run login` opens nothing. Three of
+seventeen configured courses were in that state, and the first of them ended the whole run before a
+line reached stdout — so `verify -- all` had reported nothing about any of the other sixteen for
+weeks, which for a scheduled run is indistinguishable from passing.
+
+A refused course is therefore **carried in the report and does not redden the exit code**, which is
+the answer #32 gave one level down for an announcements category nobody could read. The three parts
+of it:
+
+- **Only a `403` naming a course survives into a report.** A `401` is a lapsed session, whose remedy
+  is a person at an MFA prompt and which would refuse every course after this one too, so it still
+  ends the run. `src/ntulearn/read.mjs` decides which of the two a refusal is, and hands back the
+  kind rather than a sentence for somebody downstream to pattern-match.
+- **It is beside the courses, not among them.** A course that was never read has no `files` and no
+  `present`, so a row like the others would be zeroes that came from nowhere — the vacuous count the
+  amendment above exists to remove. It goes in a `refused` list, named and reasoned, and `sync`
+  carries the same list for the same reason.
+- **`complete` is unchanged by it.** Not because the gap does not matter, but because there is no
+  remedy to point at: the count means *everything this run read is accounted for*, and what the run
+  could not read is said out loud in `notCovered` and in `refused` rather than folded into a number.
+  A permanent red is one nobody reads, and it would mask the transient reds that do have a remedy.
+
+What this does not settle is the file-level question, which still wants an instance. It also does
+not make a refusal invisible: a run whose every course refused reports zero files, `complete: true`,
+and a `refused` list as long as the configuration — which is honest, and is why the list is beside
+the number rather than behind a flag.
+
 ## Presence, not content
 
 `verify` asks the filesystem whether a file is at the path, and nothing more. It does not compare

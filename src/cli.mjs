@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { stderr, stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
+import { walkCourses } from "./courses.mjs";
 import { writeLine } from "./output.mjs";
 import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
@@ -41,18 +42,19 @@ async function discover(config) {
 
 async function sync(config, key) {
   const state = await readState(config.statePath);
-  const results = await eachCourse(config, key, async ({ client, course }) => {
+  const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
     const result = await syncCourse({ client, course, state });
     await writeState(config.statePath, state);
     return result;
   });
 
-  await writeLine(stdout, asJson(results));
-  return results.some((result) => result.failures.length) ? 1 : 0;
+  await writeLine(stdout, asJson({ courses, ...(refused.length ? { refused } : {}) }));
+  return courses.some((course) => course.failures.length) ? 1 : 0;
 }
 
 async function verify(config, key) {
-  const report = verifyReport(await eachCourse(config, key, verifyCourse));
+  const { courses, refused } = await eachCourse(config, key, verifyCourse);
+  const report = verifyReport(courses, refused);
 
   await writeLine(stdout, asJson(report));
   if (report.complete) return 0;
@@ -65,17 +67,12 @@ async function verify(config, key) {
 async function eachCourse(config, key, walk) {
   const courses = selectCourses(config.courses, key);
   const client = await openClient(config.profilePath);
-  const results = [];
 
   try {
-    for (const course of courses) {
-      results.push(await walk({ client, course }));
-    }
+    return await walkCourses({ client, courses, walk });
   } finally {
     await client.close();
   }
-
-  return results;
 }
 
 async function main([name, argument]) {

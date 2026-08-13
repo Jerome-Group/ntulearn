@@ -198,3 +198,32 @@ test("says what the number does not cover", () => {
   assert.ok(report.notCovered.length >= 3);
   assert.ok(report.notCovered.every((line) => typeof line === "string" && line.length));
 });
+
+const REFUSED = [
+  { key: "SLAF01", courseId: "_2694562_1", reason: "NTULearn refused course _2694562_1" },
+];
+
+// #66: a closed course expects nothing, so it cannot be a row like the others without inventing the
+// zeroes #32 exists to remove — and it is said out loud rather than passed over in silence.
+test("names a course NTULearn would not hand over, without counting it", () => {
+  const whole = { files: 49, attachments: 40, documents: 9, present: 49, missing: [] };
+  const report = verifyReport([whole], REFUSED);
+
+  assert.deepEqual(report.refused, REFUSED);
+  assert.equal(report.files, 49);
+  assert.deepEqual(report.courses, [whole]);
+  assert.ok(report.notCovered.some((line) => line.includes("refused")));
+});
+
+// There is no remedy to point at — signing in again opens nothing — and a red that is permanent is
+// a red nobody reads. The report says the course was not read; the exit code stays about the files.
+test("a course NTULearn would not hand over does not make the destination incomplete", () => {
+  const whole = { files: 49, attachments: 40, documents: 9, present: 49, missing: [] };
+
+  assert.equal(verifyReport([whole], REFUSED).complete, true);
+  assert.equal(verifyReport([], REFUSED).complete, true);
+});
+
+test("says nothing about refused courses when every course was read", () => {
+  assert.ok(!("refused" in verifyReport([])));
+});

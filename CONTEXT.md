@@ -51,6 +51,15 @@ One NTULearn course. It is the unit a sync operates on and the unit a person con
 _Avoid_: module, class, subject — "module" is what a student calls it, and also what a `.mjs`
 file is
 
+**Refused course**:
+A *course* NTULearn will not hand over to this *student* — closed at the end of its semester, or
+one they are no longer enrolled in. It is a fact about the course rather than about the run: it is
+the same on every run, and no *session* opens it, so a command names it in its report and carries
+on to the next course (`docs/adr/0005`). A configuration this repository refuses at startup is a
+different thing entirely, and only the first is ever `refused` in a report.
+_Avoid_: failed, unavailable, forbidden — the first two say something went wrong or might come
+back, and the last is the HTTP status rather than the fact
+
 **Content item**:
 One node of a course's content tree: a folder, a page, a file, or a link. It may carry text, an
 attachment, and a link out, in any combination.

@@ -90,6 +90,24 @@ NTULearn without walking the course by hand:
 }
 ```
 
+A run prints one JSON object: `courses`, a row per course saying what that run did to it, and
+`refused` beside it when there was one.
+
+A course NTULearn will not hand over — closed at the end of its semester, or one the student is no
+longer enrolled in — is named under `refused` and the run carries on to the next course. Both
+`sync -- all` and `verify -- all` work this way: a closed course is permanent and there is nothing
+to do about it, so it is reported rather than treated as the end of the run. A session that has
+lapsed is the other case and still stops everything, because every course after it would fail the
+same way and `npm run login` fixes them all at once.
+
+```json
+{
+  "key": "SLAF01",
+  "courseId": "_2694562_1",
+  "reason": "NTULearn refused course _2694562_1 for this student (HTTP 403). …"
+}
+```
+
 The saved Chrome profile in `.data/chrome-profile` is the reusable secret. It is
 permission-restricted and ignored by Git. The university expires it periodically; run
 `npm run login` again when that happens. Do not copy cookies into configuration files.
@@ -132,6 +150,13 @@ downloads nothing and writes nothing on either side, and it exits `1` when anyth
       ]
     }
   ],
+  "refused": [
+    {
+      "key": "SLAF01",
+      "courseId": "_2694562_1",
+      "reason": "NTULearn refused course _2694562_1 for this student (HTTP 403). …"
+    }
+  ],
   "notCovered": ["A content item this walk did not return expects nothing, …"]
 }
 ```
@@ -150,6 +175,10 @@ narrowly as that says. The report carries a `notCovered` list saying so on every
 - **A category NTULearn would not return** — a course whose announcements the student may not read
   — expects nothing for the same reason, so the count passes over it. The course says `unread` when
   that has happened.
+- **A course NTULearn would not hand over** is in neither number at all — it was never read, so
+  nothing of it is counted as present or as missing. It is named under `refused`, and it does not
+  make the run red: the course is closed, `npm run login` opens nothing, and a red that can never
+  go green is one nobody reads. Read `complete: true` alongside that list, never instead of it.
 - **Recorded lecture videos and their transcripts** are not read at all. The page naming the
   lecture is counted; whatever is on the other side of the link is absent from both sides of the
   number rather than counted as missing.
