@@ -8,13 +8,15 @@ import { writeLine } from "./output.mjs";
 import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
+import { renumberCourse, renumberReport } from "./sync/renumber.mjs";
 import { readState, writeState } from "./sync/state.mjs";
 import { verifyCourse, verifyReport } from "./sync/verify.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const USAGE = "Usage: npm run login | npm run discover | npm run (sync|verify) -- <course|all>";
+const USAGE =
+  "Usage: npm run login | npm run discover | npm run (sync|verify|renumber) -- <course|all>";
 
-const commands = { login, discover, sync, verify };
+const commands = { login, discover, sync, verify, renumber };
 
 async function login(config) {
   const window = await openLoginWindow(config.profilePath);
@@ -60,6 +62,27 @@ async function verify(config, key) {
   if (report.complete) return 0;
 
   await writeLine(stderr, `Files are absent. Run: npm run sync -- ${key || "all"}`);
+  return 1;
+}
+
+// Its own command, run deliberately, because a rename is the one thing a sync will not do — and an
+// unattended run at three in the morning is the worst place for it (ADR-0010). `State` is read for
+// the digests and never written: the next sync finds each file at its new name and corrects the
+// record itself.
+async function renumber(config, key) {
+  const state = await readState(config.statePath);
+  const { courses, refused } = await eachCourse(config, key, ({ client, course }) =>
+    renumberCourse({ client, course, state }),
+  );
+  const report = renumberReport(courses, refused);
+
+  await writeLine(stdout, asJson(report));
+  if (!report.blocked) return 0;
+
+  await writeLine(
+    stderr,
+    `${report.blocked} could not be renumbered: the name each wants is held by something else.`,
+  );
   return 1;
 }
 

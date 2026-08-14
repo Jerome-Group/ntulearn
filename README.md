@@ -21,6 +21,7 @@ npm run discover              # list the NTULearn courses you can see
 npm run sync -- MH2100        # sync one configured course
 npm run sync -- all           # sync every configured course
 npm run verify -- all         # check what is on disk against NTULearn, writing nothing
+npm run renumber -- MH2500    # rename what is on disk back into the course's order today
 ```
 
 ## Configuration
@@ -198,12 +199,64 @@ almost all noise.
 What it does not do is repair the numbering, so `ls` shows the course in the order it had when each
 file was written. A sync does not repair it either — it leaves those files where they are, so a
 reordered course stops duplicating itself and stays in the order it arrived in (`docs/adr/0009`).
-This list is what makes that drift legible.
+This list is what makes that drift legible, and `npm run renumber` is what answers it.
 
 Two limits. It will not answer at all where two items in the same folder share a title: the name
 inside the number identifies neither, so the file is reported missing rather than guessed at. And a
 file left behind for an item NTULearn has stopped returning may carry the title of one that moved —
 nothing but the bytes separates them, and `verify` never opens a file — so it is counted present.
+
+## Putting a destination back in the course's order
+
+`npm run renumber -- <course|all>` renames what the destination already holds so its numbers carry
+the order NTULearn gives the course today. It is deliberately its own command: a rename is a delete
+and a create to Google Drive and to anything holding a path to the file, which is not something to
+do in a run nobody is watching. A sync never renames and never will — `docs/adr/0010` argues both
+halves.
+
+It renames only what it can prove the sync wrote and nothing has touched since — the `sha256` a
+download recorded, or, for a Markdown document, the text the walk is holding. A file you have
+annotated fails that check, is left exactly where it is, and is named under `kept` with the reason.
+Nothing is deleted, nothing is written over, nothing moves between folders, and a name that already
+holds something is reported under `blocked` rather than taken.
+
+```json
+{
+  "renamed": 9,
+  "kept": 1,
+  "courses": [
+    {
+      "key": "MH2500",
+      "course": "26S1-MH2500-PROBABILITY",
+      "destination": "/…/MH2500/NTULearn",
+      "renamed": [
+        {
+          "file": "Hand00_MH2500-2026.pdf",
+          "trail": "",
+          "from": "09 Hand00_MH2500-2026.pdf",
+          "to": "10 Hand00_MH2500-2026.pdf"
+        }
+      ],
+      "kept": [
+        {
+          "file": "Hand01_Part_1_MH2500-2026.pdf",
+          "trail": "",
+          "path": "09 Hand01_Part_1_MH2500-2026.pdf",
+          "onDisk": "08 Hand01_Part_1_MH2500-2026.pdf",
+          "why": "it has changed since the sync wrote it"
+        }
+      ]
+    }
+  ]
+}
+```
+
+It exits `1` only when something was `blocked`. A `kept` file is the command working as intended,
+and the report names it on every run so a destination that has gone permanently mixed says so.
+
+**A rename breaks anything holding the old path** — a Drive share link, a link from your own notes.
+The digest proves nobody edited the file; it proves nothing about who linked to it. That is the cost,
+and it is why you run this rather than the sync doing it for you.
 
 ### What `complete: true` does not cover
 
