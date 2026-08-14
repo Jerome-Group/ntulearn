@@ -128,7 +128,8 @@ the authority saw**, and never in general. There is no absolute completeness her
 claimed one would be claiming what nothing in this repository can measure.
 
 Relative to the walk it was close to true when this record was written, and it named two places it
-was not. One of them is now the third state and the other is still open:
+was not. Both are now closed, and both closed on a population of zero — one by writing a tripwire
+nothing has yet fired, the other by measuring the hole and finding nothing in it:
 
 - **A body element the conversion removes** — closed by #77. An `<iframe>`, `<object>` or `<embed>`
   used to be deleted from the student's copy without a word. It now leaves a line where it sat,
@@ -136,15 +137,46 @@ was not. One of them is now the third state and the other is still open:
   writes nothing today: it is a **tripwire**, and the run that fires it is the run that falsifies
   the measurement this record rests on. `script`, `style` and `form` are still removed in silence,
   because they carry nothing a student wants.
-- **An address the walk holds and never fetches** — still open. An anchor into `/bbcswebdav/`
-  carrying no `data-bbfile` is a course file `attachmentsOf` cannot see. #77 tried to write it down
-  in the same place and was refused review, for a reason worth recording here: **the conversion
-  layer has no item.** `attachmentsOf` also yields the item's `contentDetail` file, whose address is
-  a `/bbcswebdav/` one that never appears on the anchor — so a body linking a file the sync *did*
-  download would have been given a note saying it had not been. `docs/adr/0006` refuses a false
-  sentence on disk, and `docs/adr/0003` means nothing would ever take it back off. Doing it honestly
-  means the item's own attachments reaching the conversion, and its population is unmeasured, which
-  is the thing this record exists to refuse building against.
+- **An address the walk holds and never fetches** — closed by #78, and closed as *empty*. An anchor
+  into `/bbcswebdav/` carrying no `data-bbfile` would be a course file `attachmentsOf` cannot see.
+  There are none. Across the **thirteen** configured courses — 938 items, 343 bodies — **686
+  `<a>`/`<img>` elements carry a `data-bbfile` and none carries a bare `/bbcswebdav/` address**.
+  Counted the other way, as occurrences of the string rather than elements: 789 of 789 fall inside
+  an element carrying the attribute. (The two numbers differ because one element contributes
+  several — its `href`, and the `resourceUrl` and `viewerUrl` inside its JSON.) Nothing is written,
+  because there is nothing to write about.
+
+  #77 tried to write the note before that was known and was refused review, for a reason worth
+  keeping even though the population turned out to be zero: **the conversion layer has no item.**
+  `attachmentsOf` also yields the item's `contentDetail` file, whose address is a `/bbcswebdav/` one
+  that never appears on the anchor — so a body linking a file the sync *did* download would have
+  been given a note saying it had not been. `docs/adr/0006` refuses a false sentence on disk, and
+  `docs/adr/0003` means nothing would ever take it back off. The measurement says that particular
+  false sentence would have been written **zero** times as well. That does not make the refusal
+  wrong, and it does not make it vindicated either: it was reasoned from the shapes the code can
+  produce rather than from a population, it is sound on those grounds, and this corpus simply never
+  put it to the test. It remains the reason any future note belongs where the item is.
+
+  The count is `prototype/count-undescribed.mjs` on `prototype/undescribed-course-files`, and it
+  asks `client.readAttachments` for exactly what a sync downloads, so the two halves — the sync's
+  own address and a second address for the same file, matched on its `xid-` — are separated rather
+  than assumed apart. Its zero was falsified before it was believed: a second pass sorted every
+  occurrence of the string `/bbcswebdav/` on every surface into three places — inside an element
+  carrying the attribute, inside one without it, or outside any `<a>`/`<img>` at all — and the
+  three reconcile against the raw total at 789, 0 and 0. Both readers are wider
+  than the walk on purpose — `src/ntulearn/content.mjs` reads only double-quoted attributes and
+  these read both — because a measurement sharing the walk's blind spot cannot report on it.
+
+  What this leaves is the same shape as the embedded-object finding above: a hole named in an issue,
+  measured, and found empty. The difference is that **no tripwire is left behind**. #77's note has
+  somewhere to sit — the conversion still meets an `<iframe>` if one ever appears, and writes the
+  line. Here the code that would host a tripwire is the code this issue decided not to write, so
+  there is nothing in a destination to fire and nothing in a run to notice. The only instrument is
+  the count, run again deliberately. That is the price of building nothing, and it is worth naming
+  rather than discovering later.
+
+  The student loses nothing meanwhile: the link survives the conversion whatever happens, so the
+  address is in the folder either way. What no one gets is a claim about whether the *bytes* are.
 
 Neither changes what is downloaded, counted or verified. A note is a *finding*, which is exactly
 what this record says a second reading produces: the authority is still the walk, and the
@@ -176,6 +208,15 @@ something — and `src/sync/expected.mjs` calls the same `contentDocument` a syn
   a note it writes is never taken back off — so a body that carries one leaves a line in that
   folder for good, even if NTULearn later stops carrying it. That is the same cost `docs/adr/0006`
   already accepted for an uncopied item, paid on a population currently measured at zero.
+- **A destination gains nothing at all from #78, which is the point.** The second open place was
+  closed by measuring it rather than by building for it: no note, no rule, no test, and nothing
+  under `src/` touched. Worth being exact about what the measurement acquits: #77's rule keyed on
+  the *absence* of `data-bbfile`, so on this corpus it would have written **no** notes rather than
+  wrong ones. Both the harm it was refused for and the good it was written for are zero here. What
+  the count establishes is not that the refusal caught a live fault, but that the whole question is
+  moot — which is a thing only a count could have said, and which no amount of reading the code
+  would have. This is the second time this record's method has returned *build nothing*, and both
+  times the cost of finding out was one live read.
 - **The second reading is not free and is not gone.** Running the page reader is a session's work
   and a session's cost, and its output is a finding for a human. Anything that schedules it is
   reopening this record rather than following it.
@@ -188,6 +229,13 @@ something — and `src/sync/expected.mjs` calls the same `contentDocument` a syn
 - **A course is met whose body carries an `<iframe>`, `<object>` or `<embed>`.** One instance moves
   the population off zero and takes this record's central measurement with it. The tripwire is what
   says so: a `> **Not copied**` line anywhere in a destination is this bullet firing (#77).
+- **A body is met carrying a `/bbcswebdav/` address with no `data-bbfile`.** The other zero, and
+  the one with **no tripwire behind it** (#78) — nothing in a destination will announce this, so it
+  is found only by running `prototype/count-undescribed.mjs` again. What would produce one is an
+  editor other than Ultra's writing the body: every address in the corpus carries the attribute
+  because the thing that wrote it always writes the attribute, which is a fact about the editor
+  rather than about NTULearn. A course imported from Original Course View, or a body pasted in as
+  raw HTML, is where to look first.
 - **Recorded lecture videos are taken on.** Most of the gap is that feature, and the question stops
   being which reading of a course to trust.
 - **A player's output stops being reachable another way.** Today every recording found has an anchor
