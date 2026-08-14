@@ -2,7 +2,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { expectedFiles } from "./expected.mjs";
 import { fileDigest, moveDirectory, readText, relinkFile } from "./files.mjs";
 import { numberingOf } from "./numbering.mjs";
-import { safeResolve, safeSegment } from "./paths.mjs";
+import { safeResolve, safeSegment, unnumbered } from "./paths.mjs";
 import { courseState } from "./state.mjs";
 
 // Why something the numbering has moved was left where it is. Said in the report rather than
@@ -40,12 +40,21 @@ export async function renumberCourse({ client, course, state }) {
     if (from === null) continue;
 
     const { file, trail, path, segments } = expected.placement;
-    const why = await unproven(expected, from, previous);
-    if (why) kept.push({ file, trail, path, onDisk: relative(course.destination, from), why });
     // Only ever the number in front of the name: the new name is made inside the directory the
     // thing is already in, so nothing moves between folders and a folder whose own number has not
     // been corrected yet is no obstacle to correcting the names underneath it.
-    else moving.push({ kind: expected.kind, file, trail, path, depth: segments.length, from });
+    const to = join(dirname(from), safeSegment(segments.at(-1)));
+    // Which is also why a file can be at a path that has moved while its own name is already
+    // right: the folder above it is the thing that moved, and that folder's own rename carries it.
+    if (to === from) continue;
+
+    // A folder is placed rather than filed, so it has no `file` or `path` of its own — its name is
+    // the last of its segments and its title is that name without the number (`placement.mjs`).
+    const named = { file: file ?? unnumbered(segments.at(-1)), trail };
+    const at = path ?? segments.join("/");
+    const why = await unproven(expected, from, previous);
+    if (why) kept.push({ ...named, path: at, onDisk: relative(course.destination, from), why });
+    else moving.push({ ...named, kind: expected.kind, depth: segments.length, from, to, at });
   }
 
   const renamed = [];
@@ -122,24 +131,24 @@ function folders(moving) {
 // the empty one a reorder left beside its folder before #70. It is reported and nothing else.
 async function take(moving, renamed, blocked, destination) {
   for (const each of moving) {
-    const to = newName(each);
     const took =
-      each.kind === "folder" ? await moveDirectory(each.from, to) : await relinkFile(each.from, to);
+      each.kind === "folder"
+        ? await moveDirectory(each.from, each.to)
+        : await relinkFile(each.from, each.to);
     if (took) renamed.push(said(each, destination));
     else blocked.push({ ...said(each, destination), why: TAKEN });
   }
 }
 
-function newName({ from, path }) {
-  return join(dirname(from), safeSegment(path.split("/").at(-1)));
-}
-
+// Where it was when the command started and where it is when the command finishes — which is not
+// the rename this line performed, for anything under a folder that is itself renamed afterwards.
+// The pair a reader wants is the one that lets them find the file, and that is the outer one.
 function said(each, destination) {
   return {
     file: each.file,
     trail: each.trail,
     from: relative(destination, each.from),
-    to: relative(destination, newName(each)),
+    to: each.at,
   };
 }
 

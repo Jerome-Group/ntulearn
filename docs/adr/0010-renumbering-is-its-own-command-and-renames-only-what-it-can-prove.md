@@ -72,11 +72,18 @@ it can prove.
 
 ## Consequences
 
-- **A rename still breaks anything holding the old path.** A Drive share link, a link from the
-  student's own notes, a shortcut. The digest proves nobody edited the file; it proves nothing about
-  who linked to it, and this record cannot. That is the cost, it is why the command is opt-in, and
-  it is the thing to weigh before running it — not after.
+- **A rename breaks anything holding the old path as text.** A `[[wikilink]]` or a Markdown link
+  in the student's own notes, a symlink, a script with the path in it. What survives is anything
+  that tracks the file rather than its name: a macOS alias, and a Google Drive share link, because
+  Drive propagates a rename as a rename and the file keeps its id. The digest proves nobody edited
+  the file; it proves nothing about who linked to it, and this record cannot. That is the cost, it
+  is why the command is opt-in, and it is the thing to weigh before running it — not after.
 - **Google Drive re-uploads every renamed file.** A rename is a delete and a create to a sync client.
+- **An empty folder standing at the number a real one wants stops that folder being renumbered.**
+  A destination synced before ADR-0009 has one beside every folder a reorder moved. The lookup
+  answers with the empty folder, because a directory *is* at that name, so the course stays in the
+  folder it is in and this command has nothing to say about it. Untidy, and it takes nothing away,
+  which is ADR-0003's trade rather than a new one.
 - **A folder is renamed on weaker evidence than a file.** It holds no bytes to hold against anything,
   so what carries it is that it is a directory this repository created and named, and that everything
   inside it moves with it intact. A student's own files inside a course folder move with it too —
@@ -99,8 +106,11 @@ it can prove.
 - **A cycle becomes possible.** The no-waiting argument above rests on a name being a number *and* a
   title. If a name ever becomes the number alone, two items can want each other's names and this
   needs a way to break that which is safe against dying halfway.
-- **Somebody wants the old name kept.** A symlink or an alias at the old path would answer the
-  broken-link cost, and it is the one part of that cost this record leaves entirely unaddressed.
+- **Somebody wants the old name kept.** A symlink at the old path would answer the broken-link
+  cost, and it is the one part of that cost this record leaves entirely unaddressed.
+- **The empty folders left by pre-ADR-0009 syncs need clearing.** Removing one is a delete, so it
+  is ADR-0003's decision rather than this record's — but until they go, the folders they stand in
+  front of cannot be renumbered.
 - **A destination this repository provably owns exists.** ADR-0003 names the same condition. Inside
   one, the evidence this record spends its length on is not needed at all.
 - **The proof starts refusing files it should not.** A PDF that Drive or Preview rewrites in place

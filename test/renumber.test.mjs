@@ -166,43 +166,74 @@ test("holds a document against the text the walk produced rather than against a 
   assert.equal(result.renamed.length, 1);
 });
 
-// Nothing is ever renamed onto a name that holds something. The one that reaches this in practice is
-// the empty folder a reorder left beside its own before #70 — the destination still has it, and the
-// folder that holds the course wants exactly that name.
-test("refuses to rename a folder onto a name that already holds one", async () => {
-  const inside = (position, parentId) => [
-    {
-      id: "_5_1",
-      parentId: null,
-      position,
-      title: "Week 1",
-      contentHandler: "resource/x-bb-folder",
-    },
-    handout("_6_1", 0, "Slides", parentId),
-  ];
+// A folder's name carries its position too. It is placed rather than filed, so it has no `file` or
+// `path` of its own — reaching for one crashed the command mid-run against `MH2100`, after it had
+// renamed two files and before it reached the first folder (#74).
+const WEEK = (position, extra = []) => [
+  { id: "_5_1", parentId: null, position, title: "Week 1", contentHandler: "resource/x-bb-folder" },
+  handout("_6_1", 0, "Slides", "_5_1"),
+  ...extra,
+];
+
+async function withFolder(items) {
   const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-"));
   const state = { version: 1, courses: {} };
-  await syncCourse({ client: client(inside(0, "_5_1")), course: course(destination), state });
-  await mkdir(join(destination, "02 Week 1"));
+  await syncCourse({ client: client(WEEK(0)), course: course(destination), state });
+  return { destination, state, items };
+}
 
-  const result = await renumberCourse({
-    client: client(inside(1, "_5_1")),
-    course: course(destination),
-    state,
-  });
+test("renames a folder whose own number moved, and carries its files with it", async () => {
+  const at = await withFolder(WEEK(1));
 
-  assert.deepEqual((await readdir(destination)).sort(), [
+  const result = await renumber(at);
+
+  assert.deepEqual((await readdir(at.destination)).sort(), [
+    "02 Week 1",
+    "Course.md",
+    "Last synced.md",
+  ]);
+  assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), ["01 Slides.pdf"]);
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => `${from} -> ${to}`),
+    ["01 Week 1 -> 02 Week 1"],
+  );
+  assert.equal(result.renamed[0].file, "Week 1");
+});
+
+// The file inside it is at a path that has moved while its own name is already right, so there is
+// nothing to do to it. Counting it as a candidate made it ask for the name it already had, which
+// `link` refuses — and it was reported `blocked`, reddening a run that had done nothing wrong.
+test("says nothing about a file whose folder moved but whose own number did not", async () => {
+  const at = await withFolder(WEEK(1));
+
+  const result = await renumber(at);
+
+  assert.equal(result.renamed.length, 1);
+  assert.ok(!("blocked" in result));
+  assert.ok(!("kept" in result));
+});
+
+// The limitation worth knowing rather than discovering. A destination synced before #70 has an
+// empty folder standing at the number the real one wants, and the lookup answers with that empty
+// folder because a directory *is* there — so the course stays in the folder it is in and this
+// command has nothing to say. It is untidy and it takes nothing away, which is ADR-0003's trade.
+test("leaves a course alone where an empty folder already holds the number it wants", async () => {
+  const at = await withFolder(WEEK(1));
+  await mkdir(join(at.destination, "02 Week 1"));
+
+  const result = await renumber(at);
+
+  assert.deepEqual((await readdir(at.destination)).sort(), [
     "01 Week 1",
     "02 Week 1",
     "Course.md",
     "Last synced.md",
   ]);
-  assert.deepEqual(await readdir(join(destination, "01 Week 1")), ["01 Slides.pdf"]);
-  assert.deepEqual(await readdir(join(destination, "02 Week 1")), []);
-  assert.equal(result.renamed.length, 0);
-  assert.equal(result.blocked.length, 1);
-  assert.equal(result.blocked[0].why, "the name it wants is held by something else");
-  assert.equal(renumberReport([result]).blocked, 1);
+  assert.deepEqual(await readdir(join(at.destination, "01 Week 1")), ["01 Slides.pdf"]);
+  assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), []);
+  assert.deepEqual(result.renamed, []);
+  assert.ok(!("blocked" in result));
+  assert.equal(renumberReport([result]).renamed, 0);
 });
 
 // A run over a destination the course has not moved under is a run with nothing to say.

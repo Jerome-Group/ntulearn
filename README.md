@@ -254,9 +254,11 @@ holds something is reported under `blocked` rather than taken.
 It exits `1` only when something was `blocked`. A `kept` file is the command working as intended,
 and the report names it on every run so a destination that has gone permanently mixed says so.
 
-**A rename breaks anything holding the old path** — a Drive share link, a link from your own notes.
-The digest proves nobody edited the file; it proves nothing about who linked to it. That is the cost,
-and it is why you run this rather than the sync doing it for you.
+**A rename breaks anything holding the old path as text** — a link from your own notes, a symlink, a
+script. What survives is anything tracking the file rather than its name: a macOS alias, and a Google
+Drive share link, since Drive carries a rename across and the file keeps its id. The digest proves
+nobody edited the file; it proves nothing about who linked to it. That is the cost, and it is why you
+run this rather than the sync doing it for you.
 
 ### What `complete: true` does not cover
 
