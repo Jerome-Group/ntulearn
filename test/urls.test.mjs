@@ -1,23 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isAttachmentUrl, isIdentityProviderUrl, isSignInUrl } from "../src/ntulearn/urls.mjs";
-
-test("a course file is told from a link out and from another page of the course", () => {
-  assert.equal(isAttachmentUrl("https://ntulearn.ntu.edu.sg/bbcswebdav/pid-1/xid-9"), true);
-  assert.equal(isAttachmentUrl("/bbcswebdav/xid-9"), true);
-  assert.equal(isAttachmentUrl("/ultra/courses/_123_1/outline"), false);
-  assert.equal(isAttachmentUrl("https://plato.stanford.edu/entries/mill/"), false);
-  assert.equal(isAttachmentUrl("not a url at all"), false);
-});
-
-// The path decides, so a sign-in carrying the file it was headed for is the sign-in and not the
-// file — which is the shape `isSignInUrl` is tested against two blocks down.
-test("a file named in a query string is not a file address", () => {
-  assert.equal(
-    isAttachmentUrl("https://ntulearn.ntu.edu.sg/webapps/login/?new_loc=%2Fbbcswebdav%2Fxid-1_1"),
-    false,
-  );
-});
+import { isIdentityProviderUrl, isSignInUrl } from "../src/ntulearn/urls.mjs";
 
 test("an address at the identity provider is where a person is still needed", () => {
   assert.equal(

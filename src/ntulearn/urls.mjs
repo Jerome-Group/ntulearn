@@ -1,7 +1,6 @@
 const BASE_URL = "https://ntulearn.ntu.edu.sg";
 const IDENTITY_PROVIDERS = new Set(["login.microsoftonline.com", "idp.ntu.edu.sg"]);
 const SIGN_IN_PATHS = ["/webapps/login", "/auth-saml/"];
-const ATTACHMENT_PATH = "/bbcswebdav/";
 
 export const COURSES_URL = `${BASE_URL}/ultra/course`;
 
@@ -21,14 +20,6 @@ export function isNtulearnUrl(pathOrUrl) {
   } catch {
     return false;
   }
-}
-
-// Where NTULearn serves a course's own files from. A body may point at one on an ordinary `<a>` or
-// `<img>` carrying none of the `data-bbfile` that tells `attachmentsOf` there is a file there, so
-// this is what tells that address from a link out and from a link to another page of the course.
-export function isAttachmentUrl(pathOrUrl) {
-  if (!isNtulearnUrl(pathOrUrl)) return false;
-  return new URL(pathOrUrl, BASE_URL).pathname.includes(ATTACHMENT_PATH);
 }
 
 // Signing in is a round trip through NTU's identity provider and back, so an attempt that has not

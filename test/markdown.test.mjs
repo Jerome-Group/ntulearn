@@ -100,39 +100,20 @@ test("says so where the object it removed had no address of its own", () => {
 });
 
 test("removes what carries nothing a student wants without a word about it", () => {
+  assert.equal(htmlToMarkdown("<script>steal()</script><p>text</p>"), "text");
   assert.equal(htmlToMarkdown("<style>a{}</style><p>text</p>"), "text");
   assert.equal(htmlToMarkdown('<form action="/x"><input name="q"></form><p>text</p>'), "text");
 });
 
-test("writes down a file a body links to and NTULearn never called an attachment", () => {
+// The note is a block, so a carrier in the middle of a sentence splits it and leaves the space
+// that preceded it behind. Pinned rather than fixed: an object mid-sentence is not a shape any
+// course here has produced, an inline aside would buy tidier prose by saying less about what is
+// missing, and the trailing space cannot be swept up without taking Turndown's `<br>` with it.
+test("puts the note on its own lines, splitting a sentence that wrapped the object", () => {
   assert.equal(
-    htmlToMarkdown('<a href="/bbcswebdav/pid-1/xid-9">Reading 1</a>'),
-    `[Reading 1](/bbcswebdav/pid-1/xid-9)\n\n${NOTE(
-      "a file at /bbcswebdav/pid-1/xid-9 that NTULearn did not describe as an attachment",
-    )}`,
+    htmlToMarkdown('<p>See <iframe src="/x"></iframe> before class.</p>'),
+    `See \n\n${NOTE("an embedded `iframe` at /x")}\n\nbefore class.`,
   );
-  assert.equal(
-    htmlToMarkdown('<img src="/bbcswebdav/pid-1/xid-9" alt="Diagram">'),
-    `![Diagram](/bbcswebdav/pid-1/xid-9)\n\n${NOTE(
-      "a file at /bbcswebdav/pid-1/xid-9 that NTULearn did not describe as an attachment",
-    )}`,
-  );
-});
-
-test("says nothing about a link out, or about another page of the course", () => {
-  assert.equal(
-    htmlToMarkdown('<a href="https://plato.stanford.edu/entries/mill/">Mill</a>'),
-    "[Mill](https://plato.stanford.edu/entries/mill/)",
-  );
-  assert.equal(
-    htmlToMarkdown('<a href="/ultra/courses/_123_1/outline">the outline</a>'),
-    "[the outline](/ultra/courses/_123_1/outline)",
-  );
-});
-
-test("says nothing about a file NTULearn did describe, which is already an attachment", () => {
-  const html = `<a ${embed({ linkName: "Handout00.pdf" })} href="/bbcswebdav/xid-1"></a>`;
-  assert.equal(htmlToMarkdown(html), "[Handout00.pdf](/bbcswebdav/xid-1)");
 });
 
 test("survives a malformed data-bbfile, falling back to the element's own link", () => {

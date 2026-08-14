@@ -127,24 +127,34 @@ Adopted, with the qualification `docs/adr/0007` makes unavoidable: it holds **wi
 the authority saw**, and never in general. There is no absolute completeness here, and a number that
 claimed one would be claiming what nothing in this repository can measure.
 
-Relative to the walk it was close to true when this record was written, and the two places it was
-not are both now the third state (#77):
+Relative to the walk it was close to true when this record was written, and it named two places it
+was not. One of them is now the third state and the other is still open:
 
-- **A body element the conversion removes.** An `<iframe>`, `<object>` or `<embed>` used to be
-  deleted from the student's copy without a word. It now leaves a line where it sat, naming what it
-  was and the address it pointed at. Population zero on the corpus above, so this writes nothing
-  today: it is a **tripwire**, and the run that fires it is the run that falsifies the measurement
-  this record rests on. `script`, `style` and `form` are still removed in silence, because they
-  carry nothing a student wants.
-- **An address the walk holds and never fetches.** An anchor into `/bbcswebdav/` carrying no
-  `data-bbfile` is a course file `attachmentsOf` cannot see; the link survived the conversion, so
-  nothing was ever hidden from the student, but nothing said the file behind it is not in the
-  folder. Now something does. A link out, and a link to another page of the course, are untouched —
-  neither is a file, and a note on each would be the noise that makes a report unreadable.
+- **A body element the conversion removes** — closed by #77. An `<iframe>`, `<object>` or `<embed>`
+  used to be deleted from the student's copy without a word. It now leaves a line where it sat,
+  naming what it was and the address it pointed at. Population zero on the corpus above, so this
+  writes nothing today: it is a **tripwire**, and the run that fires it is the run that falsifies
+  the measurement this record rests on. `script`, `style` and `form` are still removed in silence,
+  because they carry nothing a student wants.
+- **An address the walk holds and never fetches** — still open. An anchor into `/bbcswebdav/`
+  carrying no `data-bbfile` is a course file `attachmentsOf` cannot see. #77 tried to write it down
+  in the same place and was refused review, for a reason worth recording here: **the conversion
+  layer has no item.** `attachmentsOf` also yields the item's `contentDetail` file, whose address is
+  a `/bbcswebdav/` one that never appears on the anchor — so a body linking a file the sync *did*
+  download would have been given a note saying it had not been. `docs/adr/0006` refuses a false
+  sentence on disk, and `docs/adr/0003` means nothing would ever take it back off. Doing it honestly
+  means the item's own attachments reaching the conversion, and its population is unmeasured, which
+  is the thing this record exists to refuse building against.
 
 Neither changes what is downloaded, counted or verified. A note is a *finding*, which is exactly
 what this record says a second reading produces: the authority is still the walk, and the
 expectation set is still the walk's alone.
+
+One state does move, on a population currently measured at zero. An item whose body is *only* an
+embedded object used to convert to nothing, and so was an *uncopied item* with a stand-in document;
+it now converts to the note, so it is a page. That is the right answer — the item did carry
+something — and `src/sync/expected.mjs` calls the same `contentDocument` a sync does, so what
+`verify` expects moves with it rather than drifting from it.
 
 ## Consequences
 

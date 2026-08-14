@@ -1,6 +1,6 @@
 import TurndownService from "turndown";
 import { isSupplied, kindOf } from "../ntulearn/content.mjs";
-import { courseUrl, isAttachmentUrl } from "../ntulearn/urls.mjs";
+import { courseUrl } from "../ntulearn/urls.mjs";
 
 const EMBED_ATTRIBUTE = "data-bbfile";
 
@@ -33,24 +33,6 @@ turndown.remove(["script", "style", "form"]);
 turndown.addRule("carriedObject", {
   filter: (node) => CARRIED_OBJECTS.has(node.nodeName),
   replacement: (text, node) => carriedObjectNote(node),
-});
-
-// An address into `/bbcswebdav/` is a course file, and one written without a `data-bbfile` is a
-// file `attachmentsOf` cannot see: nothing downloads it and `verify` expects nothing, so it ends
-// in none of the three states. The link survives the conversion either way — what is written here
-// is the sentence saying the file behind it is not in this folder.
-turndown.addRule("uncopiedFile", {
-  filter: (node) => !node.hasAttribute(EMBED_ATTRIBUTE) && uncopiedFileAddress(node) !== null,
-  replacement: (text, node) => {
-    const address = uncopiedFileAddress(node);
-    const link =
-      node.nodeName === "IMG"
-        ? `![${node.getAttribute("alt") ?? ""}](${address})`
-        : `[${text}](${address})`;
-    return `${link}${notCopiedNote(
-      `a file at ${address} that NTULearn did not describe as an attachment`,
-    )}`;
-  },
 });
 
 // NTULearn leaves an embed's anchor without link text, and an embedded player's href unwritten,
@@ -170,16 +152,6 @@ function carriedObjectNote(node) {
   return notCopiedNote(
     address ? `an embedded \`${name}\` at ${address}` : `an embedded \`${name}\` with no address`,
   );
-}
-
-function uncopiedFileAddress(node) {
-  const address =
-    node.nodeName === "A"
-      ? node.getAttribute("href")
-      : node.nodeName === "IMG"
-        ? node.getAttribute("src")
-        : null;
-  return isSupplied(address) && isAttachmentUrl(address) ? address : null;
 }
 
 // Addressed to whoever opens the folder rather than to the run, in the voice `uncopiedDocument`
