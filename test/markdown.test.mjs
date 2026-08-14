@@ -78,6 +78,63 @@ test("leaves an ordinary link alone", () => {
   );
 });
 
+const NOTE = (what) => `> **Not copied** — ${what}. Open this item in NTULearn to see it.`;
+
+test("writes down an embedded object where the conversion takes it out", () => {
+  assert.equal(
+    htmlToMarkdown('<p>Watch this:</p><iframe src="/webapps/blti/launchLink?id=7"></iframe>'),
+    `Watch this:\n\n${NOTE("an embedded `iframe` at /webapps/blti/launchLink?id=7")}`,
+  );
+  assert.equal(
+    htmlToMarkdown('<object data="/x/player.swf"></object>'),
+    NOTE("an embedded `object` at /x/player.swf"),
+  );
+  assert.equal(
+    htmlToMarkdown('<embed src="/x/clip.mp4">'),
+    NOTE("an embedded `embed` at /x/clip.mp4"),
+  );
+});
+
+test("says so where the object it removed had no address of its own", () => {
+  assert.equal(htmlToMarkdown("<iframe></iframe>"), NOTE("an embedded `iframe` with no address"));
+});
+
+test("removes what carries nothing a student wants without a word about it", () => {
+  assert.equal(htmlToMarkdown("<style>a{}</style><p>text</p>"), "text");
+  assert.equal(htmlToMarkdown('<form action="/x"><input name="q"></form><p>text</p>'), "text");
+});
+
+test("writes down a file a body links to and NTULearn never called an attachment", () => {
+  assert.equal(
+    htmlToMarkdown('<a href="/bbcswebdav/pid-1/xid-9">Reading 1</a>'),
+    `[Reading 1](/bbcswebdav/pid-1/xid-9)\n\n${NOTE(
+      "a file at /bbcswebdav/pid-1/xid-9 that NTULearn did not describe as an attachment",
+    )}`,
+  );
+  assert.equal(
+    htmlToMarkdown('<img src="/bbcswebdav/pid-1/xid-9" alt="Diagram">'),
+    `![Diagram](/bbcswebdav/pid-1/xid-9)\n\n${NOTE(
+      "a file at /bbcswebdav/pid-1/xid-9 that NTULearn did not describe as an attachment",
+    )}`,
+  );
+});
+
+test("says nothing about a link out, or about another page of the course", () => {
+  assert.equal(
+    htmlToMarkdown('<a href="https://plato.stanford.edu/entries/mill/">Mill</a>'),
+    "[Mill](https://plato.stanford.edu/entries/mill/)",
+  );
+  assert.equal(
+    htmlToMarkdown('<a href="/ultra/courses/_123_1/outline">the outline</a>'),
+    "[the outline](/ultra/courses/_123_1/outline)",
+  );
+});
+
+test("says nothing about a file NTULearn did describe, which is already an attachment", () => {
+  const html = `<a ${embed({ linkName: "Handout00.pdf" })} href="/bbcswebdav/xid-1"></a>`;
+  assert.equal(htmlToMarkdown(html), "[Handout00.pdf](/bbcswebdav/xid-1)");
+});
+
 test("survives a malformed data-bbfile, falling back to the element's own link", () => {
   assert.equal(htmlToMarkdown('<a data-bbfile="{not json" href="/x">text</a>'), "[text](/x)");
 });

@@ -127,25 +127,33 @@ Adopted, with the qualification `docs/adr/0007` makes unavoidable: it holds **wi
 the authority saw**, and never in general. There is no absolute completeness here, and a number that
 claimed one would be claiming what nothing in this repository can measure.
 
-Relative to the walk it is close to true today, and what it costs to say so is naming the two places
-it is not:
+Relative to the walk it was close to true when this record was written, and the two places it was
+not are both now the third state (#77):
 
-- **An address the walk holds and never fetches.** An anchor in a body, or an external link. It
-  survives into the Markdown as a link, so nothing is hidden from the student — but it is in none of
-  the three states, because none of them is about an address that was never a download.
-- **A body element the strip removes.** Population zero on the corpus above, and zero is not none.
-  The strip is silent by construction: if a body ever does carry an `<iframe>`, nothing anywhere
-  will say it was removed.
+- **A body element the conversion removes.** An `<iframe>`, `<object>` or `<embed>` used to be
+  deleted from the student's copy without a word. It now leaves a line where it sat, naming what it
+  was and the address it pointed at. Population zero on the corpus above, so this writes nothing
+  today: it is a **tripwire**, and the run that fires it is the run that falsifies the measurement
+  this record rests on. `script`, `style` and `form` are still removed in silence, because they
+  carry nothing a student wants.
+- **An address the walk holds and never fetches.** An anchor into `/bbcswebdav/` carrying no
+  `data-bbfile` is a course file `attachmentsOf` cannot see; the link survived the conversion, so
+  nothing was ever hidden from the student, but nothing said the file behind it is not in the
+  folder. Now something does. A link out, and a link to another page of the course, are untouched —
+  neither is a file, and a note on each would be the noise that makes a report unreadable.
 
-Both are named here rather than fixed, because this record's whole finding is that the second was
-about to be fixed against nothing.
+Neither changes what is downloaded, counted or verified. A note is a *finding*, which is exactly
+what this record says a second reading produces: the authority is still the walk, and the
+expectation set is still the walk's alone.
 
 ## Consequences
 
-- **Nothing under `src/` changes because of this record.** `sync` reads what it read, `verify`
-  counts what it counted, and `complete: true` keeps exactly the meaning `README.md` already gives
-  it. A decision that changes no code is still a decision: what it buys is that the next session to
-  reach for one of the three options finds them measured rather than open.
+- **Nothing about what is read changes because of this record.** `sync` reads what it read,
+  `verify` counts what it counted, and `complete: true` keeps exactly the meaning `README.md`
+  already gives it. What the record buys is that the next session to reach for one of the three
+  options finds them measured rather than open. The one thing it did move is what a *page* says
+  about an object nobody can bring across, which is a sentence in a document rather than anything
+  in the expectation set (#77).
 - **The walk's blind spots are named rather than suspected.** What it cannot see is what a script
   produces after a page loads, and one LTI launch iframe. That is a smaller and more specific
   statement than the one this issue opened with, and it is falsifiable on the next course that
@@ -153,10 +161,11 @@ about to be fixed against nothing.
 - **Most of this issue is absorbed by a feature that does not exist yet.** If recorded lecture
   videos are taken on, ~91 of the 92 unaccounted-for objects stop being a question about authority
   and become a question about reaching a Kaltura entry id.
-- **The strip in `src/sync/markdown.mjs` stays silent.** Turning it into a tripwire — record the
-  element rather than delete it without a word — is cheap, pure and testable, and it is not this
-  record's to build. It is worth having precisely because its expected yield is zero: the run that
-  fires it is the run that falsifies the measurement above.
+- **A destination gains a sentence where an object used to vanish.** The conversion no longer
+  removes an `<iframe>`, an `<object>` or an `<embed>` in silence (#77), and `docs/adr/0003` means
+  a note it writes is never taken back off — so a body that carries one leaves a line in that
+  folder for good, even if NTULearn later stops carrying it. That is the same cost `docs/adr/0006`
+  already accepted for an uncopied item, paid on a population currently measured at zero.
 - **The second reading is not free and is not gone.** Running the page reader is a session's work
   and a session's cost, and its output is a finding for a human. Anything that schedules it is
   reopening this record rather than following it.
@@ -167,8 +176,8 @@ about to be fixed against nothing.
 ## Revisit when
 
 - **A course is met whose body carries an `<iframe>`, `<object>` or `<embed>`.** One instance moves
-  the population off zero and takes this record's central measurement with it. That is what the
-  tripwire above would be for.
+  the population off zero and takes this record's central measurement with it. The tripwire is what
+  says so: a `> **Not copied**` line anywhere in a destination is this bullet firing (#77).
 - **Recorded lecture videos are taken on.** Most of the gap is that feature, and the question stops
   being which reading of a course to trust.
 - **A player's output stops being reachable another way.** Today every recording found has an anchor
