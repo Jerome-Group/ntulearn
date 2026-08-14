@@ -4,6 +4,7 @@ import {
   attachmentName,
   attachmentsOf,
   externalLinkOf,
+  isAttachedFile,
   isFile,
   isFolder,
   kindOf,
@@ -222,4 +223,47 @@ test("a launch address is a link, whichever of NTULearn's names it arrives under
     "https://ntulearn.ntu.edu.sg/webapps/scor-scormengine-BB5/delivery" +
       "?action=launchPackage&content_id=_1_1",
   );
+});
+
+// The reasoning #77 got wrong, kept as a test even though #78 measured its population at zero: a
+// body may link the very file the sync is downloading, and a note keyed on the HTML alone cannot
+// tell that from a file nothing fetches. `docs/adr/0011` is why nothing calls this yet.
+const OWN = "/bbcswebdav/pid-111-dt-content-rid-222_1/xid-222_1";
+const SAME_FILE_OTHER_ADDRESS = "/bbcswebdav/pid-999-dt-content-rid-222_1/xid-222_1";
+const ANOTHER_FILE = "/bbcswebdav/pid-333-dt-content-rid-444_1/xid-444_1";
+const attached = [{ resourceUrl: OWN }];
+
+test("an item whose attached file is also linked in its body is not a missing file", () => {
+  assert.equal(isAttachedFile(attached, OWN), true);
+});
+
+test("the same file at a second address is still the same file", () => {
+  assert.equal(isAttachedFile(attached, SAME_FILE_OTHER_ADDRESS), true);
+});
+
+test("a query string is a display option rather than another file", () => {
+  assert.equal(isAttachedFile(attached, `${OWN}?view=inline`), true);
+  assert.equal(isAttachedFile([{ resourceUrl: `${OWN}?download=1` }], OWN), true);
+});
+
+test("an address the item does not carry is not one of its attachments", () => {
+  assert.equal(isAttachedFile(attached, ANOTHER_FILE), false);
+  assert.equal(isAttachedFile([], OWN), false);
+});
+
+// The two shapes a note must never reach. #78 counted 202 of the first and none of the second
+// across thirteen courses, and neither is a file this item carries.
+test("a link out, and a link to another page of the course, are not attachments", () => {
+  assert.equal(isAttachedFile(attached, "https://example.com/paper.pdf"), false);
+  assert.equal(
+    isAttachedFile(attached, "https://ntulearn.ntu.edu.sg/ultra/courses/_1_1/outline"),
+    false,
+  );
+});
+
+test("an address NTULearn never supplied matches nothing", () => {
+  assert.equal(isAttachedFile(attached, undefined), false);
+  assert.equal(isAttachedFile(attached, ""), false);
+  assert.equal(isAttachedFile(attached, "undefined"), false);
+  assert.equal(isAttachedFile([{ resourceUrl: undefined }], "not a url at all"), false);
 });

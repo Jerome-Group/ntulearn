@@ -170,10 +170,20 @@ nothing has yet fired, the other by measuring the hole and finding nothing in it
   What this leaves is the same shape as the embedded-object finding above: a hole named in an issue,
   measured, and found empty. The difference is that **no tripwire is left behind**. #77's note has
   somewhere to sit — the conversion still meets an `<iframe>` if one ever appears, and writes the
-  line. Here the code that would host a tripwire is the code this issue decided not to write, so
-  there is nothing in a destination to fire and nothing in a run to notice. The only instrument is
-  the count, run again deliberately. That is the price of building nothing, and it is worth naming
-  rather than discovering later.
+  line. Here nothing in a destination fires and nothing in a run notices, because no note is
+  written. The only instrument is the count, run again deliberately. That is the price of building
+  nothing, and it is worth naming rather than discovering later.
+
+  One thing does land in `src/`, and it is not the note: `isAttachedFile` in
+  `src/ntulearn/content.mjs`, which answers whether an address in a body is a file the item already
+  carries — by address, and by `xid-` when the address differs. **Nothing calls it.** It is here
+  because the part of #77 that was hard was never the note; it was knowing that a body can link the
+  very file the sync is downloading, and that a rule reading the HTML alone cannot see it. That
+  reasoning is cheaper to keep tested than to rediscover, and `test/content.test.mjs` holds it —
+  including the false positive itself, the second address, and the two shapes a note must never
+  reach. A future note is built on this rather than on a fresh guess. Uncalled code is a cost, and
+  this record is the argument that this particular scrap of it is worth its keep; anything more
+  speculative should not follow it in.
 
   The student loses nothing meanwhile: the link survives the conversion whatever happens, so the
   address is in the folder either way. What no one gets is a claim about whether the *bytes* are.
@@ -209,8 +219,10 @@ something — and `src/sync/expected.mjs` calls the same `contentDocument` a syn
   folder for good, even if NTULearn later stops carrying it. That is the same cost `docs/adr/0006`
   already accepted for an uncopied item, paid on a population currently measured at zero.
 - **A destination gains nothing at all from #78, which is the point.** The second open place was
-  closed by measuring it rather than by building for it: no note, no rule, no test, and nothing
-  under `src/` touched. Worth being exact about what the measurement acquits: #77's rule keyed on
+  closed by measuring it rather than by building for it: no note, no rule, and nothing a student
+  opening the folder can see. What did land is a single uncalled predicate and its tests, argued
+  for above — the reasoning kept, the behaviour not. Worth being exact about what the measurement
+  acquits: #77's rule keyed on
   the *absence* of `data-bbfile`, so on this corpus it would have written **no** notes rather than
   wrong ones. Both the harm it was refused for and the good it was written for are zero here. What
   the count establishes is not that the refusal caught a live fault, but that the whole question is
