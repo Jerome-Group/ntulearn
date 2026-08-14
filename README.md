@@ -292,7 +292,9 @@ walk does not cover rather than what nobody has got round to yet.
   expects, so both are silent about it together. What that has actually been measured to be is a
   video player's own output — the streams, thumbnails and caption tracks a Kaltura or YouTube
   player writes into the page after it starts — which is on the far side of the recorded-lecture
-  limit above rather than a separate one (`docs/adr/0011`).
+  limit above rather than a separate one (`docs/adr/0011`). What a page *carries* is not silent
+  any more: an embedded `<iframe>`, `<object>` or `<embed>` leaves a `> **Not copied**` line where
+  it sat, naming what was there. It is not counted, and it is said.
 - **What the destination holds beyond the course is never looked at.** `verify` reads only at the
   paths NTULearn named, so a file kept for an item NTULearn has stopped returning is correct rather
   than reported — a destination only ever grows (`docs/adr/0003`). It reads a folder's listing for

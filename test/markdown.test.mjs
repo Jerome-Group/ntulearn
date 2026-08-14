@@ -78,6 +78,44 @@ test("leaves an ordinary link alone", () => {
   );
 });
 
+const NOTE = (what) => `> **Not copied** — ${what}. Open this item in NTULearn to see it.`;
+
+test("writes down an embedded object where the conversion takes it out", () => {
+  assert.equal(
+    htmlToMarkdown('<p>Watch this:</p><iframe src="/webapps/blti/launchLink?id=7"></iframe>'),
+    `Watch this:\n\n${NOTE("an embedded `iframe` at /webapps/blti/launchLink?id=7")}`,
+  );
+  assert.equal(
+    htmlToMarkdown('<object data="/x/player.swf"></object>'),
+    NOTE("an embedded `object` at /x/player.swf"),
+  );
+  assert.equal(
+    htmlToMarkdown('<embed src="/x/clip.mp4">'),
+    NOTE("an embedded `embed` at /x/clip.mp4"),
+  );
+});
+
+test("says so where the object it removed had no address of its own", () => {
+  assert.equal(htmlToMarkdown("<iframe></iframe>"), NOTE("an embedded `iframe` with no address"));
+});
+
+test("removes what carries nothing a student wants without a word about it", () => {
+  assert.equal(htmlToMarkdown("<script>steal()</script><p>text</p>"), "text");
+  assert.equal(htmlToMarkdown("<style>a{}</style><p>text</p>"), "text");
+  assert.equal(htmlToMarkdown('<form action="/x"><input name="q"></form><p>text</p>'), "text");
+});
+
+// The note is a block, so a carrier in the middle of a sentence splits it and leaves the space
+// that preceded it behind. Pinned rather than fixed: an object mid-sentence is not a shape any
+// course here has produced, an inline aside would buy tidier prose by saying less about what is
+// missing, and the trailing space cannot be swept up without taking Turndown's `<br>` with it.
+test("puts the note on its own lines, splitting a sentence that wrapped the object", () => {
+  assert.equal(
+    htmlToMarkdown('<p>See <iframe src="/x"></iframe> before class.</p>'),
+    `See \n\n${NOTE("an embedded `iframe` at /x")}\n\nbefore class.`,
+  );
+});
+
 test("survives a malformed data-bbfile, falling back to the element's own link", () => {
   assert.equal(htmlToMarkdown('<a data-bbfile="{not json" href="/x">text</a>'), "[text](/x)");
 });

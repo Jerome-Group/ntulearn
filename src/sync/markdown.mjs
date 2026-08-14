@@ -4,6 +4,11 @@ import { courseUrl } from "../ntulearn/urls.mjs";
 
 const EMBED_ATTRIBUTE = "data-bbfile";
 
+// How a page carries a thing rather than describes one. None of the three can be brought across —
+// what is on the other side is NTULearn's to render — so each leaves a note where it sat instead
+// of leaving nothing, which is the state `docs/adr/0011` requires of every object the walk finds.
+const CARRIED_OBJECTS = new Set(["IFRAME", "OBJECT", "EMBED"]);
+
 const EVENT_HANDLER_ATTRIBUTE = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
 const JAVASCRIPT_URL_ATTRIBUTE = /(?:href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\1/gi;
 // A line of spaces is a blank line here; Turndown emits them where the source HTML had a <br>.
@@ -13,8 +18,22 @@ const turndown = new TurndownService({
   bulletListMarker: "-",
   codeBlockStyle: "fenced",
   headingStyle: "atx",
+
+  // Turndown answers an element with no text of its own before it consults a single rule, and an
+  // `<iframe>` or an `<object>` is empty by nature. So the rule below cannot be the only place the
+  // note is written from: without this, the two commonest carriers go back to being deleted in
+  // silence, and the tripwire never fires.
+  blankReplacement: (content, node) => carriedObjectNote(node) ?? (node.isBlock ? "\n\n" : ""),
 });
-turndown.remove(["script", "style", "iframe", "object", "embed", "form"]);
+
+// Three of the six this list used to hold have moved to a rule of their own. What is left carries
+// nothing a student wants, so removing it is not a loss and a note about each would be noise.
+turndown.remove(["script", "style", "form"]);
+
+turndown.addRule("carriedObject", {
+  filter: (node) => CARRIED_OBJECTS.has(node.nodeName),
+  replacement: (text, node) => carriedObjectNote(node),
+});
 
 // NTULearn leaves an embed's anchor without link text, and an embedded player's href unwritten,
 // so the plain conversion gives `[](url)` for every attachment and `[undefined](undefined)` for
@@ -124,6 +143,21 @@ export function isoDate(value) {
 
 function document(title, sections) {
   return `# ${title}\n\n${sections.filter(Boolean).join("\n\n")}\n`;
+}
+
+function carriedObjectNote(node) {
+  if (!CARRIED_OBJECTS.has(node.nodeName)) return null;
+  const address = firstSupplied(node.getAttribute("src"), node.getAttribute("data"));
+  const name = node.nodeName.toLowerCase();
+  return notCopiedNote(
+    address ? `an embedded \`${name}\` at ${address}` : `an embedded \`${name}\` with no address`,
+  );
+}
+
+// Addressed to whoever opens the folder rather than to the run, in the voice `uncopiedDocument`
+// already uses for a whole item: the copy says the thing was there, and where to go for it.
+function notCopiedNote(subject) {
+  return `\n\n> **Not copied** — ${subject}. Open this item in NTULearn to see it.\n\n`;
 }
 
 function embedOf(node) {
