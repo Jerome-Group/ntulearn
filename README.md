@@ -73,6 +73,16 @@ announcements become Markdown; attachments keep their original file type. Each c
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
 numbered folders in NTULearn's own order.
 
+A file already in the destination under an earlier number is left where it is rather than written a
+second time. A name carries its item's position in the course, so one item inserted upstream moves
+every later name by one while nothing on disk moves — and a run that wrote to the new number would
+leave the destination holding two of each, for good. The run counts those files as `renumbered`. It
+compares the bytes before leaving anything in place, so a file whose contents differ is written at
+today's number beside the older one and nothing is ever written over. A folder works the same way
+and is where its children go, so a course that reorders keeps growing in the folder it already has
+rather than starting a second one beside it; `docs/adr/0009` argues it, and `ls` keeps showing the
+order the files arrived in.
+
 A `Last synced.md` beside the overview records when the sync last ran. It is the only file in a
 destination rewritten on every run — everything else is written only when the course moved, so a
 run over a course with nothing new writes nothing at all; `docs/adr/0008` argues both halves.
@@ -183,13 +193,12 @@ later name by one — and nothing on disk moves with it, because a sync never re
 (`docs/adr/0003`). Those files are on disk under the number they were written with, so `verify`
 counts them **present** and names them under `renumbered`, with `path` where a sync would write the
 file today and `onDisk` where it actually is. Reporting them as missing would be a red that is
-almost all noise, and worse: the remedy it prints is `npm run sync`, which would download every one
-of them again under its new number and leave the destination holding two of each, for good.
+almost all noise.
 
 What it does not do is repair the numbering, so `ls` shows the course in the order it had when each
-file was written — and a sync run for any other reason still writes the new number beside the old
-one. When the report is red for something else, the stderr line says how many files that sync would
-write a second time.
+file was written. A sync does not repair it either — it leaves those files where they are, so a
+reordered course stops duplicating itself and stays in the order it arrived in (`docs/adr/0009`).
+This list is what makes that drift legible.
 
 Two limits. It will not answer at all where two items in the same folder share a title: the name
 inside the number identifies neither, so the file is reported missing rather than guessed at. And a

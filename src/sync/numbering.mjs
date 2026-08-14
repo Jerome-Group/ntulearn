@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { isFilePresent } from "./files.mjs";
+import { isDirectoryPresent, isFilePresent } from "./files.mjs";
 import { safeSegment, unnumbered } from "./paths.mjs";
 
 // Where a destination holds an expected file when the number in its name has moved.
@@ -19,21 +19,28 @@ import { safeSegment, unnumbered } from "./paths.mjs";
 export function numberingOf(destination, expected) {
   const tree = treeOf(expected);
   const listings = new Map();
+  const walk = async (segments, atLeaf) => {
+    const found = await locate(destination, tree, segments.map(safeSegment), listings, atLeaf);
+    return found && relative(destination, found);
+  };
 
   return {
-    async find(segments) {
-      const found = await locate(destination, tree, segments.map(safeSegment), listings);
-      return found && relative(destination, found);
-    },
+    find: (segments) => walk(segments, fileAt),
+    // The same question one level up, and it needs asking because a folder's name carries its
+    // position too: a reorder moves the folder while everything beneath it stays where it is. A
+    // sync asks this to put a file the destination does not hold yet in with its siblings rather
+    // than in a new folder beside them, which is the course splitting in two (ADR-0009). `verify`
+    // asks only about files, so it never reaches here.
+    directory: (segments) => walk(segments, directoryAt),
   };
 }
 
-async function locate(directory, siblings, [segment, ...rest], listings) {
+async function locate(directory, siblings, [segment, ...rest], listings, atLeaf) {
   for (const name of await standIns(directory, siblings, segment, listings)) {
     const path = join(directory, name);
     const found = rest.length
-      ? await locate(path, siblings.get(segment), rest, listings)
-      : await fileAt(path);
+      ? await locate(path, siblings.get(segment), rest, listings, atLeaf)
+      : await atLeaf(path);
     if (found) return found;
   }
   return null;
@@ -41,6 +48,10 @@ async function locate(directory, siblings, [segment, ...rest], listings) {
 
 async function fileAt(path) {
   return (await isFilePresent(path)) ? path : null;
+}
+
+async function directoryAt(path) {
+  return (await isDirectoryPresent(path)) ? path : null;
 }
 
 async function standIns(directory, siblings, segment, listings) {

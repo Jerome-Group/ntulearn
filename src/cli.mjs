@@ -60,14 +60,6 @@ async function verify(config, key) {
   if (report.complete) return 0;
 
   await writeLine(stderr, `Files are absent. Run: npm run sync -- ${key || "all"}`);
-  // The remedy is not free where the numbering has moved: a sync writes those files again under
-  // their new numbers and the older copies stay, because a destination only grows (ADR-0003).
-  if (report.renumbered) {
-    await writeLine(
-      stderr,
-      `${report.renumbered} more are on disk under an earlier number; that sync writes each of them a second time.`,
-    );
-  }
   return 1;
 }
 
