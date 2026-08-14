@@ -28,11 +28,18 @@ returns the same bodies as `@view=Summary` on `25S1_SLAC03`:
 Not one item gained anything. This is the option the issue called cheap and half-implemented; it is
 cheap, and it is also nothing.
 
-**2. The rendered page.** Refused as *the* authority by #47, on nine courses, for three independent
-reasons: it produced **nine aliases** against `docs/adr/0007`'s prediction of zero; it is **not a
-superset of the walk**, losing 45 attachments, 5 SCORM packages and 1 LTI placement while reporting
-nothing wrong; and it costs a page load per item, which on the largest course ran long enough to
-trip NTULearn's own idle-logout.
+**2. The rendered page.** Refused as *the* authority by #47, which attempted nine courses and could
+read five — the other four were closed or in Original Course View — for three independent reasons:
+it produced **nine aliases** against `docs/adr/0007`'s prediction of zero; it is **not a superset of
+the walk**, losing 45 attachments, 5 SCORM packages and 1 LTI placement while reporting nothing
+wrong; and it costs a page load per item, which on the largest course ran long enough to trip
+NTULearn's own idle-logout.
+
+The aliases carry a qualification worth keeping, because it is what `docs/adr/0007` got right: all
+nine arrive on a `data-bbfile` **attribute**, and that record's narrower claim — that what the
+browser *resolves and fetches* is the live address — survived the run intact. It falsifies the
+record only because a reader on the page **must** read attributes to see an Ultra attachment at all,
+and inherits the stored addresses the moment it does.
 
 **3. Enumerating the content handlers.** Refused by #46, and not for the reason it was doubted. The
 doubt was that a vendor list would be short. The finding is that **no vendor list can exist**: what
@@ -49,7 +56,8 @@ as absent from the expectation set.
 
 It does strip them. There are none there to strip. Across `25S1_SLAC03`, `25S2-CC0003-LEC-ALL` and
 `25S2-PS0002-LAB` — **178 bodies** — there is not one of those elements in any body, on either
-surface.
+surface. Three courses rather than the whole corpus, which is the limit this measurement carries and
+the thing that would falsify it.
 
 This is worth recording precisely because the fix it invites is obvious: parse the embeds before
 stripping them. That fix would have been built, tested and merged against a population of zero, and
@@ -67,11 +75,12 @@ from:
 | plain external links, and one `blti/launchLink` iframe | ~6 |
 
 **Roughly 91 of the 92 are the runtime exhaust of two video players**, not distinct course content.
-They exist because a script ran. No read of NTULearn's content API can ever hold them, and the
-rendered page holds them only as addresses with expiring tokens on them. The thing behind them — the
-recording — is already reachable by the walk: as an anchor in the body, or as the
-`resource/x-bb-externallink` item `externalLinkOf` reads. On `25S1_SLAC03` the bodies carry 5
-Kaltura and 7 YouTube addresses directly.
+They exist because a script ran, so what NTULearn's content API returns is the address the player
+starts *from* rather than the stream, the poster and the caption track it goes on to write — and the
+rendered page holds those only as addresses with expiring tokens on them. The thing behind them —
+the recording — is already reachable by the walk: as an anchor in the body, as the `data-bbfile` a
+player's embed carries, or as the `resource/x-bb-externallink` item `externalLinkOf` reads. On
+`25S1_SLAC03` the bodies carry 5 Kaltura and 7 YouTube addresses directly.
 
 Recorded lecture videos and their transcripts are a known missing feature (`README.md`, *Status*)
 and are out of this issue's scope by its own words. So most of this population is that feature
@@ -86,16 +95,21 @@ which reading of a course is trusted.
 
 ## Why the rendered page is not adopted as a routine second channel either
 
-#47's own verdict argues for the page as a second, disagreeing channel whose output is a finding.
-That is right about what it is good for and this record still does not schedule it, for three
-reasons that only apply to *routine* use:
+#47 hands this record two things, not one: a verdict against the page as *the* authority, and an
+argument **for** it as a second, disagreeing channel — *"the 116 not-copyable and 85 walk-missed
+objects, and above all the 92 with no state… a genuine finding."* That argument is accepted. What
+this record declines is only the next step, scheduling it, for three reasons that apply to *routine*
+use and to nothing else:
 
-- **It costs a second read of the course** — a page load per item, roughly 277 across the configured
-  courses. `docs/adr/0005` already prices the first read; this doubles it.
-- **Its signal-to-noise is a report nobody would trust.** On five courses it named 246 page-only
-  objects, of which 9 were aliases, 36 furniture and 116 things no sync could bring across. A
-  channel that names 246 things and means one is the report `docs/adr/0005` refuses on the grounds
-  that a report nobody trusts is one nobody runs.
+- **It costs a second read of the course** — a page load per item, roughly 277 across the eight
+  courses configured when that was measured, and thirteen are configured now. `docs/adr/0005`
+  already prices the first read; this doubles it.
+- **Its output needs a human before it means anything.** On five courses it named 246 page-only
+  objects: 9 aliases, 36 furniture, 116 things no sync could bring across, 85 the walk misses of
+  which 77 survive as anchors anyway. Sorting those buckets is what made #47 worth reading, and the
+  sorting is not automatable — telling an alias from a gap means fetching the address, which the
+  reader does not do. Scheduled, it emits 246 lines a week that nobody has time to sort, which is
+  the report `docs/adr/0005` refuses on the grounds that a report nobody trusts is one nobody runs.
 - **It logs the session out.** This repository is aimed at unattended, scheduled runs. A channel
   slow enough to raise NTULearn's *"Are you still there?"* dialog, which neither reader reports, is
   a channel that can end the run it was meant to check.
@@ -162,6 +176,10 @@ about to be fixed against nothing.
   course the walk genuinely cannot see, and then the rendered page is the only channel that can.
 - **A Building Block is installed that renders its content only in the page.** SCORM was the first
   handler nobody's list contained; the next one may not put its address in a body at all.
+- **A SCORM package turns out to be fetchable.** #33 left that open and it stays open: the vendor
+  documents a player rather than a file, so the honest state today is the third one — a recorded
+  reason it is not copyable. Answering it needs a live session against ML0004, which is the Owner's
+  to run, and a yes would move seven of that course's topics from the third state to the first.
 - **The scheduled run gets a watchdog that reads what it prints.** Two of the three objections to
   the page as a routine channel are about a report nobody reads and a session nobody is watching. A
   run whose findings are durable rather than printed prices it differently — which is the shape

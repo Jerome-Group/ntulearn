@@ -53,6 +53,14 @@ what a finding never does is change what a sync expects.
 _Avoid_: crawl, scrape, traversal — the middle one is what a *sync* is not, and the other two say
 nothing about which tree or through what
 
+**Finding**:
+What a reading of a course produces when it is not the *authority*: a difference somebody has to
+read and judge, rather than an input anything acts on. A finding may say that an object exists
+which no sync brings across, and it still never enlarges what a sync expects or what `verify`
+counts — that set comes from the authority alone (`docs/adr/0011`).
+_Avoid_: result, gap, discrepancy — the last two say a defect has been established, which is the
+judging a finding has not yet had
+
 **Snapshot**:
 Everything read from NTULearn for one course in a single run, before any of it is written.
 _Avoid_: dump, payload, response
