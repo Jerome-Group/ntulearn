@@ -21,12 +21,12 @@ everything but running the tool — it skips Playwright's browser download, and 
 `test/` needs a browser or a network, which is the property `CODING_STANDARDS.md` §6 exists to
 hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
-`npm run login`, `npm run discover`, `npm run sync`, `npm run verify` and `npm run renumber` reach
-NTULearn as a real signed-in student, and the sync writes to real folders on this machine. Change
-them, test the pure parts, and leave the running to the Owner: `login` needs a person at the MFA
-prompt, and the other four need a live session that only `login` produces. `verify` writing nothing
-does not make it yours to run — it still spends the Owner's session. `renumber` is the sharpest of
-them: it is the only command in this repository that renames anything a student owns
+`npm run login`, `npm run discover`, `npm run watchdog`, `npm run sync`, `npm run verify` and
+`npm run renumber` reach NTULearn as a real signed-in student, and the sync writes to real folders
+on this machine. Change them, test the pure parts, and leave the running to the Owner: `login` needs
+a person at the MFA prompt, and the other five need a live session that only `login` produces.
+`verify` writing nothing does not make it yours to run — it still spends the Owner's session.
+`renumber` is the sharpest of them: it is the only command in this repository that renames anything a student owns
 (`docs/adr/0010`), and it is the Owner's to decide to run.
 
 ## Conventions
