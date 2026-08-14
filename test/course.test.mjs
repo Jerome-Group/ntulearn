@@ -310,6 +310,9 @@ test("keeps what the last run recorded when a category could not be read", async
 // its new number — 61 files in one course, with nothing to say which copy was current (#70).
 const REORDERED = WEEK_1.map((item) => ({ ...item, position: item.position + 1 }));
 const WEEK_1_PPT = "/bbcswebdav/w1";
+// The whole of the destination's root once the course has been synced. Asserted rather than the
+// folder alone, because the failure this is watching for is a *second* `Week 1` beside the first.
+const ROOT = ["01 Week 1", "Course.md", "Last synced.md"];
 
 async function again(destination, state, items = WEEK_1) {
   return syncCourse({
@@ -331,7 +334,7 @@ test("writes nothing a second time when every number in the course has moved", a
   assert.equal(second.skipped, 1);
   assert.equal(second.markdownWritten, 0);
   assert.deepEqual((await readdir(join(destination, "01 Week 1"))).sort(), before.sort());
-  assert.deepEqual(await readdir(join(destination, "02 Week 1")), []);
+  assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
 // `State` is a cache that costs nothing to delete (`CONTEXT.md`, ADR-0003), so the duplication has
@@ -346,7 +349,7 @@ test("keeps the file where it is when no record says it was ever downloaded", as
   assert.equal(second.skipped, 1);
   assert.equal(second.renumbered, 2);
   assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
-  assert.deepEqual(await readdir(join(destination, "02 Week 1")), []);
+  assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
 // The bytes are what makes an older file the same file, and nothing else does: two items in a
@@ -365,9 +368,43 @@ test("writes beside a file under an earlier number rather than over it", async (
   assert.equal(second.downloaded, 1);
   assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
   assert.equal(
-    await readFile(join(destination, "02 Week 1", "06 Week 1 PPT.pptx"), "utf8"),
+    await readFile(join(destination, "01 Week 1", "06 Week 1 PPT.pptx"), "utf8"),
     "a different deck",
   );
+  assert.deepEqual((await readdir(destination)).sort(), ROOT);
+});
+
+// Resolving only the file leaves the folder to be created afresh under its new number, so the run
+// keeps everything it already had in one place and puts everything since in another — a course split
+// across two directories, which is worse than the duplication #70 reported. The folder is resolved
+// first and the name resolved inside it, so a new item joins its siblings.
+test("puts an item the destination has never seen in with its siblings", async () => {
+  const added = [
+    ...REORDERED,
+    {
+      id: "_4_1",
+      parentId: "_1_1",
+      position: 7,
+      title: "Week 1 Notes",
+      contentHandler: "resource/x-bb-file",
+      contentDetail: {
+        "resource/x-bb-file": {
+          file: { fileName: "Week 1 Notes.pdf", permanentUrl: "/bbcswebdav/n1" },
+        },
+      },
+    },
+  ];
+  const { destination, state } = await sync(downloads("ppt"), WEEK_1);
+
+  const second = await again(destination, state, added);
+
+  assert.equal(second.downloaded, 1);
+  assert.deepEqual((await readdir(join(destination, "01 Week 1"))).sort(), [
+    QUIZ,
+    "05 Week 1 PPT.pptx",
+    "08 Week 1 Notes.pdf",
+  ]);
+  assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
 // A record's `relativePath` is where the file is, so the run after a reorder finds it there rather
@@ -393,7 +430,7 @@ test("never writes over a page an earlier run copied, at whatever number it now 
   await again(destination, state, REORDERED);
 
   assert.equal(await readFile(written, "utf8"), "# The week the quiz still had a page\n");
-  assert.deepEqual(await readdir(join(destination, "02 Week 1")), []);
+  assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
 // NTULearn's claim about a file is a claim; the `content-type` that came back is what the run

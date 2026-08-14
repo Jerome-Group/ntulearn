@@ -78,8 +78,10 @@ second time. A name carries its item's position in the course, so one item inser
 every later name by one while nothing on disk moves — and a run that wrote to the new number would
 leave the destination holding two of each, for good. The run counts those files as `renumbered`. It
 compares the bytes before leaving anything in place, so a file whose contents differ is written at
-today's number beside the older one and nothing is ever written over; `docs/adr/0009` argues it,
-and `ls` keeps showing the order the files arrived in.
+today's number beside the older one and nothing is ever written over. A folder works the same way
+and is where its children go, so a course that reorders keeps growing in the folder it already has
+rather than starting a second one beside it; `docs/adr/0009` argues it, and `ls` keeps showing the
+order the files arrived in.
 
 A `Last synced.md` beside the overview records when the sync last ran. It is the only file in a
 destination rewritten on every run — everything else is written only when the course moved, so a

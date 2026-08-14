@@ -8,6 +8,12 @@ today's number beside it, as it always did. The number in a name stays the item'
 nothing on disk is renamed, nothing is deleted, and nothing this run did not itself just fetch is
 written over — ADR-0003 holds exactly as it did.
 
+**A folder is resolved the same way, and it is what its children are resolved inside.** A folder's
+name carries its position too, so a reorder moves the folder while everything beneath it stays where
+it is; a run finds that folder and writes into it, including the files the destination has never
+seen. So a reordered course is one directory that keeps growing rather than two, and the empty
+numbered folder a reorder used to leave behind is not created at all.
+
 It answers the duplication ADR-0005 named and deferred. A file's name carries its item's position,
 so one item inserted at the top of a course moves every later name by one while nothing on disk
 moves — and `saveAttachment` held its record to the path the run *would* write:
@@ -81,10 +87,15 @@ version of something.
   written as it streams. Two things follow. A run that dies mid-walk now writes nothing instead of
   part of a course, which is an improvement nobody asked for; and every document's rendered text for
   one course is held in memory at once, which is a page each and a course at a time.
-- **A reordered course still gains an empty folder per renumbered folder.** A folder is a directory
-  rather than a file, and this asks about files, so `mkdir` at the new number still runs. The
-  duplication that costs something — a second copy of the bytes — is what this record removes; a
-  directory holding nothing is ADR-0003's accepted untidiness.
+- **A destination's folder names are settled by the first run that created them.** Everything a
+  course puts in a folder from then on goes in the one that is already there, whatever number
+  NTULearn gives that folder later. This is the strongest commitment in the record — it decides
+  where files land rather than only whether they are copied — and the alternative is worse: a run
+  that resolved only the file would keep what it already had in the old folder and put everything
+  since in a new one, leaving the course split across two directories. That is worse than the
+  duplication #70 reported, because neither directory is the course.
+- **`verify` is untouched by that.** It asks only about files, so the walk it makes is the one it
+  made before; the directory question is the sync's alone.
 - **An attachment with no record is fetched to compare against.** Where `State` is gone and the
   numbering has moved, the run spends the download and then writes nothing. That is the cost of the
   answer coming off the disk rather than out of a cache, and it is bounded by how often `State` is

@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
-import { safeResolve } from "./paths.mjs";
+import { safeResolve, safeSegment } from "./paths.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 // Alone here rather than beside the other destination filenames in `expected.mjs`, because that
@@ -123,24 +123,41 @@ export async function syncCourse({ client, course, state }) {
   };
 }
 
-// Where a run writes one file the course expects, and where the destination already holds it. The
+// Where a run writes one thing the course expects, and where the destination already holds it. The
 // two are the same name until an item is inserted upstream: a name carries its item's position, so
 // every later name moves by one while nothing on disk moves with it (ADR-0003). `heldAt` is the
 // older file when there is one, and it is never written over — a run keeps it where it is, or
 // writes at today's number beside it (ADR-0009).
 //
-// A folder is not asked about. It is a directory rather than a file, and one standing beside an
-// older number costs a listing rather than a second copy of anything.
+// The folder is resolved first and the name resolved inside it, so a file the destination does not
+// hold yet joins its siblings rather than opening a second folder beside them. Resolving only the
+// file would leave a reordered course split across two directories — the old one holding everything
+// that was there and a new one holding everything since.
 async function placeOf(numbering, destination, expected) {
   const { path, segments } = expected.placement;
-  const target = safeResolve(destination, ...segments);
-  // `resolve` rather than `safeResolve`: this name came off a listing of the destination itself, so
-  // it is already a name on disk rather than anything NTULearn said.
-  const found = expected.kind === "folder" ? null : await numbering.find(segments);
+  if (expected.kind === "folder") {
+    return { at: path, target: await directoryFor(numbering, destination, segments), heldAt: null };
+  }
+
+  const found = await numbering.find(segments);
+  const within =
+    found !== null
+      ? dirname(resolve(destination, found))
+      : await directoryFor(numbering, destination, segments.slice(0, -1));
+  const target = join(within, safeSegment(segments.at(-1)));
   const older = found === null ? null : resolve(destination, found);
   return older === null || older === target
     ? { at: path, target, heldAt: null }
     : { at: found, target, heldAt: older };
+}
+
+// The directory these segments name, wherever the destination holds it. `resolve` rather than
+// `safeResolve` on that answer: the name came off a listing of the destination itself, so it is
+// already a name on disk rather than anything NTULearn said.
+async function directoryFor(numbering, destination, segments) {
+  if (!segments.length) return destination;
+  const here = await numbering.directory(segments);
+  return here === null ? safeResolve(destination, ...segments) : resolve(destination, here);
 }
 
 async function saveAttachment({ client, place, placement, item, attachment, record, tally }) {

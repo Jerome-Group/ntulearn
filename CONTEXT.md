@@ -163,11 +163,12 @@ two trees written into one folder is a tangle a sync cannot undo (`docs/adr/0003
 _Avoid_: output directory, target, vault
 
 **Renumbered file**:
-A file in a *destination* whose name differs from the one the course would give it today only by
-the number in front of it — an item was inserted upstream, every later name moved, and nothing on
-disk moved with it. It is the file: `verify` counts it present, and a sync leaves it where it is
-rather than writing a second copy beside it (`docs/adr/0005`, `docs/adr/0009`). Both commands report
-how many there were.
+A file or folder in a *destination* whose name differs from the one the course would give it today
+only by the number in front of it — an item was inserted upstream, every later name moved, and
+nothing on disk moved with it. It is the file: `verify` counts it present, and a sync leaves it
+where it is rather than writing a second copy beside it (`docs/adr/0005`, `docs/adr/0009`). A
+renumbered folder is also where its children go, so a reordered course grows in one place. Both
+commands report how many files there were.
 _Avoid_: stale, orphaned, duplicate — the first two say the file is wrong and it is not, and the
 third is what happens when neither command recognises it
 
