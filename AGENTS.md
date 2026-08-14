@@ -21,11 +21,13 @@ everything but running the tool — it skips Playwright's browser download, and 
 `test/` needs a browser or a network, which is the property `CODING_STANDARDS.md` §6 exists to
 hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
-`npm run login`, `npm run discover`, `npm run sync` and `npm run verify` reach NTULearn as a real
-signed-in student, and the sync writes to real folders on this machine. Change them, test the pure
-parts, and leave the running to the Owner: `login` needs a person at the MFA prompt, and the other
-three need a live session that only `login` produces. `verify` writing nothing does not make it
-yours to run — it still spends the Owner's session.
+`npm run login`, `npm run discover`, `npm run sync`, `npm run verify` and `npm run renumber` reach
+NTULearn as a real signed-in student, and the sync writes to real folders on this machine. Change
+them, test the pure parts, and leave the running to the Owner: `login` needs a person at the MFA
+prompt, and the other four need a live session that only `login` produces. `verify` writing nothing
+does not make it yours to run — it still spends the Owner's session. `renumber` is the sharpest of
+them: it is the only command in this repository that renames anything a student owns
+(`docs/adr/0010`), and it is the Owner's to decide to run.
 
 ## Conventions
 
@@ -104,7 +106,8 @@ List the open Dependabot pull requests at both ends of any session that touches 
 
 **A sync is additive.** It writes and it skips, and a destination only ever grows — anything that
 would remove, prune, or rename a file there is the decision argued in `docs/adr/0003`, and reading
-that record is the first step of proposing it. The word is the glossary's: `CONTEXT.md` defines
+that record is the first step of proposing it. `renumber` is the one command that renames, it is
+never part of a sync, and `docs/adr/0010` is the whole of why it is allowed to. The word is the glossary's: `CONTEXT.md` defines
 *sync* as additive, and the code uses it too.
 
 **`.data/chrome-profile` is the secret.** It is a live authenticated Chrome profile — possession

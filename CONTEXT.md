@@ -28,6 +28,14 @@ writes to neither, so it answers a question about the destination rather than ab
 _Avoid_: check, audit, reconcile — the last is the operation a sync is not, and naming this one
 after it invites the deletion `docs/adr/0003` refuses
 
+**Renumber**:
+Renaming what a *destination* already holds so its names carry the order NTULearn gives the course
+today. It is not a *sync* and never happens during one: it renames only a file it can prove the
+sync wrote and nothing has touched since, leaves every other file exactly where it is, and deletes
+nothing (`docs/adr/0010`).
+_Avoid_: rename, tidy, reorganise — the first says nothing about which names or why, and the other
+two promise a freedom over somebody's folder this does not take
+
 **Authority**:
 The reading of a course that a check treats as the truth about what exists. Completeness is always
 relative to one: a number can say that everything the authority saw is accounted for, and never
@@ -121,11 +129,13 @@ alias is a property of a stored address rather than of either artefact.
 _Avoid_: dead link, broken link, duplicate — the first two say the file is gone, and it is not
 
 **Renumbered file**:
-A file in a *destination* whose name carries a number the course has since moved — an item inserted
-above it moved every later *position* by one, and a *sync* never renames, so the file stays at the
-number it was written with. Nothing is missing because of one: it is the file, at another number.
-`verify` counts it present and names it, and only where the name inside the number is its own
-folder's alone (`docs/adr/0005`).
+A file *or folder* in a *destination* whose name carries a number the course has since moved — an
+item inserted above it moved every later *position* by one, and a *sync* never renames, so it stays
+at the number it was written with. Nothing is missing because of one: it is the file, at another
+number. `verify` counts it present and names it, and only where the name inside the number is its
+own folder's alone (`docs/adr/0005`). A sync leaves it where it is rather than writing a second copy
+beside it, and a renumbered folder is where its children go, so a reordered course grows in one
+place (`docs/adr/0009`). Putting the number back is *renumber*'s and nothing else's.
 _Avoid_: misplaced, stale, out of date — all three say the file is wrong, and only its position in
 an `ls` is
 
@@ -161,16 +171,6 @@ outside it is ever written. One course, one destination, and no two courses shar
 one inside another — a course with a lecture site and a tutorial site is two courses here, and
 two trees written into one folder is a tangle a sync cannot undo (`docs/adr/0003`).
 _Avoid_: output directory, target, vault
-
-**Renumbered file**:
-A file or folder in a *destination* whose name differs from the one the course would give it today
-only by the number in front of it — an item was inserted upstream, every later name moved, and
-nothing on disk moved with it. It is the file: `verify` counts it present, and a sync leaves it
-where it is rather than writing a second copy beside it (`docs/adr/0005`, `docs/adr/0009`). A
-renumbered folder is also where its children go, so a reordered course grows in one place. Both
-commands report how many files there were.
-_Avoid_: stale, orphaned, duplicate — the first two say the file is wrong and it is not, and the
-third is what happens when neither command recognises it
 
 **Session**:
 Proof that the student is signed in, reusable across runs. It is this repository's one secret.

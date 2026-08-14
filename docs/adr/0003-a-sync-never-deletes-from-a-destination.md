@@ -39,6 +39,13 @@ record says what this repository wrote, not what the student has since done with
 annotated it, moved it into a folder of their own. A deletion informed by state is still a
 deletion of a file somebody may be using.
 
+**Narrowed for renaming, not for deleting — `docs/adr/0010` (#74).** The paragraph above is an
+argument about evidence: a record of the past cannot tell you about the present. `docs/adr/0010`
+takes it at its word and supplies the present — the `sha256` in that record, held against the bytes
+on disk now — and renames only what still matches, in a command of its own. Nothing here is
+weakened: a sync still never deletes and still never renames, and the deletion this section refuses
+is refused everywhere, with or without evidence.
+
 ## Consequences
 
 - **A destination grows and is never tidied.** A renamed upstream file appears twice, and a
@@ -50,6 +57,8 @@ deletion of a file somebody may be using.
   property that lets it be thrown away whenever it is inconvenient.
 - **Numbered folder names carry NTULearn's ordering into the destination**, so a reordered course
   writes new folders beside the old ones rather than renaming them. Same cost, same reason.
+  (`docs/adr/0009` stopped the writing-beside; `docs/adr/0010` is where the order gets put back,
+  deliberately and never by a sync.)
 
 ## Revisit when
 

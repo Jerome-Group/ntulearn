@@ -1,7 +1,7 @@
 {
   "name": "ntulearn-sync",
   "version": "1.0.0",
-  "description": "Syncs NTULearn course content — pages, announcements and attachments — into a folder per course.",
+  "description": "Syncs NTULearn course content \u2014 pages, announcements and attachments \u2014 into a folder per course.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,6 +17,7 @@
     "discover": "node src/cli.mjs discover",
     "sync": "node src/cli.mjs sync",
     "verify": "node src/cli.mjs verify",
+    "renumber": "node src/cli.mjs renumber",
     "test": "node --test",
     "lint": "eslint .",
     "format": "prettier --write .",
