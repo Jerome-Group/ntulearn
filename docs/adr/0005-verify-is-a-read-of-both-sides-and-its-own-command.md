@@ -63,6 +63,13 @@ Two things bound it, and both are in the code rather than in this prose:
 
 ## What a permanent failure does to the exit code is left open
 
+> **Superseded by `docs/adr/0012` (#28).** This section only. It is answered now, and answered the
+> way the section below already answered it for a course: a failed download **keeps** reddening the
+> exit code, because no instance of a permanently unfetchable file has ever been produced and every
+> failure attributed to NTULearn so far turned out to be this repository's own. If one does turn up,
+> it takes the refused-course shape below rather than a mechanism of its own. What follows is kept
+> because the reasoning for leaving it open is still the reasoning for not building a rule.
+
 Issue #21 asked a third question with these two: whether a known-permanent upstream failure can be
 told from a transient one, so that it stops reddening every future exit code. It is **not settled
 here**, and the reason is that the evidence for it evaporated. The ten failures that raised it
@@ -191,9 +198,9 @@ verify that consulted it would answer from the same record that was already wron
 
 ## Revisit when
 
-- **A file appears that genuinely cannot be downloaded** — the case the deferred third question
-  was about. Then there is something to classify, and both this command's exit code and the sync's
-  are the thing to reconsider, together.
+- **A file appears that genuinely cannot be downloaded** — still the trigger, and now a narrower
+  one: `docs/adr/0012` fixed what happens to such a file, so what is left to settle is what makes
+  one eligible. Both exit codes are still reconsidered together.
 - **A folder's own body turns out to carry an attachment somebody wanted.** Today neither side
   expects it. The fix would be in the sync, which would download it, and `verify` would follow
   without being told — but it is a change to what a sync writes, so it is its own issue.
