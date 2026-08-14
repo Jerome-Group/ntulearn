@@ -204,10 +204,13 @@ verify that consulted it would answer from the same record that was already wron
   rather than the theory, because the check costs a download of everything.
 - ~~**Markdown documents go missing in a way the sync does not report.**~~ This one fired: #32, and
   the second section above is what it changed.
-- **An authority arrives that is not this walk.** Everything here is measured against one read of
-  the course, so the walk cannot catch its own blindness — and the four gaps found so far were all
-  found by a person in a browser. A second reading of the same course, from somewhere the walk does
-  not go, is what would turn "everything I saw is here" into "nothing was missed" (#33).
+- ~~**An authority arrives that is not this walk.**~~ This one fired, and came back keeping the
+  walk: #33 tried all three candidates and refused all three, so `docs/adr/0011` adopts the reading
+  `verify` already counts against and nothing here changes. Half of what this bullet hoped for is
+  refused outright — no second reading turns *"everything I saw is here"* into *"nothing was
+  missed"*, because completeness is relative to an authority (`docs/adr/0007`). The other half
+  stands: a second reading still catches what the walk cannot, and what it produces is a *finding*
+  for a person rather than an input to this command.
 - **A `verify` run wants to be a step in a `sync`** — for instance, one that finishes by saying
   what is still absent after it has written everything it could. That is a sync reporting on its
   own destination rather than a flag that turns its writes off, and the objection above does not

@@ -40,8 +40,26 @@ two promise a freedom over somebody's folder this does not take
 The reading of a course that a check treats as the truth about what exists. Completeness is always
 relative to one: a number can say that everything the authority saw is accounted for, and never
 that nothing was missed. So a report names the authority behind it, and what that authority does
-not cover is part of the answer rather than a caveat on it.
+not cover is part of the answer rather than a caveat on it. Here it is the *walk*, and the three
+candidates that might have replaced it were each measured and refused (`docs/adr/0011`).
 _Avoid_: source of truth, ground truth — both claim an absoluteness no reading here has
+
+**Walk**:
+Reading a course by descending NTULearn's content-item tree through its read API — every *content
+item*, with its *body*, its *attachments* and its external link. It is what a *sync* takes as its
+input and what `verify` counts against, and it is this repository's *authority*
+(`docs/adr/0011`). Reading the same course another way is allowed and produces a **finding**;
+what a finding never does is change what a sync expects.
+_Avoid_: crawl, scrape, traversal — the middle one is what a *sync* is not, and the other two say
+nothing about which tree or through what
+
+**Finding**:
+What a reading of a course produces when it is not the *authority*: a difference somebody has to
+read and judge, rather than an input anything acts on. A finding may say that an object exists
+which no sync brings across, and it still never enlarges what a sync expects or what `verify`
+counts — that set comes from the authority alone (`docs/adr/0011`).
+_Avoid_: result, gap, discrepancy — the last two say a defect has been established, which is the
+judging a finding has not yet had
 
 **Snapshot**:
 Everything read from NTULearn for one course in a single run, before any of it is written.

@@ -103,8 +103,12 @@ fixing an authority on the strength of it sounding true is the mistake #29 alrea
 That work has since been done — #47, nine courses — and it came back against the candidate on three
 counts: it produced the nine aliases above, it lost 45 attachments, 5 SCORM packages and 1 LTI
 placement while reporting nothing wrong, and on the largest course it ran long enough to trip
-NTULearn's own idle-logout. Not adopting it here was right, and #33 is still where an authority is
-chosen.
+NTULearn's own idle-logout. Not adopting it here was right.
+
+**The authority has since been chosen: `docs/adr/0011` adopts the walk** — the reading a sync
+already takes as its input — and refuses all three replacements this record left open, the rendered
+page among them. Nothing here is superseded by that: the body is disqualified for the reasons above,
+and this record's frame is what `docs/adr/0011` decides inside.
 
 ## Consequences
 
