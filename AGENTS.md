@@ -23,10 +23,17 @@ hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the
 
 `npm run login`, `npm run discover`, `npm run watchdog`, `npm run sync`, `npm run verify` and
 `npm run renumber` reach NTULearn as a real signed-in student, and the sync writes to real folders
-on this machine. Change them, test the pure parts, and leave the running to the Owner: `login` needs
-a person at the MFA prompt, and the other five need a live session that only `login` produces.
-`verify` writing nothing does not make it yours to run — it still spends the Owner's session.
-`renumber` is the sharpest of them: it is the only command in this repository that renames anything a student owns
+on this machine. Change them, test the pure parts, and leave the five data commands to the Owner:
+`discover`, `watchdog`, `sync`, `verify` and `renumber` spend the live session. `verify` writing
+nothing does not make it yours to run.
+
+After a saved-session read times out on the identity-provider page instead of reaching Courses, an
+agent runs `npm run login` before declaring the session expired. If the Courses page appears
+without input, press Enter, let the command close its window and retry the original read; if
+credentials, MFA, CAPTCHA or another human-only step appears, hand the login window to the Owner.
+This diagnostic never inspects or prints session material. A first login remains the Owner's.
+
+`renumber` is the sharpest command: it is the only one that renames anything a student owns
 (`docs/adr/0010`), and it is the Owner's to decide to run.
 
 ## Conventions
