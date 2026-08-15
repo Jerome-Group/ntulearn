@@ -1,4 +1,5 @@
 import { chmod, mkdir } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
 import { COURSES_URL, isIdentityProviderUrl, SIGNED_IN_URL_PATTERN } from "./urls.mjs";
@@ -63,6 +64,7 @@ function signInStalled(url) {
 }
 
 async function launchChrome(profilePath, { headless }) {
+  validateProfilePath(profilePath);
   await mkdir(profilePath, { recursive: true });
   await chmod(profilePath, 0o700);
   return chromium.launchPersistentContext(profilePath, {
@@ -70,6 +72,17 @@ async function launchChrome(profilePath, { headless }) {
     headless,
     viewport: headless ? HEADLESS_VIEWPORT : null,
   });
+}
+
+function validateProfilePath(profilePath) {
+  if (typeof profilePath !== "string" || !isAbsolute(profilePath)) {
+    throw new Error("NTULearn profile path must be an absolute filesystem path.");
+  }
+  if (/%[0-9a-f]{2}/i.test(profilePath)) {
+    throw new Error(
+      "NTULearn profile path is URL-encoded; pass fileURLToPath(new URL(...)), not URL.pathname.",
+    );
+  }
 }
 
 // The token is never served to us; it rides on the requests the page makes once it has one.
