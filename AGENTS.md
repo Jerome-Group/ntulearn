@@ -33,6 +33,10 @@ without input, press Enter, let the command close its window and retry the origi
 credentials, MFA, CAPTCHA or another human-only step appears, hand the login window to the Owner.
 This diagnostic never inspects or prints session material. A first login remains the Owner's.
 
+`npm run media:setup` is the one Owner-started operation that prepares media tooling and local model
+assets under the configured RAID0 Media store. Scheduled and ordinary commands never install media
+dependencies.
+
 `renumber` is the sharpest command: it is the only one that renames anything a student owns
 (`docs/adr/0010`), and it is the Owner's to decide to run.
 

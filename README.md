@@ -10,8 +10,8 @@ MIT licensed and public — `docs/adr/0002`.
 
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
-than a Tuesday. Recorded lecture videos and their transcripts are not read yet; that is the next
-thing, and its absence is a missing feature rather than an unfinished one.
+than a Tuesday. The local media runtime foundation is now explicit and Owner-started; recording
+discovery, acquisition and transcription are still separate work.
 
 ## Commands
 
@@ -23,7 +23,11 @@ npm run sync -- MH2100        # sync one configured course
 npm run sync -- all           # sync every configured course
 npm run verify -- all         # check what is on disk against NTULearn, writing nothing
 npm run renumber -- MH2500    # rename what is on disk back into the course's order today
+npm run media:setup            # Owner-started: prepare and verify the local media runtime
 ```
+
+`media:setup` is the only command that prepares media dependencies or models. Sync, verify,
+watchdog and future scheduled media runs never install anything.
 
 ## Configuration
 
@@ -40,11 +44,16 @@ cp config/courses.example.json config/courses.json
   "statePath": ".data/state.json",
   "driveMountPath": "/absolute/path/to/Google Drive",
   "watchdogTimeoutMs": 900000,
+  "media": {
+    "mediaRoot": "/Volumes/RAID0/Media",
+    "freeSpaceReserveBytes": 107374182400
+  },
   "courses": [
     {
       "key": "AB1234",
       "courseId": "_0000000_1",
-      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn"
+      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn",
+      "mediaMode": "off"
     }
   ]
 }
@@ -59,6 +68,27 @@ cp config/courses.example.json config/courses.json
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
 | `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. The watchdog writes no destination when this directory is absent. |
 | `watchdogTimeoutMs` | no | The watchdog's initial timeout in milliseconds. The Owner pins the placeholder `900000` from the first week's logged durations. |
+| `media.mediaRoot` | required for `active`/`pilot` | The explicit Media store. It must be a directory below `/Volumes/RAID0`; there is no system-disk fallback. |
+| `media.freeSpaceReserveBytes` | no | Free space retained on the Media store before setup or acquisition. Defaults to 100 GiB. |
+| `courses[].mediaMode` | no | Exactly `active`, `pilot`, or `off`; omitted means `off` for legacy configurations. No semester is inferred. |
+
+### Preparing the media runtime
+
+An `active` or `pilot` course also requires `media.setup`. It names five pinned artifacts:
+`mediaTool` (FFmpeg), `asr.runtime` and `asr.model` (whisper.cpp), and `formatter.runtime` and
+`formatter.model` (llama.cpp plus the selected local formatter model). Each artifact records a
+`name`, destination `filename`, local file or HTTPS `source`, `revision`, SHA-256 `sha256`, and
+`license`; runtime artifacts may also set `verifyArgs`, defaulting to `--version`.
+
+The Owner runs `npm run media:setup` after filling those entries. It checks that RAID0 is mounted,
+the Media store is a real directory, the reserve is available, and existing runtime paths are not
+symlinks before creating `Media/.runtime/{bin,models,cache,tmp,work,metadata}`. It copies or
+downloads the pinned artifacts, verifies their checksums and runtime commands, and writes only
+`Media/.runtime/metadata/runtime.json`. The manifest records identity, revision, checksum,
+licence, path and size; model weights, caches and working files remain outside this repository.
+
+The selected runtime and model licences are documented in
+`docs/research/media-runtime.md`. Setup is intentionally not run by CI or by an ordinary sync.
 
 ## Scheduling the watchdog
 

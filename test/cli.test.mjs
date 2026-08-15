@@ -23,7 +23,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all>\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup\n$/,
   );
 });
 
@@ -44,4 +44,12 @@ test("reports a failure as one line and no stack trace", async () => {
   assert.doesNotMatch(stderr, STACK_FRAME);
   assert.equal(stderr.trimEnd().split("\n").length, 1);
   assert.match(stderr, /^(Unknown course: ZZ9999|No config\/courses\.json\.)/);
+});
+
+test("keeps media setup explicit and owner-started", async () => {
+  const { code, stdout, stderr } = await runCli("media-setup");
+  assert.equal(code, 1);
+  assert.equal(stdout, "");
+  assert.doesNotMatch(stderr, STACK_FRAME);
+  assert.match(stderr, /^(Media setup is not configured|No config\/courses\.json\.)/);
 });
