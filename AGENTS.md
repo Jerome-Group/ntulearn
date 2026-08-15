@@ -122,6 +122,10 @@ of it is possession of the student's NTULearn session. Leave it where it is, unt
 `chmod 700`; a session belongs in that directory and nowhere else, least of all in a configuration
 file or a log line. What it costs to hold a session this way is `docs/adr/0004`.
 
+Any filesystem path derived from a `file:` URL must use `fileURLToPath`; `URL.pathname` is
+percent-encoded and must not be passed to Playwright or filesystem APIs. The session launcher rejects
+such a path before it can create a second profile.
+
 **`config/courses.json` is untracked too**, because it holds real course identifiers and a real
 Drive path. `config/courses.example.json` is the tracked shape; change one and change the other,
 along with the table in `README.md`.
