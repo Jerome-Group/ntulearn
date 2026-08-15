@@ -5,6 +5,7 @@ const CONFIG_PATH = "config/courses.json";
 const EXAMPLE_PATH = "config/courses.example.json";
 const DEFAULT_PROFILE_PATH = ".data/chrome-profile";
 const DEFAULT_STATE_PATH = ".data/state.json";
+export const INITIAL_WATCHDOG_TIMEOUT_MS = 15 * 60 * 1000;
 const REQUIRED_FIELDS = ["key", "courseId", "destination"];
 const ALL = "all";
 const OWN_FOLDER = "Give each NTULearn site its own folder.";
@@ -24,10 +25,15 @@ export async function loadConfig(root) {
     throw new Error(`${CONFIG_PATH} is not valid JSON: ${error.message}`, { cause: error });
   }
 
+  const driveMountPath = readDriveMountPath(parsed.driveMountPath, root);
+  const courses = readCourses(parsed.courses ?? [], root);
+
   return {
     profilePath: resolve(root, parsed.profilePath ?? DEFAULT_PROFILE_PATH),
     statePath: resolve(root, parsed.statePath ?? DEFAULT_STATE_PATH),
-    courses: readCourses(parsed.courses ?? [], root),
+    driveMountPath,
+    watchdogTimeoutMs: readWatchdogTimeout(parsed.watchdogTimeoutMs),
+    courses,
   };
 }
 
@@ -60,6 +66,26 @@ function readCourses(courses, root) {
 
     return { ...course, destination };
   });
+}
+
+function readDriveMountPath(path, root) {
+  if (path == null) return null;
+  if (typeof path !== "string" || !path) {
+    throw new Error(
+      `driveMountPath in ${CONFIG_PATH} must be a non-empty path. Set it to the mounted Google Drive path.`,
+    );
+  }
+  return resolve(root, path);
+}
+
+function readWatchdogTimeout(timeout) {
+  const value = timeout ?? INITIAL_WATCHDOG_TIMEOUT_MS;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `watchdogTimeoutMs in ${CONFIG_PATH} must be a positive integer. Set it in milliseconds.`,
+    );
+  }
+  return value;
 }
 
 // Two courses writing into one tree interleave their numbered folders, and a sync never deletes

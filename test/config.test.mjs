@@ -17,7 +17,22 @@ test("defaults the profile and state paths, and resolves them against the root",
   const config = await loadConfig(root);
   assert.equal(config.profilePath, resolve(root, ".data/chrome-profile"));
   assert.equal(config.statePath, resolve(root, ".data/state.json"));
+  assert.equal(config.driveMountPath, null);
+  assert.equal(config.watchdogTimeoutMs, 900_000);
   assert.deepEqual(config.courses, []);
+});
+
+test("resolves the Drive mount and keeps an explicit watchdog timeout", async () => {
+  const root = await repositoryWith(
+    JSON.stringify({
+      driveMountPath: "Google Drive",
+      watchdogTimeoutMs: 12_345,
+      courses: [],
+    }),
+  );
+  const config = await loadConfig(root);
+  assert.equal(config.driveMountPath, resolve(root, "Google Drive"));
+  assert.equal(config.watchdogTimeoutMs, 12_345);
 });
 
 test("keeps an absolute destination and resolves a relative one", async () => {

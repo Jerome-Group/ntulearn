@@ -18,6 +18,7 @@ thing, and its absence is a missing feature rather than an unfinished one.
 ```bash
 npm run login                 # refresh the NTU SSO/MFA session
 npm run discover              # list the NTULearn courses you can see
+npm run watchdog              # run sync and verify under the daily-run watchdog
 npm run sync -- MH2100        # sync one configured course
 npm run sync -- all           # sync every configured course
 npm run verify -- all         # check what is on disk against NTULearn, writing nothing
@@ -37,6 +38,8 @@ cp config/courses.example.json config/courses.json
 {
   "profilePath": ".data/chrome-profile",
   "statePath": ".data/state.json",
+  "driveMountPath": "/absolute/path/to/Google Drive",
+  "watchdogTimeoutMs": 900000,
   "courses": [
     {
       "key": "AB1234",
@@ -54,6 +57,8 @@ cp config/courses.example.json config/courses.json
 | `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. No two courses may share one, or nest one inside another. |
 | `profilePath` | no | The saved browser session. Defaults to `.data/chrome-profile`. |
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
+| `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. The watchdog writes no destination when this directory is absent. |
+| `watchdogTimeoutMs` | no | The watchdog's initial timeout in milliseconds. The Owner pins the placeholder `900000` from the first week's logged durations. |
 
 Point each destination at a dedicated `NTULearn` subfolder, so your own files in that course's
 folder are never touched.

@@ -1,6 +1,8 @@
 {
   "profilePath": ".data/chrome-profile",
   "statePath": ".data/state.json",
+  "driveMountPath": "/absolute/path/to/Google Drive",
+  "watchdogTimeoutMs": 900000,
   "courses": [
     {
       "key": "AB1234",
