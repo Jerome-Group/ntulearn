@@ -61,6 +61,11 @@ counts — that set comes from the authority alone (`docs/adr/0011`).
 _Avoid_: result, gap, discrepancy — the last two say a defect has been established, which is the
 judging a finding has not yet had
 
+**Media mode**:
+The configured recording-workflow scope of a *course*: `active` is production, `pilot` is rehearsal
+and backfill, and `off` excludes it.
+_Avoid_: semester, current course — neither is the explicit choice that controls the workflow
+
 **Snapshot**:
 Everything read from NTULearn for one course in a single run, before any of it is written.
 _Avoid_: dump, payload, response
@@ -181,14 +186,55 @@ A discussion thread on a course. A sync counts the new ones and copies none of t
 conversation is something this repository reports on rather than something it keeps.
 _Avoid_: discussion, forum, thread
 
+**Recording**:
+One appearance of instructional audio or video in a *course*, whether it appears in the content
+tree or its *Media Gallery*; the same provider media appearing twice is two recordings because each
+appearance keeps its own place. A recording may itself be an *attachment*; where it is only
+playable through a provider, it has no attachment to move or copy.
+_Avoid_: video, lecture video, media — the first excludes audio-only material, the second excludes
+other instructional recordings, and the last also names images and documents
+
+**Media Gallery**:
+The catalogue of recordings a course exposes through its media-player tool rather than its content
+tree. It is still bounded by what the signed-in *student* can see in that course.
+_Avoid_: gallery, library — neither says whose catalogue it is or how it belongs to the course
+
+**Transcript**:
+Text corresponding to the speech in a *recording*. A *provider transcript* and a *generated
+transcript* are sources; a *formatted transcript* is a derived reading of one of them.
+_Avoid_: captions, subtitles — both may be a source for a transcript but neither names every form
+the text can take
+
+**Provider transcript**:
+A transcript supplied with a *recording* by its media provider or NTULearn.
+_Avoid_: original transcript, official transcript — the provider may itself have generated it
+
+**Generated transcript**:
+A transcript produced locally from a *recording* when no provider transcript is available.
+_Avoid_: AI transcript, Whisper transcript — neither the technique nor one model defines the term
+
+**Formatted transcript**:
+A readable derivative of a *provider transcript* or *generated transcript* whose spelling,
+grammar and non-semantic noise may be corrected without changing meaning. It carries no
+timestamps; those remain in the transcript it derives from.
+_Avoid_: cleaned transcript, corrected transcript — both can imply that the source is replaced
+
 ### What is kept
 
 **Destination**:
-The folder a course is synced into. It belongs to the person running the sync, and nothing
-outside it is ever written. One course, one destination, and no two courses share one or nest
-one inside another — a course with a lecture site and a tutorial site is two courses here, and
-two trees written into one folder is a tangle a sync cannot undo (`docs/adr/0003`).
+The folder a course is synced into; a sync writes only inside it, while the separate media workflow
+may also write recording artefacts to the *Media store*. One course, one destination, and no two
+courses share one or nest one inside another — a course with a lecture site and a tutorial site is
+two courses here, and two trees written into one folder is a tangle a sync cannot undo
+(`docs/adr/0003`).
 _Avoid_: output directory, target, vault
+
+**Media store**:
+The folder outside this repository, on RAID0, that holds *Media Gallery* recordings and every
+recording's raw transcription and working artefacts. A recording from the content tree keeps its
+media in the *destination* instead, whether it arrived as an *attachment* or through a player.
+_Avoid_: media cache, media destination — it is durable rather than disposable, and a destination
+belongs to exactly one course
 
 **Session**:
 Proof that the student is signed in, reusable across runs. It is this repository's one secret.
