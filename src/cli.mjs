@@ -102,12 +102,21 @@ function watchdogRunner() {
   return {
     spawn,
     node: process.execPath,
+    killProcessGroup,
     lock: (path) => ({
       command: lock.command,
       argumentsFor: [...lock.argumentsFor(path), process.execPath, CLI, "watchdog-locked"],
     }),
     argumentsFor: (command) => [CLI, command, "all"],
   };
+}
+
+function killProcessGroup(pid) {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
 }
 
 // Its own command, run deliberately, because a rename is the one thing a sync will not do — and an

@@ -1,6 +1,12 @@
-// The attempt count is carried in the evidence contract now; timeout/retry verdicts that interpret
-// it belong to issue #85.
-export function watchdogVerdict({ sync, verify, preChecks = {}, attempts: _attempts = 1 }) {
+const STDERR_TAIL_LENGTH = 2_000;
+
+export function watchdogVerdict({
+  sync,
+  verify,
+  preChecks = {},
+  attempts = 1,
+  attemptResults = [],
+}) {
   sync ??= {};
   verify ??= {};
   preChecks ??= {};
@@ -9,8 +15,25 @@ export function watchdogVerdict({ sync, verify, preChecks = {}, attempts: _attem
     return { verdict: "yellow", message: "skipped: a run was already going" };
   }
 
+  if (preChecks.driveMount?.present === false) {
+    return {
+      verdict: "red",
+      message:
+        "Drive not mounted — no run attempted; mount Google Drive, then run: npm run watchdog",
+    };
+  }
+
   if ([sync, verify].some(sessionLapsed)) {
     return { verdict: "red", message: "session lapsed — run `npm run login`" };
+  }
+
+  const crashed = [sync, verify].find(isCrashOrTimeout);
+  if (crashed) {
+    const attemptsEvidence = attemptResults.flatMap((attempt) => [attempt.sync, attempt.verify]);
+    return {
+      verdict: "red",
+      message: `crash/timeout after ${attempts} attempt${attempts === 1 ? "" : "s"}; stderr tail: ${stderrTail(sync, verify, ...attemptsEvidence)}; inspect the run log for the captured attempts`,
+    };
   }
 
   const failures = (sync.report?.courses ?? []).flatMap((course) => course.failures ?? []);
@@ -36,7 +59,7 @@ export function watchdogVerdict({ sync, verify, preChecks = {}, attempts: _attem
   return { verdict: "green", message: `synced, ${newFiles} new files` };
 }
 
-function sessionLapsed(command) {
+export function sessionLapsed(command) {
   const failures = (command?.report?.courses ?? []).flatMap((course) => course.failures ?? []);
   const evidence = [
     command?.stderr,
@@ -49,6 +72,19 @@ function sessionLapsed(command) {
   return /the saved session is no longer signed in|not signed in while downloading|http 401/i.test(
     evidence,
   );
+}
+
+export function isCrashOrTimeout(command) {
+  return Boolean(command && (command.timedOut || command.crashed || command.report == null));
+}
+
+function stderrTail(...commands) {
+  const stderr = commands
+    .map((command) => command?.stderr)
+    .filter(Boolean)
+    .at(-1)
+    ?.trim();
+  return stderr ? stderr.slice(-STDERR_TAIL_LENGTH) : "(none)";
 }
 
 function syncFailureMessage(failures) {

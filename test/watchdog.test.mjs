@@ -202,3 +202,41 @@ test("keeps refused courses and verify drift out of a green digest", () => {
   assert.deepEqual(result, { verdict: "green", message: "synced, 0 new files" });
   assert.doesNotMatch(result.message, /CLOSED|renumbered|not covered/i);
 });
+
+test("refuses a run when the Drive mount is absent", () => {
+  assert.deepEqual(
+    watchdogVerdict({
+      sync: null,
+      verify: null,
+      preChecks: { driveMount: { path: "/Volumes/Google Drive", present: false } },
+      attempts: 0,
+    }),
+    {
+      verdict: "red",
+      message:
+        "Drive not mounted — no run attempted; mount Google Drive, then run: npm run watchdog",
+    },
+  );
+});
+
+test("reports an exhausted crash or timeout with its attempts and stderr tail", () => {
+  assert.deepEqual(
+    watchdogVerdict({
+      sync: {
+        exitCode: 1,
+        timedOut: true,
+        stderr: "",
+        report: null,
+      },
+      verify: null,
+      preChecks: { driveMount: { path: "/Volumes/Google Drive", present: true } },
+      attempts: 3,
+      attemptResults: [{ sync: { stderr: "Chrome stopped responding" }, verify: null }],
+    }),
+    {
+      verdict: "red",
+      message:
+        "crash/timeout after 3 attempts; stderr tail: Chrome stopped responding; inspect the run log for the captured attempts",
+    },
+  );
+});
