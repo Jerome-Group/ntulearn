@@ -6,7 +6,7 @@ Start here: `README.md`, then `AGENTS.md`.
 
 | Area | What lives there | Entry point |
 |------|------------------|-------------|
-| Commands | The CLI — `login`, `discover`, `sync`, `verify`, `renumber` — the `npm run` scripts that reach it, what one course refusing does to the rest of a run, and how a line gets out before the process exits | `src/cli.mjs`, `src/courses.mjs`, `src/output.mjs`, `package.json` |
+| Commands | The CLI — `login`, `discover`, `watchdog`, `sync`, `verify`, `renumber` — the `npm run` scripts that reach it, what one course refusing does to the rest of a run, and how a line gets out before the process exits | `src/cli.mjs`, `src/watchdog/`, `src/courses.mjs`, `src/output.mjs`, `package.json` |
 | Configuration | Reading `config/courses.json` — which courses sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Sync | Everything that has a destination in hand: the course walk that writes to it, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |

@@ -23,7 +23,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run \(sync\|verify\|renumber\) -- <course\|all>\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all>\n$/,
   );
 });
 

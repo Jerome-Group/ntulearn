@@ -15,6 +15,7 @@
   "scripts": {
     "login": "node src/cli.mjs login",
     "discover": "node src/cli.mjs discover",
+    "watchdog": "node src/cli.mjs watchdog",
     "sync": "node src/cli.mjs sync",
     "verify": "node src/cli.mjs verify",
     "renumber": "node src/cli.mjs renumber",

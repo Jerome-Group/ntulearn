@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { dirname, resolve } from "node:path";
 import { stderr, stdin, stdout } from "node:process";
@@ -11,12 +12,22 @@ import { syncCourse } from "./sync/course.mjs";
 import { renumberCourse, renumberReport } from "./sync/renumber.mjs";
 import { readState, writeState } from "./sync/state.mjs";
 import { verifyCourse, verifyReport } from "./sync/verify.mjs";
+import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run (sync|verify|renumber) -- <course|all>";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all>";
 
-const commands = { login, discover, sync, verify, renumber };
+const commands = {
+  login,
+  discover,
+  sync,
+  verify,
+  renumber,
+  watchdog,
+  "watchdog-locked": watchdogLocked,
+};
 
 async function login(config) {
   const window = await openLoginWindow(config.profilePath);
@@ -63,6 +74,40 @@ async function verify(config, key) {
 
   await writeLine(stderr, `Files are absent. Run: npm run sync -- ${key || "all"}`);
   return 1;
+}
+
+async function watchdog(config) {
+  const result = await runWatchdog({ config, root: ROOT, runner: watchdogRunner() });
+  await writeLine(stdout, asJson(result.digest));
+  return result.exitCode;
+}
+
+async function watchdogLocked(config) {
+  const digest = await runWatchdogLocked({ config, root: ROOT, runner: watchdogRunner() });
+  return digest.verdict === "red" ? 1 : 0;
+}
+
+function watchdogRunner() {
+  const lock =
+    process.platform === "darwin"
+      ? {
+          command: "lockf",
+          argumentsFor: (path) => ["-s", "-t", "0", "-k", path],
+        }
+      : {
+          command: "flock",
+          argumentsFor: (path) => ["-n", "-E", "75", path],
+        };
+
+  return {
+    spawn,
+    node: process.execPath,
+    lock: (path) => ({
+      command: lock.command,
+      argumentsFor: [...lock.argumentsFor(path), process.execPath, CLI, "watchdog-locked"],
+    }),
+    argumentsFor: (command) => [CLI, command, "all"],
+  };
 }
 
 // Its own command, run deliberately, because a rename is the one thing a sync will not do — and an
