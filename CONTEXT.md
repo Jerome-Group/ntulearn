@@ -208,6 +208,17 @@ course moved. It is what makes an unwatched run's freshness readable from the fo
 _Avoid_: document — a *document* is about the course, which is the whole distinction; also
 timestamp, log — it records one moment, not what happened
 
+**Watchdog**:
+The layer that launches, bounds and reads a run, then keeps its evidence and writes the daily
+*digest*. It does not change what `sync` or `verify` means, and it does not read NTULearn itself.
+_Avoid_: observer, wrapper, monitor
+
+**Digest**:
+The once-daily verdict a *watchdog* writes for a run — normally green or red, with yellow when a
+concurrent run was skipped. It is the small record a future delivery channel reads, not a second
+report to interpret.
+_Avoid_: alert — a digest is written every day, not only when something is wrong
+
 ### Organisation-wide
 
 Two terms mean the same thing in every repository:

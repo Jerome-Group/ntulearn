@@ -60,6 +60,44 @@ cp config/courses.example.json config/courses.json
 | `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. The watchdog writes no destination when this directory is absent. |
 | `watchdogTimeoutMs` | no | The watchdog's initial timeout in milliseconds. The Owner pins the placeholder `900000` from the first week's logged durations. |
 
+## Scheduling the watchdog
+
+The checked-in example is `config/com.jerome-group.ntulearn.watchdog.example.plist`. Copy it to
+`~/Library/LaunchAgents/com.jerome-group.ntulearn.watchdog.plist`, replace every placeholder with
+the real Node executable and repository paths, then load it for the logged-in user:
+
+```bash
+cp config/com.jerome-group.ntulearn.watchdog.example.plist \
+  ~/Library/LaunchAgents/com.jerome-group.ntulearn.watchdog.plist
+# edit the copied plist
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.jerome-group.ntulearn.watchdog.plist
+```
+
+It fires at about 05:00 through `StartCalendarInterval`. If the Mac is asleep then, launchd catches
+up when it wakes; that catch-up-on-wake behaviour is why this schedule uses launchd rather than
+cron. Installing or rehearsing the real LaunchAgent is the Owner's task because it changes this
+machine and spends the saved NTULearn session.
+
+The watchdog writes durable evidence in the state directory, the parent directory of the
+configured `statePath`:
+
+- `logs/<timestamp>-<uuid>.json` contains the captured run and attempt evidence.
+- `latest.json` is the stable input for a future delivery channel. It contains `verdict`
+  (`green`, `yellow`, or `red`), `message`, `timestamp` (the UTC finish time), and `runLog` (a
+  path relative to the state directory):
+
+```json
+{
+  "verdict": "green",
+  "message": "synced, 0 new files",
+  "timestamp": "2026-08-15T05:00:01.234Z",
+  "runLog": "logs/2026-08-15T05-00-01-234Z-00000000-0000-0000-0000-000000000000.json"
+}
+```
+
+Delivery reads this digest; it does not rerun the watchdog or re-derive the verdict from a log.
+
 Point each destination at a dedicated `NTULearn` subfolder, so your own files in that course's
 folder are never touched.
 
