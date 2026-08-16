@@ -163,3 +163,46 @@ test("keeps successful transcript artifacts write-once and reads them at the sto
   assert.equal(read.path, first.path);
   assert.equal(read.content.toString(), '{"sourceKind":"generated"}\n');
 });
+
+test("keeps Media Gallery media in the Media store and visible derivatives in the course", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-gallery-storage-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  const destination = join(root, "course");
+  await mkdir(mediaRoot, { recursive: true });
+  const storage = createMediaStorage({ mediaRoot, volumeRoot });
+  const appearance = {
+    recordingId: "media-gallery:_9_1:gallery-1",
+    storageSurface: "media-gallery",
+    placement: {
+      destination,
+      videoPath: "Media Gallery/2026-08-10 09-00-00 Lecture.mp4",
+      audioPath: "Media Gallery/2026-08-10 09-00-00 Lecture.m4a",
+      formattedTranscriptPath: "Media Gallery/2026-08-10 09-00-00 Lecture.transcript.md",
+      statusPath: "Media Gallery/2026-08-10 09-00-00 Lecture.media-status.md",
+    },
+  };
+
+  const media = await storage.write({
+    appearance,
+    kind: "media",
+    mediaKind: "video",
+    filename: "lecture.mp4",
+    content: Buffer.from("video"),
+  });
+  const formatted = await storage.write({
+    appearance,
+    kind: "formatted-transcript",
+    content: "# Lecture\n",
+  });
+  const status = await storage.write({
+    appearance,
+    kind: "status",
+    content: "# Status\n",
+  });
+
+  assert.match(media.path, /RAID0[\\/]Media[\\/]recordings[\\/].+[\\/]media[\\/]lecture\.mp4$/);
+  assert.equal(formatted.path, join(destination, appearance.placement.formattedTranscriptPath));
+  assert.equal(status.path, join(destination, appearance.placement.statusPath));
+  assert.equal(await readFile(media.path, "utf8"), "video");
+});

@@ -48,9 +48,9 @@ export function kalturaReferenceOf(value) {
 }
 
 export function isKalturaUrl(value) {
-  if (typeof value !== "string" || !value.trim()) return false;
+  if (!(value instanceof URL) && (typeof value !== "string" || !value.trim())) return false;
   try {
-    const parsed = new URL(absoluteUrl(value));
+    const parsed = value instanceof URL ? value : new URL(absoluteUrl(value));
     return (
       KALTURA_HOST.test(parsed.hostname) ||
       KAF_HOST.test(parsed.hostname) ||

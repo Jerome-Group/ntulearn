@@ -1,24 +1,13 @@
 import { createHash } from "node:crypto";
-import { link, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { link, readFile, rename, stat, unlink } from "node:fs/promises";
+import { writeAtomically } from "../atomic.mjs";
+
+export { writeAtomically };
 
 export async function writeIfChanged(path, content) {
   if ((await readText(path)) === content) return false;
   await writeAtomically(path, content);
   return true;
-}
-
-// A partial file is never left at `path`: the write lands beside it and is renamed over it.
-export async function writeAtomically(path, content) {
-  await mkdir(dirname(path), { recursive: true });
-  const partial = `${path}.part-${process.pid}`;
-  try {
-    await writeFile(partial, content);
-    await rename(partial, path);
-  } catch (error) {
-    await unlink(partial).catch(() => {});
-    throw error;
-  }
 }
 
 export async function isFilePresent(path, expectedBytes) {

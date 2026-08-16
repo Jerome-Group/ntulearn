@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
 import { walkCourses } from "./courses.mjs";
 import { discoverContentRecordings } from "./media/discovery.mjs";
+import { discoverCourseMediaGallery } from "./media/workflow.mjs";
+import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
 import { openClient } from "./ntulearn/client.mjs";
@@ -19,7 +21,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm";
 
 const commands = {
   login,
@@ -29,6 +31,8 @@ const commands = {
   renumber,
   watchdog,
   "media-setup": mediaSetup,
+  "media-discover": mediaDiscover,
+  "media-withdraw": mediaWithdraw,
   "watchdog-locked": watchdogLocked,
 };
 
@@ -97,6 +101,47 @@ async function mediaSetup(config) {
     asJson({ manifestPath: result.manifestPath, artifacts: result.artifacts }),
   );
   return 0;
+}
+
+async function mediaDiscover(config, key) {
+  const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
+    const discovery = await discoverCourseMediaGallery({ client, course });
+    if (!discovery.skipped) {
+      const saved = await writeMediaQueue({
+        statePath: config.statePath,
+        course,
+        discovery,
+      });
+      discovery.queuePath = saved.path;
+    }
+    return discovery;
+  });
+  await writeLine(stdout, asJson({ courses, ...(refused.length ? { refused } : {}) }));
+  return courses.some((course) => course.complete === false) ? 1 : 0;
+}
+
+async function mediaWithdraw(config, key, recordingId, confirmation) {
+  if (!key || key.toLowerCase() === "all" || !recordingId || confirmation !== "confirm") {
+    throw new Error("Usage: npm run media:withdraw -- <course> <recordingId> confirm");
+  }
+  const course = selectCourses(config.courses, key)[0];
+  const loaded = await readMediaQueue({ statePath: config.statePath, courseKey: course.key });
+  if (!loaded.record || !Array.isArray(loaded.record.queue)) {
+    throw new Error(
+      `No durable Media Gallery queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
+    );
+  }
+  const saved = await writeMediaQueue({
+    statePath: config.statePath,
+    course,
+    discovery: loaded.record,
+    withdrawal: { recordingId, confirmed: true },
+  });
+  await writeLine(
+    stdout,
+    asJson({ courseKey: course.key, recordingId, status: saved.status, queuePath: saved.path }),
+  );
+  return saved.status === "not-found" ? 1 : 0;
 }
 
 async function watchdogLocked(config) {
@@ -169,13 +214,13 @@ async function eachCourse(config, key, walk) {
   }
 }
 
-async function main([name, argument]) {
+async function main([name, ...argumentsForCommand]) {
   const command = commands[name];
   if (!command) {
     await writeLine(stderr, USAGE);
     return 1;
   }
-  return command(await loadConfig(ROOT), argument);
+  return command(await loadConfig(ROOT), ...argumentsForCommand);
 }
 
 function asJson(value) {

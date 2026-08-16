@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { writeAtomically } from "../atomic.mjs";
 import { assertMediaRoot } from "./paths.mjs";
 
 // eslint-disable-next-line no-control-regex -- control characters cannot be filenames
@@ -62,6 +63,15 @@ function targetFor({ root, appearance, kind, mediaKind, filename }) {
   if (kind === "metadata") return { path: join(recordingRoot, "transcript.metadata.json") };
   if (kind === "state") return { path: join(recordingRoot, "transcript.state.json") };
   if (kind === "media") {
+    if (appearance.storageSurface === "media-gallery") {
+      return {
+        path: join(
+          recordingRoot,
+          "media",
+          safeFilename(mediaFilename(appearance, mediaKind, filename), "recording"),
+        ),
+      };
+    }
     const relativePath =
       mediaKind === "audio"
         ? (appearance.placement.audioPath ?? appearance.placement.videoPath)
@@ -73,6 +83,13 @@ function targetFor({ root, appearance, kind, mediaKind, filename }) {
   }
   if (kind === "status") return { path: visiblePath(appearance, appearance.placement.statusPath) };
   throw new Error(`Unknown media artifact: ${kind}`);
+}
+
+function mediaFilename(appearance, mediaKind, filename) {
+  if (filename) return filename;
+  return mediaKind === "audio"
+    ? basename(appearance.placement.audioPath ?? "recording.m4a")
+    : basename(appearance.placement.videoPath ?? "recording.mp4");
 }
 
 function visiblePath(appearance, relativePath) {
@@ -134,18 +151,4 @@ function assertReplacementProof({ kind, target, replaceProof }) {
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-// Media writes are atomic without depending on the sync layer. A partial file must never become a
-// visible course artifact if the process is interrupted between download and rename.
-async function writeAtomically(path, content) {
-  await mkdir(dirname(path), { recursive: true });
-  const partial = `${path}.part-${process.pid}`;
-  try {
-    await writeFile(partial, content);
-    await rename(partial, path);
-  } catch (error) {
-    await unlink(partial).catch(() => {});
-    throw error;
-  }
 }

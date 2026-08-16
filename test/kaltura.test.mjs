@@ -15,6 +15,10 @@ test("keeps one safe Kaltura reference per entry and chooses 720p", () => {
   assert.equal(kalturaReferenceOf({ entryId: "object-entry?ks=secret" }), "entry:object-entry");
   assert.equal(kalturaReferenceOf("/kaltura/entry_id/relative-entry"), "entry:relative-entry");
   assert.equal(kalturaReferenceOf({ entryId: "object-entry" }), "entry:object-entry");
+  assert.equal(
+    kalturaReferenceOf("https://media.example.test/kaltura/player/lecture"),
+    "path:media.example.test/kaltura/player/lecture",
+  );
   assert.equal(kalturaReferenceOf("https://media.example.test/player/video"), null);
 
   const selected = chooseRepresentation([

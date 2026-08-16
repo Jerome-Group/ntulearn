@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
+import { publicMediaError } from "./errors.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 
@@ -42,14 +43,14 @@ export async function runMediaJob({
     try {
       resolved = await provider.resolve(appearance);
     } catch (error) {
-      limitations.push(`Provider resolution failed: ${publicError(error)}`);
+      limitations.push(`Provider resolution failed: ${publicMediaError(error)}`);
     }
 
     if (resolved) {
       try {
         nativeTranscript = await provider.transcript(resolved);
       } catch (error) {
-        limitations.push(`Provider transcript retrieval failed: ${publicError(error)}`);
+        limitations.push(`Provider transcript retrieval failed: ${publicMediaError(error)}`);
       }
 
       if (nativeTranscript !== null && nativeTranscript !== undefined) {
@@ -59,7 +60,7 @@ export async function runMediaJob({
           assertSafeProviderTranscript(body);
           providerBody = body;
         } catch (error) {
-          limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+          limitations.push(`Provider transcript rejected: ${publicMediaError(error)}.`);
         }
 
         if (providerBody !== undefined) {
@@ -79,7 +80,7 @@ export async function runMediaJob({
             if (checked.valid) source = checked.transcript;
             else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
           } catch (error) {
-            limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+            limitations.push(`Provider transcript rejected: ${publicMediaError(error)}.`);
           }
         }
       } else {
@@ -112,7 +113,7 @@ export async function runMediaJob({
             limitations.push(acquired?.limitation ?? "Provider returned no usable media.");
           }
         } catch (error) {
-          limitations.push(`Media acquisition failed: ${publicError(error)}`);
+          limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
         }
       }
     }
@@ -215,7 +216,7 @@ export async function runMediaJob({
           existingMetadata: existing?.metadata,
         });
       } catch (error) {
-        limitations.push(`Formatted transcript rejected: ${publicError(error)}`);
+        limitations.push(`Formatted transcript rejected: ${publicMediaError(error)}`);
       }
     }
   } else if (!limitations.some((limitation) => /local transcription/i.test(limitation))) {
@@ -295,14 +296,14 @@ async function generateLocalTranscript({
     if (checked.valid) source = checked.transcript;
     else limitations.push(`Local transcription rejected: ${checked.reason}.`);
   } catch (error) {
-    limitations.push(`Local transcription failed: ${publicError(error)}`);
+    limitations.push(`Local transcription failed: ${publicMediaError(error)}`);
   } finally {
     if (typeof transcriber.release === "function") {
       try {
         await transcriber.release();
       } catch (error) {
         released = false;
-        limitations.push(`Local transcription cleanup failed: ${publicError(error)}`);
+        limitations.push(`Local transcription cleanup failed: ${publicMediaError(error)}`);
       }
     }
   }
@@ -315,12 +316,6 @@ function usableTranscriptionMedia(media) {
     (media.body !== undefined || media.path) &&
     (media.kind === "audio" || (media.kind === "video" && media.audio !== false)),
   );
-}
-
-function publicError(error) {
-  return String(error?.message ?? error ?? "unknown error")
-    .replace(/https?:\/\/[^\s)]+/gi, "[provider address omitted]")
-    .replace(/\b(ks|token|session|signature)=[^\s&]+/gi, "$1=[redacted]");
 }
 
 function failureStage(limitations) {
