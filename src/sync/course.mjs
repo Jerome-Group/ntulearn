@@ -15,7 +15,7 @@ import { courseState, newIds } from "./state.mjs";
 const SYNC_STAMP = "Last synced.md";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
-export async function syncCourse({ client, course, state }) {
+export async function syncCourse({ client, course, state, recordingDiscovery = () => [] }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
   const unread = Object.entries(snapshot.unavailable ?? {})
@@ -39,9 +39,21 @@ export async function syncCourse({ client, course, state }) {
   // expects rather than by that name alone — the sibling `numberingOf` needs and the reason
   // `verify` walks the same way (ADR-0005).
   const walked = [];
-  for await (const expected of expectedFiles({ client, courseId: course.courseId, snapshot })) {
+  const attachmentsByItem = new Map();
+  for await (const expected of expectedFiles({
+    client,
+    courseId: course.courseId,
+    snapshot,
+    onAttachments: (item, attachments) => attachmentsByItem.set(item.id, attachments),
+  })) {
     walked.push(expected);
   }
+  // Media discovery belongs to the walk, but acquisition belongs to the separate media job. The
+  // sync therefore returns safe appearance records and writes none of their media artifacts.
+  const recordings =
+    course.mediaMode && course.mediaMode !== "off"
+      ? recordingDiscovery({ course, snapshot, attachmentsByItem })
+      : [];
   const numbering = numberingOf(
     course.destination,
     walked.map((expected) => expected.placement.segments),
@@ -119,6 +131,7 @@ export async function syncCourse({ client, course, state }) {
     // Said only when there is something to say, because a category nobody could read is the one
     // thing in this result a count cannot show: it looks exactly like a category with nothing in it.
     ...(unread.length ? { unread } : {}),
+    recordings,
     ...tally,
   };
 }

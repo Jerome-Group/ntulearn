@@ -21,7 +21,12 @@ const ANNOUNCEMENTS = { trail: ANNOUNCEMENTS_FOLDER, segments: [ANNOUNCEMENTS_FO
 // — the drift a shared placement alone does not prevent (ADR-0005). Each document is yielded with
 // the text a run would write, because a walk that only named the paths could still disagree with
 // the one that produced the content.
-export async function* expectedFiles({ client, courseId, snapshot }) {
+export async function* expectedFiles({
+  client,
+  courseId,
+  snapshot,
+  onAttachments = async () => {},
+}) {
   yield {
     kind: "document",
     placement: placedFile(DESTINATION_ROOT, COURSE_DOCUMENT),
@@ -32,7 +37,7 @@ export async function* expectedFiles({ client, courseId, snapshot }) {
   for (const item of snapshot.items) {
     const placement = placements.get(item.id);
     if (isFolder(item)) yield* expectedOfFolder(item, placement);
-    else yield* expectedOfItem({ client, courseId, item, placement });
+    else yield* expectedOfItem({ client, courseId, item, placement, onAttachments });
   }
 
   for (const announcement of snapshot.announcements ?? []) {
@@ -56,7 +61,7 @@ function* expectedOfFolder(item, placement) {
   }
 }
 
-async function* expectedOfItem({ client, courseId, item, placement }) {
+async function* expectedOfItem({ client, courseId, item, placement, onAttachments }) {
   const page = contentDocument(item, externalLinkOf(item));
   const document = placedFile(
     placement,
@@ -66,7 +71,9 @@ async function* expectedOfItem({ client, courseId, item, placement }) {
   if (page) yield { kind: "document", placement: document, content: page };
 
   let attached = false;
-  for (const attachment of await client.readAttachments(courseId, item)) {
+  const attachments = await client.readAttachments(courseId, item);
+  await onAttachments(item, attachments);
+  for (const attachment of attachments) {
     attached = true;
     yield {
       kind: "attachment",

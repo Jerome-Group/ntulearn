@@ -10,8 +10,9 @@ MIT licensed and public — `docs/adr/0002`.
 
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
-than a Tuesday. The local media runtime foundation is now explicit and Owner-started; recording
-discovery, acquisition and transcription are still separate work.
+than a Tuesday. The local media runtime foundation and the first Kaltura content-tree recording
+tracer are explicit and Owner-started; Media Gallery, local-ASR fallback, capture, queueing and
+durable media completeness remain separate work.
 
 ## Commands
 
@@ -89,6 +90,16 @@ licence, path and size; model weights, caches and working files remain outside t
 
 The selected runtime and model licences are documented in
 `docs/research/media-runtime.md`. Setup is intentionally not run by CI or by an ordinary sync.
+
+### Content-tree recording tracer
+
+An `active` or `pilot` course may have recording appearances alongside its ordinary sync. Recording
+completeness is a separate concern: the sync remains additive and does not claim that media work is
+complete. Each appearance keeps its own placement and status, while source evidence and working
+artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
+Session material and expiring provider addresses are never persisted. A transcript is complete only
+when both a validated source and formatted Markdown derivative exist; unsupported fallback remains
+visible until its later workflow is available.
 
 ## Scheduling the watchdog
 
