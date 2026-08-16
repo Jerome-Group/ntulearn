@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
+import { discoverContentRecordings } from "../media/discovery.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
@@ -39,9 +40,21 @@ export async function syncCourse({ client, course, state }) {
   // expects rather than by that name alone — the sibling `numberingOf` needs and the reason
   // `verify` walks the same way (ADR-0005).
   const walked = [];
-  for await (const expected of expectedFiles({ client, courseId: course.courseId, snapshot })) {
+  const attachmentsByItem = new Map();
+  for await (const expected of expectedFiles({
+    client,
+    courseId: course.courseId,
+    snapshot,
+    onAttachments: (item, attachments) => attachmentsByItem.set(item.id, attachments),
+  })) {
     walked.push(expected);
   }
+  // Media discovery belongs to the walk, but acquisition belongs to the separate media job. The
+  // sync therefore returns safe appearance records and writes none of their media artifacts.
+  const recordings =
+    course.mediaMode && course.mediaMode !== "off"
+      ? discoverContentRecordings({ course, snapshot, attachmentsByItem })
+      : [];
   const numbering = numberingOf(
     course.destination,
     walked.map((expected) => expected.placement.segments),
@@ -119,6 +132,7 @@ export async function syncCourse({ client, course, state }) {
     // Said only when there is something to say, because a category nobody could read is the one
     // thing in this result a count cannot show: it looks exactly like a category with nothing in it.
     ...(unread.length ? { unread } : {}),
+    recordings,
     ...tally,
   };
 }

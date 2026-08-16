@@ -1,0 +1,188 @@
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
+
+const TIMESTAMP = /^(\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?$/;
+const TIMESTAMP_RANGE =
+  /^(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})\s+-->\s+(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})/;
+const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
+const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^]/g;
+// eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
+const NON_ASCII_RUN = /[^\x00-\x7F]+/g;
+
+export function parseProviderTranscript(value) {
+  const body = value?.body ?? value?.content ?? value;
+  const parsed = parseBody(body);
+  const segments = segmentValues(parsed);
+  if (!segments) throw new Error("provider transcript has no supported segments");
+  return {
+    language: value?.language ?? value?.lang ?? parsed.language ?? parsed.lang ?? "und",
+    segments,
+  };
+}
+
+export function validateTranscript(
+  transcript,
+  { duration, speechDuration, coverageRatio = 0.5 } = {},
+) {
+  let normalized;
+  try {
+    normalized = normalizeTranscript(transcript);
+  } catch (error) {
+    return { valid: false, reason: error.message };
+  }
+
+  if (!normalized.segments.length) return { valid: false, reason: "it contains no segments" };
+  if (!normalized.segments.some(({ text }) => /[\p{L}\p{N}]/u.test(text))) {
+    return { valid: false, reason: "it contains no meaningful speech text" };
+  }
+
+  let previous = null;
+  for (const segment of normalized.segments) {
+    if (
+      !Number.isFinite(segment.start) ||
+      !Number.isFinite(segment.end) ||
+      segment.start < 0 ||
+      segment.end <= segment.start
+    ) {
+      return { valid: false, reason: "it contains invalid segment timestamps" };
+    }
+    if (previous && (segment.start < previous.start || segment.end < previous.end)) {
+      return { valid: false, reason: "its segment timestamps are not ordered" };
+    }
+    previous = segment;
+  }
+
+  const expectedDuration = numberOrNull(speechDuration ?? duration);
+  const lastEnd = normalized.segments.at(-1).end;
+  if (
+    expectedDuration !== null &&
+    expectedDuration > 0 &&
+    lastEnd < expectedDuration * coverageRatio
+  ) {
+    return {
+      valid: false,
+      reason: `it covers ${lastEnd.toFixed(1)}s of ${expectedDuration.toFixed(1)}s`,
+    };
+  }
+
+  return { valid: true, transcript: normalized };
+}
+
+export function normalizeTranscript(transcript) {
+  const language = String(transcript?.language ?? "und").trim() || "und";
+  const segments = (transcript?.segments ?? []).map((segment) => {
+    const start = numberOrNull(segment.start);
+    const end = numberOrNull(segment.end);
+    const text = String(segment.text ?? "").trim();
+    if (start === null || end === null || !text) {
+      throw new Error("it contains a segment without numeric timestamps and text");
+    }
+    return { start, end, text };
+  });
+  return { language, segments };
+}
+
+export function rawTranscriptJson(transcript) {
+  return `${JSON.stringify(normalizeTranscript(transcript), null, 2)}\n`;
+}
+
+export function transcriptDigest(rawJson) {
+  return createHash("sha256").update(rawJson).digest("hex");
+}
+
+export function assertFormattedTranscript(markdown, segments) {
+  if (typeof markdown !== "string" || !markdown.trim()) {
+    throw new Error("formatted transcript is empty");
+  }
+  if (FORMATTED_TIMESTAMP.test(markdown)) {
+    throw new Error("formatted transcript still contains timestamps");
+  }
+
+  const expected = tokenCounts(segments.map(({ text }) => text).join(" "));
+  const actual = tokenCounts(markdown);
+  for (const [token, count] of expected) {
+    if ((actual.get(token) ?? 0) < count) {
+      throw new Error(`formatted transcript loses protected notation: ${token}`);
+    }
+  }
+  for (const run of segments
+    .map(({ text }) => text.match(NON_ASCII_RUN) ?? [])
+    .flat()
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    if (!markdown.includes(run))
+      throw new Error(`formatted transcript loses code-switched text: ${run}`);
+  }
+  return markdown.trimEnd() + "\n";
+}
+
+function parseBody(body) {
+  if (Buffer.isBuffer(body)) return parseBody(body.toString("utf8"));
+  if (body && typeof body === "object") return body;
+  if (typeof body !== "string" || !body.trim()) throw new Error("provider transcript is empty");
+
+  try {
+    return JSON.parse(body);
+  } catch {
+    return parseCaptionText(body);
+  }
+}
+
+function segmentValues(parsed) {
+  const values = parsed.segments ?? parsed.captions ?? parsed.events;
+  if (!Array.isArray(values)) return null;
+  return values.map((segment) => ({
+    start: parseTime(segment.start ?? segment.startTime ?? segment.start_time),
+    end: parseTime(segment.end ?? segment.endTime ?? segment.end_time),
+    text: textOf(segment.text ?? segment.caption ?? segment.content),
+  }));
+}
+
+function parseCaptionText(value) {
+  const segments = [];
+  let current = null;
+  for (const line of value.replace(/^WEBVTT\s*\n?/i, "").split(/\r?\n/)) {
+    const range = line.match(TIMESTAMP_RANGE);
+    if (range) {
+      if (current) segments.push(current);
+      current = { start: parseTime(range[1]), end: parseTime(range[2]), text: "" };
+    } else if (current && line.trim()) {
+      current.text = `${current.text} ${line.trim()}`.trim();
+    } else if (!line.trim() && current) {
+      segments.push(current);
+      current = null;
+    }
+  }
+  if (current) segments.push(current);
+  return { segments };
+}
+
+function parseTime(value) {
+  if (typeof value === "number") return value > 100_000 ? value / 1000 : value;
+  if (typeof value !== "string" || !value.trim()) return NaN;
+  const text = value.trim().replace(",", ".");
+  if (!TIMESTAMP.test(text)) return Number(text);
+  const parts = text.split(":").map(Number);
+  const seconds = parts.pop();
+  const minutes = parts.pop() ?? 0;
+  const hours = parts.pop() ?? 0;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function textOf(value) {
+  if (Array.isArray(value)) return value.map(textOf).join(" ");
+  return String(value ?? "");
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function tokenCounts(value) {
+  const counts = new Map();
+  for (const token of value.matchAll(PROTECTED_TOKEN)) {
+    counts.set(token[0], (counts.get(token[0]) ?? 0) + 1);
+  }
+  return counts;
+}
