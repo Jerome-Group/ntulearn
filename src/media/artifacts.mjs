@@ -8,7 +8,8 @@ import {
 
 export function createMediaArtifacts({ appearance, storage }) {
   return {
-    read: () => readExistingTranscript({ appearance, storage }),
+    read: ({ regenerate = false } = {}) =>
+      readExistingTranscript({ appearance, storage, regenerate }),
 
     async writeSource(source) {
       const content = rawTranscriptJson(source);
@@ -73,7 +74,7 @@ export function createMediaArtifacts({ appearance, storage }) {
   };
 }
 
-async function readExistingTranscript({ appearance, storage }) {
+async function readExistingTranscript({ appearance, storage, regenerate }) {
   if (typeof storage.read !== "function") return null;
 
   const rawTranscript = await storage.read({ appearance, kind: "raw-transcript" });
@@ -99,16 +100,16 @@ async function readExistingTranscript({ appearance, storage }) {
       : {}),
     ...(parsedMetadata ?? {}),
   };
-  const mediaArtifact = state?.artifacts?.media
-    ? { path: state.artifacts.media, status: "existing" }
-    : null;
+  const mediaPath =
+    state?.artifacts?.media ?? metadata.media?.video?.path ?? metadata.media?.audio?.path ?? null;
+  const mediaArtifact = mediaPath ? { path: mediaPath, status: "existing" } : null;
   const existingArtifacts = {
     ...(rawTranscript ? { rawTranscript } : {}),
     ...(mediaArtifact ? { media: mediaArtifact } : {}),
     ...(parsedMetadata ? { metadata: metadataArtifact } : {}),
     ...(stateArtifact ? { state: stateArtifact } : {}),
   };
-  const retainedMedia = retainedMediaFromState(state, metadata.media);
+  const retainedMedia = retainedMediaFromEvidence(state, metadata.media);
 
   if (!rawTranscript) {
     if (!formattedArtifact && !stateArtifact && !metadataArtifact) return null;
@@ -118,6 +119,7 @@ async function readExistingTranscript({ appearance, storage }) {
       metadata,
       replaceRawTranscript: true,
       formattedReplacement: null,
+      formattedRegenerationRequired: Boolean(formattedArtifact),
       retainedMedia,
       artifacts: existingArtifacts,
     };
@@ -160,13 +162,15 @@ async function readExistingTranscript({ appearance, storage }) {
     metadata: parsedMetadata,
     sourceSha256,
   });
-  const { formattedTranscript, formattedReplacement } = validateFormattedArtifact({
-    artifact: formattedArtifact,
-    segments: checked.transcript.segments,
-    owned: sourceOwnership,
-    expectedSha256: parsedMetadata?.formattedSha256 ?? state?.formattedSha256,
-    sourceSha256,
-  });
+  const { formattedTranscript, formattedReplacement, regenerationRequired } =
+    validateFormattedArtifact({
+      artifact: formattedArtifact,
+      segments: checked.transcript.segments,
+      owned: sourceOwnership,
+      expectedSha256: parsedMetadata?.formattedSha256 ?? state?.formattedSha256,
+      sourceSha256,
+      regenerate,
+    });
   const metadataIsCurrent = matchesSource(
     parsedMetadata,
     checked.transcript,
@@ -182,6 +186,7 @@ async function readExistingTranscript({ appearance, storage }) {
     metadata,
     replaceRawTranscript: false,
     formattedReplacement,
+    formattedRegenerationRequired: regenerationRequired,
     retainedMedia,
     artifacts: {
       rawTranscript,
@@ -192,9 +197,28 @@ async function readExistingTranscript({ appearance, storage }) {
   };
 }
 
-function validateFormattedArtifact({ artifact, segments, owned, expectedSha256, sourceSha256 }) {
-  if (!artifact) return { formattedTranscript: null, formattedReplacement: null };
-  if (!owned) return { formattedTranscript: null, formattedReplacement: null };
+function validateFormattedArtifact({
+  artifact,
+  segments,
+  owned,
+  expectedSha256,
+  sourceSha256,
+  regenerate,
+}) {
+  if (!artifact) {
+    return {
+      formattedTranscript: null,
+      formattedReplacement: null,
+      regenerationRequired: false,
+    };
+  }
+  if (!owned) {
+    return {
+      formattedTranscript: null,
+      formattedReplacement: null,
+      regenerationRequired: true,
+    };
+  }
   try {
     const content = assertFormattedTranscript(textContent(artifact.content), segments);
     const sha256 = transcriptDigest(content);
@@ -202,15 +226,19 @@ function validateFormattedArtifact({ artifact, segments, owned, expectedSha256, 
     return {
       formattedTranscript: { ...artifact, sha256 },
       formattedReplacement: null,
+      regenerationRequired: false,
     };
   } catch {
     return {
       formattedTranscript: null,
-      formattedReplacement: {
-        path: artifact.path,
-        sha256: transcriptDigest(textContent(artifact.content)),
-        sourceSha256,
-      },
+      formattedReplacement: regenerate
+        ? {
+            path: artifact.path,
+            sha256: transcriptDigest(textContent(artifact.content)),
+            sourceSha256,
+          }
+        : null,
+      regenerationRequired: true,
     };
   }
 }
@@ -238,8 +266,8 @@ function isWorkflowOwnedFormatted({ artifact, state, metadata, sourceSha256 }) {
   return sourceIsCurrent && derivativeIsOwned;
 }
 
-function retainedMediaFromState(state, media) {
-  const path = state?.artifacts?.media;
+function retainedMediaFromEvidence(state, media) {
+  const path = state?.artifacts?.media ?? media?.video?.path ?? media?.audio?.path;
   if (!path) return null;
   if (media?.video?.available && media.video.path === path && media.video.audio) {
     return { kind: "video", path, audio: true };

@@ -11,7 +11,43 @@ import {
   writeMediaQueue,
 } from "../src/media/queue.mjs";
 
-const COURSE = { key: "MH1101", courseId: "_9_1" };
+const COURSE = {
+  key: "MH1101",
+  courseId: "_9_1",
+  mediaMode: "pilot",
+};
+
+test("writes course and queued recording status documents at discovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-status-"));
+  const course = { ...COURSE, destination: join(root, "course") };
+  const appearance = {
+    recordingId: "media-gallery:_9_1:gallery-1",
+    title: "Week 1",
+    provider: "kaltura",
+    sourceKind: "media-gallery",
+    placement: {
+      destination: course.destination,
+      statusPath: "Media Gallery/Week 1.media-status.md",
+    },
+  };
+  const saved = await writeMediaQueue({
+    statePath: join(root, "state.json"),
+    course,
+    discovery: { complete: true, verdict: "green", queue: [appearance] },
+  });
+
+  assert.equal(saved.statusPath, join(course.destination, "Media Gallery/media-status.md"));
+  assert.match(await readFile(saved.statusPath, "utf8"), /Week 1/);
+  assert.match(
+    await readFile(
+      appearance.placement.statusPath.startsWith("/")
+        ? appearance.placement.statusPath
+        : join(course.destination, appearance.placement.statusPath),
+      "utf8",
+    ),
+    /Stage: queued/,
+  );
+});
 
 test("writes a complete Gallery queue as a reconstructible state artifact", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
@@ -143,6 +179,36 @@ test("keeps a withdrawn tombstone when the next green discovery omits it", async
   assert.deepEqual(persisted.queue, [{ recordingId: "gallery-new" }, withdrawn]);
 });
 
+test("retains an unconfirmed prior appearance when green discovery omits it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-retention-"));
+  const statePath = join(root, "state.json");
+  const prior = {
+    recordingId: "gallery-failed",
+    stage: "failed",
+    complete: false,
+    retryable: true,
+    attempts: 2,
+    limitations: ["source unavailable"],
+  };
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [prior] },
+  });
+
+  const saved = await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [{ recordingId: "gallery-new" }] },
+  });
+
+  assert.deepEqual((await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue, [
+    { recordingId: "gallery-new" },
+    prior,
+  ]);
+  assert.equal(saved.status, "written");
+});
+
 test("requires confirmation and persists a confirmed withdrawal tombstone", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
   const queue = [
@@ -181,6 +247,55 @@ test("requires confirmation and persists a confirmed withdrawal tombstone", asyn
   assert.equal(persisted.queue[0].withdrawn, true);
   assert.deepEqual(persisted.queue[0].artifacts, queue[0].artifacts);
   assert.equal(persisted.queue[1].complete, true);
+});
+
+test("marks a withdrawn appearance without deleting its acquired artifact evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-withdrawal-status-"));
+  const statePath = join(root, "state.json");
+  const course = { ...COURSE, destination: join(root, "course") };
+  const appearance = {
+    recordingId: "media-gallery:_9_1:gallery-1",
+    title: "Withdrawn lecture",
+    provider: "kaltura",
+    sourceKind: "media-gallery",
+    placement: {
+      destination: course.destination,
+      statusPath: "Media Gallery/Withdrawn lecture.media-status.md",
+    },
+  };
+  const discovery = {
+    complete: true,
+    verdict: "green",
+    queue: [
+      {
+        ...appearance,
+        artifacts: { media: "/Volumes/RAID0/Media/recordings/lecture.mp4" },
+      },
+    ],
+  };
+  await writeMediaQueue({ statePath, course, discovery });
+  await writeMediaQueue({
+    statePath,
+    course,
+    discovery,
+    withdrawal: { recordingId: appearance.recordingId, confirmed: true },
+  });
+
+  const recordingStatus = await readFile(
+    join(course.destination, appearance.placement.statusPath),
+    "utf8",
+  );
+  const courseStatus = await readFile(
+    join(course.destination, "Media Gallery/media-status.md"),
+    "utf8",
+  );
+  assert.match(recordingStatus, /Stage: withdrawn/);
+  assert.match(recordingStatus, /acquired artifacts retained/);
+  assert.match(courseStatus, /Withdrawn: 1/);
+  assert.match(
+    (await readMediaQueue({ statePath, courseKey: course.key })).record.queue[0].artifacts.media,
+    /lecture\.mp4$/,
+  );
 });
 
 test("reads a durable queue for the explicit withdrawal command", async () => {
@@ -227,6 +342,28 @@ test("updates one queued appearance without dropping the rest of the durable que
     (await readMediaQueue({ statePath, courseKey: COURSE.key })).record,
     saved.record,
   );
+});
+
+test("retains prior failure limitations when a retry records another failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-history-"));
+  const statePath = join(root, "state.json");
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: {
+      complete: true,
+      queue: [{ recordingId: "gallery-1", limitations: ["first failure"] }],
+    },
+  });
+
+  const saved = await updateMediaQueueJob({
+    statePath,
+    courseKey: COURSE.key,
+    recordingId: "gallery-1",
+    update: { stage: "failed", complete: false, retryable: true, limitations: ["second failure"] },
+  });
+
+  assert.deepEqual(saved.job.limitations, ["first failure", "second failure"]);
 });
 
 test("rejects execution-time URLs at the durable queue boundary", async () => {

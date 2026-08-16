@@ -5,6 +5,7 @@ import { withMediaQueueLock } from "./lock.mjs";
 import { readMediaQueue, updateMediaQueueJob } from "./queue.mjs";
 import { verifyMediaRuntime } from "./setup.mjs";
 import { persistMediaDigest } from "./digest.mjs";
+import { writeMediaCourseStatus } from "./status.mjs";
 import {
   courseSummary,
   discoveryIncompleteSummary,
@@ -130,6 +131,16 @@ async function runMediaQueueUnlocked({
     await safetyCheck({ mode, now: readNow });
   } catch (error) {
     const message = publicMediaError(error);
+    await Promise.all(
+      selectedCourses.map((course) =>
+        persistRedCourseStatus({
+          course,
+          discovery: { complete: false, verdict: "red", limitations: [message] },
+          queue: [],
+          now: readNow,
+        }),
+      ),
+    );
     return persistMediaDigest({
       statePath,
       runId,
@@ -225,6 +236,13 @@ async function runCourse({
   try {
     loaded = await readQueue({ statePath, courseKey: course.key });
   } catch (error) {
+    await persistRedCourseStatus({
+      course,
+      discovery: { complete: false, verdict: "red" },
+      queue: [],
+      now,
+      error,
+    });
     return {
       globalStop: isGlobalMediaSafetyFailure(error),
       stoppedAtBoundary: false,
@@ -233,6 +251,16 @@ async function runCourse({
   }
   const record = loaded?.record;
   if (!record || !Array.isArray(record.queue)) {
+    await persistRedCourseStatus({
+      course,
+      discovery: {
+        complete: false,
+        verdict: "red",
+        limitations: [`No durable media queue exists for ${course.key}.`],
+      },
+      queue: [],
+      now,
+    });
     return {
       globalStop: false,
       stoppedAtBoundary: false,
@@ -240,6 +268,7 @@ async function runCourse({
     };
   }
   if (record.complete !== true) {
+    await writeMediaCourseStatus({ course, discovery: record, queue: record.queue, now });
     return {
       globalStop: false,
       stoppedAtBoundary: false,
@@ -278,7 +307,10 @@ async function runCourse({
       globalStop = true;
       return { error };
     });
-    if (active.error) break;
+    if (active.error) {
+      await persistRedCourseStatus({ course, discovery: record, queue, now, error: active.error });
+      break;
+    }
     Object.assign(job, active.job);
 
     const controller = new globalThis.AbortController();
@@ -317,6 +349,19 @@ async function runCourse({
 
     const finishedAt = validDate(now(), "media job finish");
     if (failure && isGlobalMediaSafetyFailure(failure)) {
+      const failed = await persistJobUpdate({
+        updateJob,
+        statePath,
+        course,
+        job,
+        update: failureUpdate(failure, finishedAt),
+        now,
+      }).catch((error) => ({ error }));
+      if (failed.error) {
+        await persistRedCourseStatus({ course, discovery: record, queue, now, error: failure });
+      } else {
+        Object.assign(job, failed.job);
+      }
       globalStop = true;
       break;
     }
@@ -329,18 +374,22 @@ async function runCourse({
         update: checkpointUpdate({ result, failure, finishedAt }),
         now,
       }).catch((error) => ({ error }));
-      if (checkpoint.error) globalStop = true;
-      else Object.assign(job, checkpoint.job);
+      if (checkpoint.error) {
+        globalStop = true;
+        await persistRedCourseStatus({
+          course,
+          discovery: record,
+          queue,
+          now,
+          error: checkpoint.error,
+        });
+      } else Object.assign(job, checkpoint.job);
       stoppedAtBoundary = !globalStop;
       break;
     }
 
     processed += 1;
     if (failure) {
-      if (isGlobalMediaSafetyFailure(failure)) {
-        globalStop = true;
-        break;
-      }
       const failed = await persistJobUpdate({
         updateJob,
         statePath,
@@ -349,8 +398,16 @@ async function runCourse({
         update: failureUpdate(failure, finishedAt),
         now,
       }).catch((error) => ({ error }));
-      if (failed.error) globalStop = true;
-      else Object.assign(job, failed.job);
+      if (failed.error) {
+        globalStop = true;
+        await persistRedCourseStatus({
+          course,
+          discovery: record,
+          queue,
+          now,
+          error: failed.error,
+        });
+      } else Object.assign(job, failed.job);
       if (globalStop) break;
       continue;
     }
@@ -363,8 +420,16 @@ async function runCourse({
       update: resultUpdate(result, finishedAt),
       now,
     }).catch((error) => ({ error }));
-    if (completed.error) globalStop = true;
-    else Object.assign(job, completed.job);
+    if (completed.error) {
+      globalStop = true;
+      await persistRedCourseStatus({
+        course,
+        discovery: record,
+        queue,
+        now,
+        error: completed.error,
+      });
+    } else Object.assign(job, completed.job);
     if (globalStop) break;
   }
 
@@ -386,9 +451,28 @@ async function persistJobUpdate({ updateJob, statePath, course, job, update, now
     statePath,
     courseKey: course.key,
     recordingId: job.recordingId,
+    course,
     update,
     now,
   });
+}
+
+async function persistRedCourseStatus({ course, discovery = {}, queue = [], now, error = null }) {
+  const limitations = [
+    ...(Array.isArray(discovery.limitations) ? discovery.limitations : []),
+    ...(error ? [publicMediaError(error)] : []),
+  ];
+  await writeMediaCourseStatus({
+    course,
+    discovery: {
+      ...discovery,
+      complete: false,
+      verdict: "red",
+      limitations: [...new Set(limitations)],
+    },
+    queue,
+    now,
+  }).catch(() => null);
 }
 
 function assertRunInputs({ statePath, courses, mode, runJob, preflight, media }) {

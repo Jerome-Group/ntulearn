@@ -12,8 +12,8 @@ In use. Course pages, announcements and attachments sync today, and the command 
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
 than a Tuesday. The local media runtime, Kaltura/YouTube/direct content-tree tracers, and
 fixture-driven Kaltura Media Gallery discovery, controlled browser-playback fallback, and
-one-at-a-time queue worker are explicit and Owner-started; durable media completeness remains
-separate work.
+one-at-a-time queue worker are explicit and Owner-started. Durable media completeness is reported
+separately from sync and verify.
 
 ## Commands
 
@@ -42,7 +42,11 @@ worker refuses to run without that safety check. `mode: "scheduled"` runs only f
 boundary. Queue entries are `queued`, `active`, `checkpointed`, `complete`, or `red`; successful
 entries are skipped on later runs, while failures remain retryable. Runs share
 `.data/media-queue.lock`, so a manual run cannot overlap a scheduled one. The worker never calls
-`media:setup`.
+`media:setup`. Every enabled course has `Media Gallery/media-status.md`, and every discovered
+appearance has a sibling `.media-status.md` with provider, source, stage, video/audio availability,
+transcript provenance, retryability, and limitations. A queued appearance is yellow until its next
+eligible worker window; an attempted incomplete source or derivative is red and remains retryable.
+The status documents and queue remain independent from sync and verify verdicts.
 
 ## Configuration
 
@@ -116,7 +120,10 @@ opaque embedded or launch players are reported as unsupported rather than silent
 material and expiring provider addresses are never persisted. A transcript is complete only when both
 a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
-source provenance and status remain visible with the course artifacts.
+source provenance and status remain visible with the course artifacts. The routine job never
+replaces a formatted derivative. An agent-led caller must opt into `runMediaJob({ regenerate: true })`;
+the storage proof still requires current workflow ownership and a matching source digest, so a
+manually owned file or preserved source cannot be overwritten.
 
 ### Controlled browser-playback fallback
 

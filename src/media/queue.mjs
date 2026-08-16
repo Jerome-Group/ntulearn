@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { publicMediaError } from "./errors.mjs";
+import { isMediaJobComplete } from "./completeness.mjs";
+import { writeMediaCourseStatus, writeMediaRecordingStatus } from "./status.mjs";
 
 const QUEUE_VERSION = 1;
 const JOB_STATE_FIELDS = Object.freeze([
@@ -48,7 +50,14 @@ export async function writeMediaQueue({
   const path = mediaQueuePath(statePath, course.key);
   const existing = await readMediaQueue({ statePath, courseKey: course.key, read });
   if (discovery.complete !== true && existing.record) {
-    return { path, status: "unchanged" };
+    const status = await persistQueueStatuses({
+      course,
+      discovery,
+      queue: existing.record.queue,
+      now,
+      write,
+    });
+    return { path, status: "unchanged", statusPath: status?.path };
   }
   const discoveredQueue =
     discovery.complete === true && Array.isArray(discovery.queue) ? discovery.queue : [];
@@ -74,7 +83,14 @@ export async function writeMediaQueue({
       updatedAt: now().toISOString(),
     }),
   );
-  return { path, status: transition.status };
+  const status = await persistQueueStatuses({
+    course,
+    discovery,
+    queue,
+    now,
+    write,
+  });
+  return { path, status: transition.status, statusPath: status?.path };
 }
 
 export function mediaQueuePath(statePath, courseKey) {
@@ -95,6 +111,7 @@ export async function updateMediaQueueJob({
   courseKey,
   recordingId,
   update,
+  course = null,
   now = () => new Date(),
   write = writeAtomically,
   read = readFile,
@@ -117,11 +134,24 @@ export async function updateMediaQueueJob({
   const safeUpdate = sanitizeJobState(update);
   const queue = loaded.record.queue.map((job, jobIndex) => {
     const durableJob = stripEphemeralFields(job);
-    return jobIndex === index ? { ...durableJob, ...safeUpdate } : durableJob;
+    if (jobIndex !== index) return durableJob;
+    const nextJob = { ...durableJob, ...safeUpdate };
+    if (Array.isArray(durableJob.limitations) && Array.isArray(safeUpdate.limitations)) {
+      nextJob.limitations = [...new Set([...durableJob.limitations, ...safeUpdate.limitations])];
+    }
+    return nextJob;
   });
   const record = { ...loaded.record, queue, updatedAt: now().toISOString() };
   await write(loaded.path, queueJson(record));
-  return { path: loaded.path, record, job: queue[index] };
+  const status = await persistQueueStatuses({
+    course,
+    discovery: record,
+    queue,
+    now,
+    write,
+    recording: queue[index],
+  });
+  return { path: loaded.path, record, job: queue[index], statusPath: status?.path };
 }
 
 export function withdrawQueuedRecording({ queue, recordingId, confirmed }) {
@@ -130,7 +160,7 @@ export function withdrawQueuedRecording({ queue, recordingId, confirmed }) {
   if (index === -1) return { status: "not-found", queue };
 
   const current = queue[index];
-  if (current.complete === true) return { status: "retained", queue };
+  if (isMediaJobComplete(current)) return { status: "retained", queue };
   if (confirmed !== true) return { status: "confirmation-required", queue };
 
   const next = queue.map((job, jobIndex) =>
@@ -162,9 +192,7 @@ function mergeQueue(previousQueue, discoveredQueue) {
   });
   return [
     ...merged,
-    ...previous.filter(
-      (job) => job?.withdrawn === true && job.recordingId && !discoveredIds.has(job.recordingId),
-    ),
+    ...previous.filter((job) => job?.recordingId && !discoveredIds.has(job.recordingId)),
   ];
 }
 
@@ -298,6 +326,24 @@ function safeCheckpoint(value) {
     throw new Error("Media queue checkpoint needs an at time and reason.");
   }
   return { at: value.at, reason: publicMediaError(value.reason) };
+}
+
+async function persistQueueStatuses({ course, discovery, queue, now, write, recording = null }) {
+  if (!course?.destination) return null;
+  const courseStatus = await writeMediaCourseStatus({ course, discovery, queue, now, write });
+  if (recording) {
+    await writeMediaRecordingStatus({
+      appearance: recording,
+      job: recording,
+      now,
+      write,
+    });
+  } else {
+    for (const appearance of queue) {
+      await writeMediaRecordingStatus({ appearance, job: appearance, now, write });
+    }
+  }
+  return courseStatus;
 }
 
 function safeCourseKey(value) {

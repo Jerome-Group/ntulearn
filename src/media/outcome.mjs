@@ -19,6 +19,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         providerName,
         media,
         source,
+        sourceSha256,
         artifacts,
         limitations,
         complete,
@@ -47,7 +48,9 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         providerName,
         media,
         source,
+        transcriptComplete: result.transcript.complete,
         stage: result.stage,
+        verdict: result.verdict,
         retryable: result.retryable,
         formatterVersion,
         limitations: result.limitations,
@@ -64,6 +67,7 @@ function mediaResult({
   providerName,
   media,
   source,
+  sourceSha256,
   artifacts,
   limitations,
   complete,
@@ -71,7 +75,11 @@ function mediaResult({
   retryable,
 }) {
   const finalLimitations = unique(limitations);
-  const verdict = complete ? (finalLimitations.length ? "yellow" : "green") : "red";
+  const transcriptComplete = Boolean(
+    source && sourceSha256 && artifacts.rawTranscript && artifacts.formattedTranscript,
+  );
+  const workflowComplete = complete && transcriptComplete;
+  const verdict = workflowComplete ? (finalLimitations.length ? "yellow" : "green") : "red";
 
   return {
     recordingId: appearance.recordingId,
@@ -79,9 +87,9 @@ function mediaResult({
     sourceKind: appearance.sourceKind,
     stage,
     verdict,
-    complete,
+    complete: workflowComplete,
     transcript: {
-      complete: Boolean(source && artifacts.formattedTranscript),
+      complete: transcriptComplete,
       sourceKind: source?.sourceKind ?? null,
       language: source?.language ?? null,
     },
@@ -89,7 +97,7 @@ function mediaResult({
     artifacts,
     limitations: finalLimitations,
     limitation: finalLimitations[0] ?? null,
-    retryable: retryable ?? !complete,
+    retryable: retryable ?? !workflowComplete,
   };
 }
 
@@ -98,8 +106,10 @@ async function writeStatus({
   providerName,
   media,
   source,
+  transcriptComplete,
   limitations,
   stage,
+  verdict,
   retryable,
   formatterVersion,
   storage,
@@ -113,8 +123,10 @@ async function writeStatus({
       providerName,
       media,
       source,
+      transcriptComplete,
       limitations,
       stage,
+      verdict,
       retryable,
       formatterVersion: formatterVersion ?? "not configured",
       updatedAt: clock().toISOString(),
@@ -180,8 +192,10 @@ function statusMarkdown({
   providerName,
   media,
   source,
+  transcriptComplete,
   limitations,
   stage,
+  verdict,
   retryable,
   formatterVersion,
   updatedAt,
@@ -199,9 +213,10 @@ function statusMarkdown({
     `- Video: ${video}`,
     `- Audio: ${audio}`,
     `- Media: ${mediaKind(media)}`,
-    `- Transcript: ${source ? transcriptLabel(source) : "not complete"}`,
+    `- Transcript provenance: ${transcriptLabel(source, transcriptComplete)}`,
     `- Formatter: ${formatterVersion}`,
     `- Stage: ${stage}`,
+    `- Verdict: ${verdict}`,
     `- Retryable: ${retryable ? "yes" : "no"}`,
     `- Limitations: ${limitations.length ? limitations.join(" ") : "None"}`,
     `- Updated: ${updatedAt}`,
@@ -216,9 +231,13 @@ function mediaKind(media) {
   return "unavailable";
 }
 
-function transcriptLabel(source) {
-  if (source.sourceKind === "non-speech") return `${source.language} non-speech source`;
-  return `${source.language} ${source.sourceKind} transcript`;
+function transcriptLabel(source, complete) {
+  if (!source) return "not complete";
+  const label =
+    source.sourceKind === "non-speech"
+      ? `${source.language} non-speech source`
+      : `${source.language} ${source.sourceKind} source`;
+  return complete ? `${label} + formatted Markdown` : `${label}; formatted Markdown missing`;
 }
 
 function displayName(value) {

@@ -1,14 +1,16 @@
 import { publicMediaError } from "./errors.mjs";
+import { isMediaJobComplete } from "./completeness.mjs";
 
 export function resultUpdate(result, finishedAt) {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return failureUpdate(new Error("Media job returned no result."), finishedAt);
   }
-  const complete = result.complete === true;
+  const complete = isMediaJobComplete(result);
+  const stage = result.stage === "complete" && !complete ? "failed" : result.stage;
   return {
     complete,
-    stage: result.stage ?? (complete ? "complete" : "failed"),
-    verdict: result.verdict ?? (complete ? "green" : "red"),
+    stage: stage ?? (complete ? "complete" : "failed"),
+    verdict: complete ? (result.verdict ?? "green") : "red",
     retryable: result.retryable ?? !complete,
     limitations: safeLimitations(result.limitations, result.limitation),
     ...(result.provider ? { providerName: result.provider } : {}),
@@ -58,7 +60,7 @@ export function checkpointUpdate({ result, failure, finishedAt }) {
 }
 
 export function finishedJob(job) {
-  return job?.withdrawn === true || job?.stage === "withdrawn" || job?.complete === true;
+  return job?.withdrawn === true || job?.stage === "withdrawn" || isMediaJobComplete(job);
 }
 
 export function artifactPaths(artifacts) {

@@ -1,4 +1,5 @@
 import { safeLimitations } from "./worker-state.mjs";
+import { isMediaJobComplete } from "./completeness.mjs";
 
 export function courseSummary({ course, queuePath, queue, processed, discovery }) {
   const counts = countQueue(queue);
@@ -75,8 +76,9 @@ export function countQueue(queue) {
   return queue.reduce(
     (counts, job) => {
       if (job.withdrawn === true || job.stage === "withdrawn") counts.withdrawn += 1;
-      else if (job.complete === true || job.stage === "complete") counts.completed += 1;
-      else if (job.stage === "failed" || job.verdict === "red") counts.failed += 1;
+      else if (isMediaJobComplete(job)) counts.completed += 1;
+      else if (job.stage === "failed" || job.stage === "red" || job.verdict === "red")
+        counts.failed += 1;
       else if (job.stage === "checkpointed") counts.checkpointed += 1;
       else if (job.stage === "active") counts.active += 1;
       else counts.queued += 1;
