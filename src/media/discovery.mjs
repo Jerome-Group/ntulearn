@@ -1,9 +1,9 @@
 import { attachmentName, externalLinkOf, isFolder } from "../ntulearn/content.mjs";
 import { attachmentPlacement, placedFile, placementsIn } from "../placement.mjs";
 import { orderedName } from "../paths.mjs";
-import { kalturaReferenceOf } from "./kaltura.mjs";
+import { classifyRecordingCandidate } from "./classification.mjs";
 
-const EMBED = /<(iframe|object|embed)\b([^>]*)>/gi;
+const EMBED = /<(iframe|object|embed|video|audio|source)\b([^>]*)>/gi;
 const LINK = /<a\b([^>]*)>/gi;
 const ATTRIBUTE = /\b(src|href|data)\s*=\s*(["'])(.*?)\2/gi;
 const JSON_ATTRIBUTE = /\bdata-bbfile\s*=\s*(["'])(.*?)\1/i;
@@ -26,15 +26,17 @@ export function discoverContentRecordings({ course, snapshot, attachmentsByItem 
     const seen = new Set();
 
     for (const candidate of candidates) {
-      const providerReference = kalturaReferenceOf(candidate.value);
-      if (!providerReference || seen.has(providerReference)) continue;
-      seen.add(providerReference);
+      const classification = classifyRecordingCandidate(candidate);
+      if (!classification) continue;
+      const identity = `${classification.provider}:${classification.providerReference}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
       recordings.push(
         appearance({
           course,
           item,
           placement,
-          providerReference,
+          ...classification,
           sourceKind: candidate.sourceKind,
           attachment: candidate.attachment,
         }),
@@ -45,7 +47,18 @@ export function discoverContentRecordings({ course, snapshot, attachmentsByItem 
   return recordings;
 }
 
-function appearance({ course, item, placement, providerReference, sourceKind, attachment }) {
+function appearance({
+  course,
+  item,
+  placement,
+  provider,
+  providerReference,
+  mediaType,
+  retryable,
+  limitation,
+  sourceKind,
+  attachment,
+}) {
   const target = mediaPlacement({ course, item, placement, attachment });
   return {
     recordingId: `content-tree:${course.courseId}:${item.id}:${providerReference}`,
@@ -55,8 +68,11 @@ function appearance({ course, item, placement, providerReference, sourceKind, at
     title: item.title,
     position: item.position,
     trail: placement.trail,
-    provider: "kaltura",
+    provider,
     providerReference,
+    mediaType: mediaType ?? null,
+    ...(retryable !== undefined ? { retryable } : {}),
+    ...(limitation ? { limitation } : {}),
     sourceKind,
     storageSurface: "content-tree",
     placement: target,

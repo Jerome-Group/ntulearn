@@ -14,7 +14,8 @@ export async function runMediaJob({
   transcriber,
   clock = () => new Date(),
 }) {
-  const limitations = [];
+  const limitations = mediaLimitations(appearance);
+  let retryable = appearance.retryable === true;
   const artifacts = {};
   let providerName = provider?.name ?? appearance.provider;
   const formatterVersion = nonEmpty(formatter?.version);
@@ -43,6 +44,7 @@ export async function runMediaJob({
     try {
       resolved = await provider.resolve(appearance);
     } catch (error) {
+      retryable = true;
       limitations.push(`Provider resolution failed: ${publicMediaError(error)}`);
     }
 
@@ -50,6 +52,7 @@ export async function runMediaJob({
       try {
         nativeTranscript = await provider.transcript(resolved);
       } catch (error) {
+        retryable = true;
         limitations.push(`Provider transcript retrieval failed: ${publicMediaError(error)}`);
       }
 
@@ -91,6 +94,8 @@ export async function runMediaJob({
         try {
           const acquired = await provider.media(resolved);
           if (acquired?.kind === "video" || acquired?.kind === "audio") {
+            retryable ||= acquired.retryable === true;
+            limitations.push(...mediaLimitations(acquired));
             const artifact = await storage.write({
               appearance,
               kind: "media",
@@ -110,9 +115,11 @@ export async function runMediaJob({
               media.audio = { available: true, path: artifact.path, quality: null, audio: true };
             }
           } else {
-            limitations.push(acquired?.limitation ?? "Provider returned no usable media.");
+            retryable ||= acquired?.retryable === true;
+            limitations.push(...mediaLimitations(acquired, "Provider returned no usable media."));
           }
         } catch (error) {
+          retryable = true;
           limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
         }
       }
@@ -154,6 +161,7 @@ export async function runMediaJob({
       limitations,
       complete: true,
       stage: "complete",
+      retryable: retryable || undefined,
       formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
       existingMetadata: existing.metadata,
     });
@@ -210,6 +218,7 @@ export async function runMediaJob({
           limitations,
           complete: true,
           stage: "complete",
+          retryable: retryable || undefined,
           formatterVersion:
             source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
           transcriber,
@@ -232,6 +241,7 @@ export async function runMediaJob({
     limitations,
     complete: false,
     stage: failureStage(limitations),
+    retryable: retryable || undefined,
     formatterVersion,
     transcriber,
     existingMetadata: existing?.metadata,
@@ -328,4 +338,11 @@ function failureStage(limitations) {
 
 function nonEmpty(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function mediaLimitations(value, fallback = null) {
+  const limitations = Array.isArray(value?.limitations) ? [...value.limitations] : [];
+  if (value?.limitation) limitations.push(value.limitation);
+  if (!limitations.length && fallback) limitations.push(fallback);
+  return limitations;
 }

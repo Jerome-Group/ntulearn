@@ -10,9 +10,9 @@ MIT licensed and public — `docs/adr/0002`.
 
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
-than a Tuesday. The local media runtime, Kaltura content-tree tracer, and fixture-driven Kaltura
-Media Gallery discovery are explicit and Owner-started; capture, queue execution and durable
-media completeness remain separate work.
+than a Tuesday. The local media runtime, Kaltura/YouTube/direct content-tree tracers, and
+fixture-driven Kaltura Media Gallery discovery are explicit and Owner-started; capture, queue
+execution and durable media completeness remain separate work.
 
 ## Commands
 
@@ -94,14 +94,16 @@ licence, path and size; model weights, caches and working files remain outside t
 The selected runtime and model licences are documented in
 `docs/research/media-runtime.md`. Setup is intentionally not run by CI or by an ordinary sync.
 
-### Content-tree recording tracer
+### Content-tree recording tracers
 
 An `active` or `pilot` course may have recording appearances alongside its ordinary sync. Recording
 completeness is a separate concern: the sync remains additive and does not claim that media work is
 complete. Each appearance keeps its own placement and status, while source evidence and working
 artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
-Session material and expiring provider addresses are never persisted. A transcript is complete only
-when both a validated source and formatted Markdown derivative exist. Recording completeness remains
+Kaltura, YouTube, and direct video/audio links are classified without retaining expiring query strings;
+opaque embedded or launch players are reported as unsupported rather than silently omitted. Session
+material and expiring provider addresses are never persisted. A transcript is complete only when both
+a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
 source provenance and status remain visible with the course artifacts.
 
