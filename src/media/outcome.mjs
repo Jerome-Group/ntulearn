@@ -1,3 +1,5 @@
+import { durationLabel, positiveDuration } from "./duration.mjs";
+
 export function createMediaOutcome({ appearance, storage, clock }) {
   return {
     async persist({
@@ -13,6 +15,8 @@ export function createMediaOutcome({ appearance, storage, clock }) {
       formatterVersion,
       transcriber,
       existingMetadata,
+      duration,
+      speechDuration,
     }) {
       const result = mediaResult({
         appearance,
@@ -25,6 +29,8 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         complete,
         stage,
         retryable,
+        duration,
+        speechDuration,
       });
       artifacts.state = await writeState({
         appearance,
@@ -40,6 +46,8 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         formatterVersion,
         transcriber,
         existingMetadata,
+        duration,
+        speechDuration,
         storage,
         clock,
       });
@@ -53,6 +61,8 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         verdict: result.verdict,
         retryable: result.retryable,
         formatterVersion,
+        duration,
+        speechDuration,
         limitations: result.limitations,
         storage,
         clock,
@@ -73,6 +83,8 @@ function mediaResult({
   complete,
   stage,
   retryable,
+  duration,
+  speechDuration,
 }) {
   const finalLimitations = unique(limitations);
   const transcriptComplete = Boolean(
@@ -98,6 +110,8 @@ function mediaResult({
     limitations: finalLimitations,
     limitation: finalLimitations[0] ?? null,
     retryable: retryable ?? !workflowComplete,
+    ...(positiveDuration(duration) ? { duration } : {}),
+    ...(positiveDuration(speechDuration) ? { speechDuration } : {}),
   };
 }
 
@@ -112,6 +126,8 @@ async function writeStatus({
   verdict,
   retryable,
   formatterVersion,
+  duration,
+  speechDuration,
   storage,
   clock,
 }) {
@@ -129,6 +145,8 @@ async function writeStatus({
       verdict,
       retryable,
       formatterVersion: formatterVersion ?? "not configured",
+      duration,
+      speechDuration,
       updatedAt: clock().toISOString(),
     }),
     filename: appearance.placement.statusPath,
@@ -149,6 +167,8 @@ async function writeState({
   formatterVersion,
   transcriber,
   existingMetadata,
+  duration,
+  speechDuration,
   storage,
   clock,
 }) {
@@ -165,6 +185,8 @@ async function writeState({
           stage,
           complete,
           retryable,
+          ...(positiveDuration(duration) ? { duration } : {}),
+          ...(positiveDuration(speechDuration) ? { speechDuration } : {}),
           sourceKind: source?.sourceKind ?? null,
           language: source?.language ?? null,
           sourceSha256: sourceSha256 ?? null,
@@ -198,6 +220,8 @@ function statusMarkdown({
   verdict,
   retryable,
   formatterVersion,
+  duration,
+  speechDuration,
   updatedAt,
 }) {
   const video = media.video.available
@@ -213,6 +237,10 @@ function statusMarkdown({
     `- Video: ${video}`,
     `- Audio: ${audio}`,
     `- Media: ${mediaKind(media)}`,
+    `- Duration: ${durationLabel(duration)}`,
+    ...(positiveDuration(speechDuration)
+      ? [`- Speech duration: ${durationLabel(speechDuration)}`]
+      : []),
     `- Transcript provenance: ${transcriptLabel(source, transcriptComplete)}`,
     `- Formatter: ${formatterVersion}`,
     `- Stage: ${stage}`,

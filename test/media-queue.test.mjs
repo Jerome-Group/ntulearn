@@ -328,13 +328,26 @@ test("updates one queued appearance without dropping the rest of the durable que
     statePath,
     courseKey: COURSE.key,
     recordingId: "gallery-1",
-    update: { stage: "checkpointed", complete: false, retryable: true },
+    update: {
+      stage: "checkpointed",
+      complete: false,
+      retryable: true,
+      duration: 123.4,
+      speechDuration: 120,
+    },
     now: () => new Date("2026-08-16T04:00:00.000Z"),
   });
 
   assert.equal(saved.job.stage, "checkpointed");
   assert.deepEqual(saved.record.queue, [
-    { recordingId: "gallery-1", stage: "checkpointed", complete: false, retryable: true },
+    {
+      recordingId: "gallery-1",
+      stage: "checkpointed",
+      complete: false,
+      retryable: true,
+      duration: 123.4,
+      speechDuration: 120,
+    },
     { recordingId: "gallery-2" },
   ]);
   assert.equal(saved.record.updatedAt, "2026-08-16T04:00:00.000Z");
@@ -383,5 +396,25 @@ test("rejects execution-time URLs at the durable queue boundary", async () => {
       update: { resolvedUrl: "https://provider.example.test/expiring?token=secret" },
     }),
     /unsupported fields: resolvedUrl/,
+  );
+});
+
+test("rejects non-numeric duration evidence at the durable queue boundary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-duration-"));
+  const statePath = join(root, "state.json");
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [{ recordingId: "gallery-1" }] },
+  });
+
+  await assert.rejects(
+    updateMediaQueueJob({
+      statePath,
+      courseKey: COURSE.key,
+      recordingId: "gallery-1",
+      update: { duration: true },
+    }),
+    /duration must be a positive number/,
   );
 });

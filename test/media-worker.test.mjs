@@ -90,6 +90,8 @@ test("updates the course and recording status documents from worker results", as
         stage: "complete",
         verdict: "green",
         transcript: { complete: true, sourceKind: "provider", language: "en-SG" },
+        duration: 10,
+        speechDuration: 9,
         media: {
           video: { available: true, quality: 720, audio: true },
           audio: { available: true, quality: null, audio: true },
@@ -106,6 +108,14 @@ test("updates the course and recording status documents from worker results", as
   assert.match(
     await readFile(join(course.destination, "Media Gallery/Week 1.media-status.md"), "utf8"),
     /Stage: complete/,
+  );
+  assert.match(
+    await readFile(join(course.destination, "Media Gallery/Week 1.media-status.md"), "utf8"),
+    /Duration: 10\.0s/,
+  );
+  assert.match(
+    await readFile(join(course.destination, "Media Gallery/Week 1.media-status.md"), "utf8"),
+    /Speech duration: 9\.0s/,
   );
 });
 

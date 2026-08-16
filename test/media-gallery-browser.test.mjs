@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   collectMediaGalleryPages,
   extractGallerySnapshot,
+  parseMediaDetailCreatedAt,
   readKalturaMediaGallery,
 } from "../src/media/gallery-browser.mjs";
 
@@ -53,7 +54,7 @@ test("evaluates the Gallery snapshot without Node-side helper closures", () => {
   const first = galleryCard("shared", "One", "shared-one");
   const second = galleryCard("shared", "Two", "shared-two");
   const total = galleryElement({ "data-total-count": "2" });
-  const more = galleryElement({}, "Load more");
+  const more = galleryElement({ disabled: "" }, "Load more");
   const document = {
     body: { innerText: "2 recordings" },
     querySelectorAll(selector) {
@@ -66,7 +67,7 @@ test("evaluates the Gallery snapshot without Node-side helper closures", () => {
   const result = runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document });
 
   assert.equal(result.displayedCount, 2);
-  assert.equal(result.hasMore, true);
+  assert.equal(result.hasMore, false);
   assert.deepEqual(
     JSON.parse(
       JSON.stringify(result.entries.map(({ id, providerReference }) => [id, providerReference])),
@@ -76,6 +77,66 @@ test("evaluates the Gallery snapshot without Node-side helper closures", () => {
       ["/media/t/shared-two", "entry:shared"],
     ],
   );
+});
+
+test("continues when an enabled Gallery control contradicts the displayed total", () => {
+  const card = galleryElement({ "data-title": "Lecture" }, "Lecture");
+  const anchor = galleryElement({ href: "/media/t/entry-one/176282" }, "Lecture");
+  anchor.closest = () => card;
+  const more = galleryElement({}, "Load more");
+  const document = {
+    body: { innerText: "1 Media" },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [more];
+      return [anchor];
+    },
+  };
+
+  const result = runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document });
+
+  assert.equal(result.displayedCount, 1);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.hasMore, true);
+});
+
+test("reads live Kaltura channel links and the total media count", () => {
+  const card = galleryElement(
+    {
+      "data-created-at": "2026-08-10T09:00:00+08:00",
+      "data-title": "Lecture",
+    },
+    "Lecture",
+  );
+  const anchor = galleryElement({ href: "/media/t/entry-one/176282" }, "Lecture");
+  anchor.closest = () => card;
+  card.querySelector = (selector) => (selector === 'a[href*="/media/t/"]' ? anchor : null);
+  const document = {
+    body: { innerText: "27 Media\nLecture 1 of 15" },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [];
+      return [anchor];
+    },
+  };
+
+  const result = runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document });
+
+  assert.equal(result.displayedCount, 27);
+  assert.equal(result.entries[0].published, true);
+  assert.equal(result.entries[0].href, "/media/t/entry-one/176282");
+});
+
+test("normalizes the date shown on a Kaltura media detail page", () => {
+  assert.equal(
+    parseMediaDetailCreatedAt("From Instructor 16 April, 2026 0 likes"),
+    "2026-04-16T00:00:00",
+  );
+  assert.equal(
+    parseMediaDetailCreatedAt("From Instructor 16 April, 2026 at 9:30 PM"),
+    "2026-04-16T21:30:00",
+  );
+  assert.equal(parseMediaDetailCreatedAt("No creation date"), null);
 });
 
 test("rejects contradictory publication evidence", () => {
@@ -144,6 +205,83 @@ test("selects a readable child LTI frame and preserves its reconciled catalogue"
 
   assert.equal(result.complete, true);
   assert.equal(result.recordings[0].galleryEntryId, "appearance-1");
+});
+
+test("loads lazy course content before opening the Media Gallery link", async () => {
+  let contentLoaded = false;
+  const trigger = locator({ count: 1, click: async () => {} });
+  const loadMore = {
+    async count() {
+      return contentLoaded ? 0 : 1;
+    },
+    first() {
+      return this;
+    },
+    async evaluate() {
+      contentLoaded = true;
+    },
+  };
+  const child = {
+    locator: () => locator({ count: 1 }),
+    evaluate: async () => ({
+      displayedCount: 1,
+      entries: [
+        {
+          id: "appearance-1",
+          providerReference: "entry:one",
+          title: "Lecture",
+          createdAt: "2026-08-10T09:00:00+08:00",
+          visible: true,
+          published: true,
+        },
+      ],
+      hasMore: false,
+    }),
+    getByRole: () => locator({ count: 0 }),
+  };
+  const outer = { locator: () => locator({ count: 0 }) };
+  const page = {
+    async goto() {},
+    locator(selector) {
+      if (selector.includes("loadMoreButton")) return loadMore;
+      return locator({ count: 0 });
+    },
+    frames: () => [outer, child],
+    mainFrame: () => outer,
+    getByRole: () => trigger,
+    getByText: () => trigger,
+  };
+
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+
+  assert.equal(contentLoaded, true);
+  assert.equal(result.complete, true);
+});
+
+test("treats an exhausted course without a Media Gallery link as an empty gallery", async () => {
+  const page = {
+    async goto() {},
+    locator(selector) {
+      if (selector.includes("loadMoreButton")) return locator({ count: 0 });
+      if (selector === "body") {
+        return {
+          async innerText() {
+            return "Course Content\\nNo more content items to load";
+          },
+        };
+      }
+      return locator({ count: 0 });
+    },
+    frames: () => [],
+    getByRole: () => locator({ count: 0 }),
+    getByText: () => locator({ count: 0 }),
+  };
+
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.galleryAvailable, false);
+  assert.deepEqual(result.recordings, []);
 });
 
 test("advances a numbered Gallery page from the identified current page", async () => {

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { publicMediaError } from "./errors.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
+import { positiveDuration } from "./duration.mjs";
 import { writeMediaCourseStatus, writeMediaRecordingStatus } from "./status.mjs";
 
 const QUEUE_VERSION = 1;
@@ -21,6 +22,8 @@ const JOB_STATE_FIELDS = Object.freeze([
   "formatterVersion",
   "sourceSha256",
   "formattedSha256",
+  "duration",
+  "speechDuration",
   "checkpoint",
   "attempts",
   "startedAt",
@@ -250,6 +253,11 @@ function sanitizeJobState(update) {
         throw new Error(`Media queue ${field} must be a SHA-256 digest.`);
       }
       safe[field] = value === null ? null : String(value).toLowerCase();
+    } else if (["duration", "speechDuration"].includes(field)) {
+      if (value !== null && !positiveDuration(value)) {
+        throw new Error(`Media queue ${field} must be a positive number.`);
+      }
+      safe[field] = value;
     } else if (field === "lastError" || field === "limitation") {
       if (value !== null && typeof value !== "string") {
         throw new Error(`Media queue ${field} must be a string or null.`);

@@ -21,6 +21,8 @@ export function resultUpdate(result, finishedAt) {
     ...(result.formatterVersion ? { formatterVersion: result.formatterVersion } : {}),
     ...(result.sourceSha256 ? { sourceSha256: result.sourceSha256 } : {}),
     ...(result.formattedSha256 ? { formattedSha256: result.formattedSha256 } : {}),
+    ...(result.duration ? { duration: result.duration } : {}),
+    ...(result.speechDuration ? { speechDuration: result.speechDuration } : {}),
     finishedAt: finishedAt.toISOString(),
     lastError: null,
     checkpoint: null,

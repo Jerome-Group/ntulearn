@@ -70,6 +70,36 @@ test("keeps source artifacts in Media and visible content-tree derivatives besid
   assert.equal(await readFile(audio.path, "utf8"), "audio");
 });
 
+test("copies a file-backed media artifact atomically", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-file-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  const destination = join(root, "course");
+  const sourcePath = join(root, "runtime", "recording.mp4");
+  await mkdir(mediaRoot, { recursive: true });
+  await mkdir(join(root, "runtime"), { recursive: true });
+  await writeFile(sourcePath, "file-backed video");
+  const storage = createMediaStorage({ mediaRoot, volumeRoot });
+
+  const result = await storage.write({
+    appearance: {
+      recordingId: "media-gallery:_9_1:gallery-file",
+      storageSurface: "media-gallery",
+      placement: {
+        destination,
+        videoPath: "Media Gallery/Lecture.mp4",
+      },
+    },
+    kind: "media",
+    mediaKind: "video",
+    sourcePath,
+    filename: "Lecture.mp4",
+  });
+
+  assert.equal(result.status, "written");
+  assert.equal(await readFile(result.path, "utf8"), "file-backed video");
+});
+
 test("does not replace a video attachment that already supplies the content-tree sibling", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-"));
   const volumeRoot = join(root, "RAID0");
