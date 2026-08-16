@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import test from "node:test";
 import { runMediaJob } from "../src/media/job.mjs";
+import { transcriptDigest } from "../src/media/transcript.mjs";
 
 test("runs the provider transcript and independent media paths through one pure job seam", async () => {
   const writes = [];
@@ -88,6 +89,7 @@ test("runs the provider transcript and independent media paths through one pure 
     "metadata",
     "provider-transcript",
     "raw-transcript",
+    "state",
     "status",
   ]);
   assert.deepEqual(writes.find(({ kind }) => kind === "provider-transcript").content, native.body);
@@ -105,12 +107,22 @@ test("runs the provider transcript and independent media paths through one pure 
     sourceKind: "provider",
     recordingReference: "entry:lecture-1",
     sourceSha256: metadata.sourceSha256,
+    formattedSha256: metadata.formattedSha256,
     language: "en-SG",
     formatterVersion: "local-test-formatter-1",
+    media: {
+      video: { available: true, path: "media/media", quality: 720, audio: true },
+      audio: { available: true, path: "media/media", quality: null, audio: true },
+    },
     limitations: [],
   });
   assert.match(metadata.sourceSha256, /^[0-9a-f]{64}$/);
+  assert.match(metadata.formattedSha256, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(JSON.stringify(result), /https?:\/\/|ks=secret/);
+  const state = JSON.parse(writes.find(({ kind }) => kind === "state").content);
+  assert.equal(state.sourceKind, "provider");
+  assert.equal(state.sourceSha256, metadata.sourceSha256);
+  assert.equal(state.artifacts.formattedTranscript, "media/formatted-transcript");
   const status = writes.find(({ kind }) => kind === "status").content;
   assert.match(status, /Video: available/);
   assert.match(status, /Transcript: en-SG provider transcript/);
@@ -162,9 +174,414 @@ test("rejects an invalid provider transcript after still attempting media acquis
   assert.match(result.limitation, /provider transcript rejected/i);
   assert.deepEqual(
     writes.map(({ kind }) => kind),
-    ["provider-transcript", "media", "status"],
+    ["provider-transcript", "media", "state", "status"],
   );
   assert.match(writes.at(-1).content, /local transcription is not configured/i);
+});
+
+test("generates a transcript from acquired audio and releases ASR before formatting", async () => {
+  const writes = [];
+  const events = [];
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        return {
+          duration: 10,
+          transcript: {
+            body: JSON.stringify({
+              language: "en",
+              segments: [{ start: 0, end: 1, text: "too short" }],
+            }),
+            filename: "captions.json",
+          },
+        };
+      },
+      async transcript(resolved) {
+        return resolved.transcript;
+      },
+      async media() {
+        return {
+          kind: "audio",
+          body: Buffer.from("retained lecture audio"),
+          filename: "lecture.m4a",
+        };
+      },
+    },
+    transcriber: {
+      version: "whisper-medium.en",
+      runtimeMetadata: {
+        selectedModel: {
+          name: "medium.en",
+          revision: "r1",
+          sha256: "a".repeat(64),
+          license: "MIT",
+        },
+      },
+      async transcribe({ media }) {
+        events.push(`transcribe:${media.kind}:${media.body.toString()}`);
+        return {
+          language: "en-SG",
+          segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+        };
+      },
+      async release() {
+        events.push("release");
+      },
+    },
+    formatter: {
+      version: "formatter-1",
+      async format({ segments }) {
+        events.push("format");
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.deepEqual(events, ["transcribe:audio:retained lecture audio", "release", "format"]);
+  assert.equal(result.complete, true);
+  assert.equal(result.verdict, "yellow");
+  assert.equal(result.retryable, false);
+  assert.equal(result.transcript.sourceKind, "generated");
+  assert.equal(result.media.video.available, false);
+  assert.equal(result.media.audio.available, true);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /Media: audio-only/);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /generated transcript/);
+  const metadata = JSON.parse(writes.find(({ kind }) => kind === "metadata").content);
+  assert.equal(metadata.sourceKind, "generated");
+  assert.equal(metadata.asr.selectedModel.name, "medium.en");
+  const state = JSON.parse(writes.find(({ kind }) => kind === "state").content);
+  assert.equal(state.transcriberVersion, "whisper-medium.en");
+  assert.equal(state.asr.selectedModel.name, "medium.en");
+});
+
+test("records non-speech without inventing text or invoking the formatter", async () => {
+  let formatted = false;
+  const writes = [];
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        return {
+          duration: 10,
+          transcript: { body: JSON.stringify({ language: "en", segments: [] }) },
+        };
+      },
+      async transcript(resolved) {
+        return resolved.transcript;
+      },
+      async media() {
+        return { kind: "audio", body: Buffer.from("music"), filename: "lecture.m4a" };
+      },
+    },
+    transcriber: {
+      version: "whisper-small.en",
+      async transcribe() {
+        return { sourceKind: "non-speech", language: "und", reason: "music only" };
+      },
+      async release() {},
+    },
+    formatter: {
+      version: "formatter-1",
+      async format() {
+        formatted = true;
+        return { markdown: "invented words" };
+      },
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(formatted, false);
+  assert.equal(result.complete, true);
+  assert.equal(result.transcript.sourceKind, "non-speech");
+  assert.match(writes.find(({ kind }) => kind === "formatted-transcript").content, /music only/);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /non-speech source/);
+});
+
+test("reuses retained media when retrying a failed transcript", async () => {
+  const writes = [];
+  let mediaAttempted = false;
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        return { duration: 10 };
+      },
+      async transcript() {
+        return null;
+      },
+      async media() {
+        mediaAttempted = true;
+        throw new Error("retained media should be reused");
+      },
+    },
+    transcriber: {
+      version: "whisper-small.en",
+      runtimeMetadata: { selectedModel: { name: "small.en" } },
+      async transcribe({ media }) {
+        assert.equal(media.path, "course/Lecture.mp4");
+        return {
+          language: "en-SG",
+          segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+        };
+      },
+      async release() {},
+    },
+    formatter: {
+      version: "formatter-1",
+      async format({ segments }) {
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return kind === "state"
+          ? {
+              path: "media/transcript.state.json",
+              content: JSON.stringify({
+                provider: "kaltura",
+                media: {
+                  video: {
+                    available: true,
+                    path: "course/Lecture.mp4",
+                    quality: 720,
+                    audio: true,
+                  },
+                  audio: {
+                    available: true,
+                    path: "course/Lecture.mp4",
+                    quality: null,
+                    audio: true,
+                  },
+                },
+                artifacts: { media: "course/Lecture.mp4" },
+              }),
+            }
+          : null;
+      },
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}`, status: "written" };
+      },
+    },
+  });
+
+  assert.equal(mediaAttempted, false);
+  assert.equal(result.complete, true);
+  assert.equal(result.media.video.available, true);
+  assert.equal(result.transcript.sourceKind, "generated");
+  assert.match(result.limitation, /no provider transcript/i);
+});
+
+test("does not revisit a successful source and derivative during a routine run", async () => {
+  const writes = [];
+  const appearance = recordingAppearance();
+  const rawContent = JSON.stringify({
+    sourceKind: "generated",
+    language: "en-SG",
+    segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+  });
+  const stored = new Map([
+    [
+      "raw-transcript",
+      {
+        path: "media/transcript.raw.json",
+        content: rawContent,
+      },
+    ],
+    [
+      "formatted-transcript",
+      { path: "course/Lecture.transcript.md", content: "The value is 2 + 2 = 4.\n" },
+    ],
+    [
+      "metadata",
+      {
+        path: "media/transcript.metadata.json",
+        content: JSON.stringify({
+          recordingId: appearance.recordingId,
+          provider: "kaltura",
+          sourceKind: "generated",
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest("The value is 2 + 2 = 4.\n"),
+          language: "en-SG",
+          formatterVersion: "formatter-1",
+          limitations: [],
+          media: {
+            video: { available: false, path: null, quality: null, audio: false },
+            audio: { available: true, path: "course/Lecture.m4a", quality: null, audio: true },
+          },
+        }),
+      },
+    ],
+  ]);
+
+  const result = await runMediaJob({
+    appearance,
+    provider: {
+      async resolve() {
+        throw new Error("provider should not be revisited");
+      },
+    },
+    transcriber: {
+      version: "whisper-small.en",
+      async transcribe() {
+        throw new Error("ASR should not be revisited");
+      },
+    },
+    formatter: {
+      version: "formatter-2",
+      async format() {
+        throw new Error("formatter should not be revisited");
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return stored.get(kind) ?? null;
+      },
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.transcript.sourceKind, "generated");
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ["state", "status"],
+  );
+  assert.equal(result.media.audio.available, true);
+});
+
+test("replaces a corrupt existing derivative without revisiting its source", async () => {
+  const writes = [];
+  const rawContent = JSON.stringify({
+    sourceKind: "generated",
+    language: "en-SG",
+    segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+  });
+  const stored = new Map([
+    [
+      "raw-transcript",
+      {
+        path: "media/transcript.raw.json",
+        content: rawContent,
+      },
+    ],
+    ["formatted-transcript", { path: "course/Lecture.transcript.md", content: "" }],
+    [
+      "metadata",
+      {
+        path: "media/transcript.metadata.json",
+        content: JSON.stringify({
+          provider: "kaltura",
+          formatterVersion: "formatter-1",
+          limitations: [],
+          media: {
+            video: { available: false, path: null, quality: null, audio: false },
+            audio: { available: true, path: "course/Lecture.m4a", quality: null, audio: true },
+          },
+        }),
+      },
+    ],
+    [
+      "state",
+      {
+        path: "media/transcript.state.json",
+        content: JSON.stringify({
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest(""),
+          artifacts: {
+            rawTranscript: "media/transcript.raw.json",
+            formattedTranscript: "course/Lecture.transcript.md",
+          },
+        }),
+      },
+    ],
+  ]);
+
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      async resolve() {
+        throw new Error("provider should not be revisited");
+      },
+    },
+    transcriber: {
+      async transcribe() {
+        throw new Error("ASR should not be revisited");
+      },
+    },
+    formatter: {
+      version: "formatter-2",
+      async format({ segments }) {
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return stored.get(kind) ?? null;
+      },
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.transcript.complete, true);
+  const replacement = writes.find(({ kind }) => kind === "formatted-transcript");
+  assert.equal(replacement.replaceProof.path, "course/Lecture.transcript.md");
+  assert.equal(replacement.replaceProof.sha256, transcriptDigest(""));
+  assert.equal(replacement.replaceProof.sourceSha256, transcriptDigest(rawContent));
+});
+
+test("does not mark an invalid existing source complete during a routine run", async () => {
+  const writes = [];
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: validProvider(),
+    formatter: {
+      version: "formatter-1",
+      async format({ segments }) {
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return kind === "raw-transcript"
+          ? { path: "media/transcript.raw.json", content: "not json" }
+          : null;
+      },
+      async write(value) {
+        writes.push(value);
+        return {
+          path: `media/${value.kind}`,
+          status: value.kind === "raw-transcript" ? "existing" : "written",
+        };
+      },
+    },
+  });
+
+  assert.equal(result.complete, false);
+  assert.match(result.limitation, /raw transcript is invalid/i);
+  assert.equal(writes.find(({ kind }) => kind === "raw-transcript").replace, undefined);
 });
 
 test("does not preserve provider transcript bytes that contain session material", async () => {
@@ -207,7 +624,7 @@ test("does not preserve provider transcript bytes that contain session material"
   assert.match(result.limitation, /session-bound address/i);
   assert.deepEqual(
     writes.map(({ kind }) => kind),
-    ["media", "status"],
+    ["media", "state", "status"],
   );
   assert.doesNotMatch(JSON.stringify(writes), /session-secret|ks=/);
 });

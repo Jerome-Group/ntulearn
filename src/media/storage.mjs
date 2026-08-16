@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { assertMediaRoot } from "./paths.mjs";
 
@@ -9,18 +9,46 @@ const UNSAFE_FILENAME_CHARACTERS = /[\\/:*?"<>|\x00-\x1F]/g;
 // Source evidence is keyed by the appearance, while only the visible derivatives follow the
 // content-tree placement. This keeps a provider transcript reconstructible without putting it in
 // the course destination.
-export function createMediaStorage({ mediaRoot, volumeRoot, write = writeAtomically }) {
+export function createMediaStorage({
+  mediaRoot,
+  volumeRoot,
+  write = writeAtomically,
+  read = readFile,
+}) {
   const root = assertMediaRoot(mediaRoot, volumeRoot);
 
   return {
-    async write({ appearance, kind, mediaKind, content, filename }) {
+    async write({ appearance, kind, mediaKind, content, filename, replace, replaceProof = null }) {
+      if (replace !== undefined) {
+        throw new Error("Replacement requires a proof-bearing formatted transcript request.");
+      }
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
-      if (kind === "media" && (await isFilePresent(target.path))) {
+      if (replaceProof) {
+        assertReplacementProof({ kind, target, replaceProof });
+        const current = await read(target.path).catch((error) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (!current || digest(current) !== replaceProof.sha256) {
+          throw new Error("Formatted transcript replacement proof is stale.");
+        }
+      }
+      if (!replaceProof && writeOnce(kind) && (await isFilePresent(target.path))) {
         return { path: target.path, status: "existing" };
       }
       await mkdir(dirname(target.path), { recursive: true });
       await write(target.path, content);
       return { path: target.path, status: "written" };
+    },
+
+    async read({ appearance, kind, mediaKind, filename }) {
+      const target = targetFor({ root, appearance, kind, mediaKind, filename });
+      try {
+        return { path: target.path, content: await read(target.path) };
+      } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }
     },
   };
 }
@@ -32,6 +60,7 @@ function targetFor({ root, appearance, kind, mediaKind, filename }) {
   }
   if (kind === "raw-transcript") return { path: join(recordingRoot, "transcript.raw.json") };
   if (kind === "metadata") return { path: join(recordingRoot, "transcript.metadata.json") };
+  if (kind === "state") return { path: join(recordingRoot, "transcript.state.json") };
   if (kind === "media") {
     const relativePath =
       mediaKind === "audio"
@@ -86,6 +115,25 @@ async function isFilePresent(path) {
     throw error;
   });
   return Boolean(info?.isFile());
+}
+
+function writeOnce(kind) {
+  return ["provider-transcript", "raw-transcript", "formatted-transcript", "media"].includes(kind);
+}
+
+function assertReplacementProof({ kind, target, replaceProof }) {
+  if (
+    kind !== "formatted-transcript" ||
+    replaceProof.path !== target.path ||
+    !/^[0-9a-f]{64}$/.test(replaceProof.sha256) ||
+    !/^[0-9a-f]{64}$/.test(replaceProof.sourceSha256)
+  ) {
+    throw new Error("Only a current formatted transcript may be replaced.");
+  }
+}
+
+function digest(value) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 // Media writes are atomic without depending on the sync layer. A partial file must never become a

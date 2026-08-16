@@ -40,3 +40,54 @@ test("formats bounded timestamp-derived chunks sequentially through the local mo
   assert.deepEqual(calls[0].instructions, LOCAL_FORMATTING_RULES);
   assert.equal(result.markdown, "one two\n\nthree");
 });
+
+test("starts a new chunk when timestamps exceed the duration bound", async () => {
+  const calls = [];
+  const formatter = createLocalFormatter({
+    version: "local-model-1",
+    maxSegments: 10,
+    maxDuration: 2,
+    model: {
+      async generate(input) {
+        calls.push(input);
+        return { markdown: input.text };
+      },
+    },
+  });
+
+  await formatter.format({
+    appearance: { recordingId: "recording-1" },
+    language: "en",
+    segments: [
+      { start: 0, end: 1, text: "one" },
+      { start: 1, end: 2, text: "two" },
+      { start: 2, end: 3, text: "three" },
+    ],
+  });
+
+  assert.deepEqual(
+    calls.map(({ text }) => text),
+    ["one two", "three"],
+  );
+});
+
+test("rejects a single segment that exceeds the duration bound", async () => {
+  const formatter = createLocalFormatter({
+    version: "local-model-1",
+    maxDuration: 2,
+    model: {
+      async generate() {
+        return { markdown: "unused" };
+      },
+    },
+  });
+
+  await assert.rejects(
+    formatter.format({
+      appearance: { recordingId: "recording-1" },
+      language: "en",
+      segments: [{ start: 0, end: 3, text: "too long" }],
+    }),
+    /longer than maxDuration/,
+  );
+});

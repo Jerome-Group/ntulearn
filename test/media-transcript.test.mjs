@@ -50,6 +50,53 @@ test("rejects empty, unordered, and implausibly short provider transcripts", () 
   );
 });
 
+test("accepts generated and explicit non-speech sources while rejecting duration overflow", () => {
+  const generated = validateTranscript(
+    {
+      sourceKind: "generated",
+      language: "en-SG",
+      segments: [{ start: 0, end: 10, text: "The lecture is complete." }],
+    },
+    { duration: 10 },
+  );
+  assert.equal(generated.valid, true);
+  assert.equal(generated.transcript.sourceKind, "generated");
+
+  assert.match(
+    validateTranscript(
+      {
+        sourceKind: "generated",
+        language: "en",
+        segments: [{ start: 0, end: 18, text: "This exceeds the recording." }],
+      },
+      { duration: 10 },
+    ).reason,
+    /extends beyond recording duration/,
+  );
+
+  const silent = validateTranscript(
+    {
+      sourceKind: "non-speech",
+      language: "und",
+      segments: [],
+      reason: "music only",
+    },
+    { duration: 10 },
+  );
+  assert.equal(silent.valid, true);
+  assert.equal(silent.transcript.sourceKind, "non-speech");
+  assert.match(rawTranscriptJson(silent.transcript), /music only/);
+  assert.match(
+    validateTranscript({
+      sourceKind: "non-speech",
+      language: "und",
+      segments: [{ start: 0, end: 1, text: "speech" }],
+      reason: "music only",
+    }).reason,
+    /contains speech segments/,
+  );
+});
+
 test("rejects formatting that keeps neither timestamps nor protected notation", () => {
   assert.throws(
     () =>

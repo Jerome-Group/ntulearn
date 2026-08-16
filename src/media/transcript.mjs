@@ -6,6 +6,7 @@ const TIMESTAMP_RANGE =
   /^(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})\s+-->\s+(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})/;
 const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
 const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^]/g;
+const SOURCE_KINDS = new Set(["provider", "generated", "non-speech"]);
 // eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
 const NON_ASCII_RUN = /[^\x00-\x7F]+/g;
 
@@ -15,6 +16,7 @@ export function parseProviderTranscript(value) {
   const segments = segmentValues(parsed);
   if (!segments) throw new Error("provider transcript has no supported segments");
   return {
+    sourceKind: "provider",
     language: value?.language ?? value?.lang ?? parsed.language ?? parsed.lang ?? "und",
     segments,
   };
@@ -22,7 +24,7 @@ export function parseProviderTranscript(value) {
 
 export function validateTranscript(
   transcript,
-  { duration, speechDuration, coverageRatio = 0.5 } = {},
+  { duration, speechDuration, coverageRatio = 0.5, allowMissingDuration = false } = {},
 ) {
   let normalized;
   try {
@@ -31,6 +33,12 @@ export function validateTranscript(
     return { valid: false, reason: error.message };
   }
 
+  if (normalized.sourceKind === "non-speech") {
+    if (normalized.segments.length) {
+      return { valid: false, reason: "non-speech source contains speech segments" };
+    }
+    return { valid: true, transcript: normalized };
+  }
   if (!normalized.segments.length) return { valid: false, reason: "it contains no segments" };
   if (!normalized.segments.some(({ text }) => /[\p{L}\p{N}]/u.test(text))) {
     return { valid: false, reason: "it contains no meaningful speech text" };
@@ -54,9 +62,15 @@ export function validateTranscript(
 
   const expectedDuration = numberOrNull(speechDuration ?? duration);
   if (expectedDuration === null || expectedDuration <= 0) {
+    if (allowMissingDuration) return { valid: true, transcript: normalized };
     return { valid: false, reason: "recording duration is unavailable for coverage validation" };
   }
   const lastEnd = normalized.segments.at(-1).end;
+  const recordingDuration = numberOrNull(duration) ?? expectedDuration;
+  const tolerance = Math.max(2, recordingDuration * 0.05);
+  if (lastEnd > recordingDuration + tolerance) {
+    return { valid: false, reason: "it extends beyond recording duration" };
+  }
   if (lastEnd < expectedDuration * coverageRatio) {
     return {
       valid: false,
@@ -68,6 +82,9 @@ export function validateTranscript(
 }
 
 export function normalizeTranscript(transcript) {
+  const sourceKind = String(transcript?.sourceKind ?? "provider").trim() || "provider";
+  if (!SOURCE_KINDS.has(sourceKind))
+    throw new Error(`unsupported transcript source kind: ${sourceKind}`);
   const language = String(transcript?.language ?? "und").trim() || "und";
   const segments = (transcript?.segments ?? []).map((segment) => {
     const start = numberOrNull(segment.start);
@@ -78,7 +95,13 @@ export function normalizeTranscript(transcript) {
     }
     return { start, end, text };
   });
-  return { language, segments };
+  const normalized = { sourceKind, language, segments };
+  if (sourceKind === "non-speech") {
+    const reason = String(transcript?.reason ?? "").trim();
+    if (!reason) throw new Error("non-speech source needs a reason");
+    normalized.reason = reason;
+  }
+  return normalized;
 }
 
 export function rawTranscriptJson(transcript) {

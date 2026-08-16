@@ -6,7 +6,7 @@ export const LOCAL_FORMATTING_RULES = Object.freeze([
   "Do not emit timestamps in the Markdown derivative.",
 ]);
 
-export function createLocalFormatter({ model, version, maxSegments = 24 }) {
+export function createLocalFormatter({ model, version, maxSegments = 24, maxDuration = 120 }) {
   if (!model || typeof model.generate !== "function") {
     throw new Error("Local formatter needs a model.generate adapter.");
   }
@@ -16,6 +16,9 @@ export function createLocalFormatter({ model, version, maxSegments = 24 }) {
   if (!Number.isSafeInteger(maxSegments) || maxSegments <= 0) {
     throw new Error("Local formatter maxSegments must be a positive safe integer.");
   }
+  if (!Number.isFinite(maxDuration) || maxDuration <= 0) {
+    throw new Error("Local formatter maxDuration must be positive.");
+  }
 
   return {
     version,
@@ -23,7 +26,7 @@ export function createLocalFormatter({ model, version, maxSegments = 24 }) {
     // Chunks are sent one at a time so the local model never needs the whole lecture in memory and
     // cannot reorder segments across a boundary. The job's semantic guards inspect the joined text.
     async format({ appearance, language, segments }) {
-      const chunks = chunk(segments, maxSegments);
+      const chunks = chunk(segments, maxSegments, maxDuration);
       const outputs = [];
       const limitations = [];
       for (const segmentChunk of chunks) {
@@ -43,10 +46,21 @@ export function createLocalFormatter({ model, version, maxSegments = 24 }) {
   };
 }
 
-function chunk(values, size) {
+function chunk(values, maxSegments, maxDuration) {
   const chunks = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
+  let current = [];
+  for (const value of values) {
+    if (value.end - value.start > maxDuration) {
+      throw new Error("Local formatter received a segment longer than maxDuration.");
+    }
+    const first = current[0];
+    const elapsed = first ? value.end - first.start : 0;
+    if (current.length && (current.length >= maxSegments || elapsed > maxDuration)) {
+      chunks.push(current);
+      current = [];
+    }
+    current.push(value);
   }
+  if (current.length) chunks.push(current);
   return chunks;
 }
