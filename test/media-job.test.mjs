@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import test from "node:test";
-import { createLocalFormatter } from "../src/media/formatter.mjs";
 import { runMediaJob } from "../src/media/job.mjs";
 
 test("runs the provider transcript and independent media paths through one pure job seam", async () => {
@@ -52,16 +51,17 @@ test("runs the provider transcript and independent media paths through one pure 
       };
     },
   };
-  const formatter = createLocalFormatter({
-    version: "local-test-formatter-1",
-    model: {
-      async generate({ segments }) {
-        calls.push("format");
-        assert.equal(segments.length, 2);
-        return { markdown: `# Lecture\n\n${segments.map(({ text }) => text).join(" ")}` };
-      },
+  const model = {
+    async generate({ segments }) {
+      calls.push("format");
+      assert.equal(segments.length, 2);
+      return { markdown: `# Lecture\n\n${segments.map(({ text }) => text).join(" ")}` };
     },
-  });
+  };
+  const formatter = {
+    version: "local-test-formatter-1",
+    format: ({ segments }) => model.generate({ segments }),
+  };
   const storage = {
     async write({ kind, content }) {
       writes.push({ kind, content });
@@ -165,6 +165,51 @@ test("rejects an invalid provider transcript after still attempting media acquis
     ["provider-transcript", "media", "status"],
   );
   assert.match(writes.at(-1).content, /local transcription is not configured/i);
+});
+
+test("does not preserve provider transcript bytes that contain session material", async () => {
+  const writes = [];
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        return {
+          duration: 10,
+          transcript: {
+            body: JSON.stringify({
+              language: "en",
+              segments: [
+                { start: 0, end: 10, text: "Caption https://video.test/caption?ks=session-secret" },
+              ],
+            }),
+            filename: "captions.json",
+          },
+        };
+      },
+      async transcript(resolved) {
+        return resolved.transcript;
+      },
+      async media() {
+        return { kind: "video", body: Buffer.from("video"), filename: "lecture.mp4" };
+      },
+    },
+    formatter: { version: "unused", format: async () => ({ markdown: "unused" }) },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, false);
+  assert.match(result.limitation, /session-bound address/i);
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ["media", "status"],
+  );
+  assert.doesNotMatch(JSON.stringify(writes), /session-secret|ks=/);
 });
 
 test("rejects formatted output that loses a number or timestamp", async () => {

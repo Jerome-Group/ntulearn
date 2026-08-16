@@ -39,23 +39,34 @@ export async function runMediaJob({
     }
 
     if (nativeTranscript !== null && nativeTranscript !== undefined) {
-      artifacts.providerTranscript = await storage.write({
-        appearance,
-        kind: "provider-transcript",
-        content: nativeBody(nativeTranscript),
-        filename: nativeTranscript.filename ?? "transcript.provider",
-      });
-
+      let providerBody;
       try {
-        const parsed = parseProviderTranscript(nativeTranscript);
-        const checked = validateTranscript(parsed, {
-          duration: resolved.duration,
-          speechDuration: resolved.speechDuration,
-        });
-        if (checked.valid) source = checked.transcript;
-        else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+        const body = nativeBody(nativeTranscript);
+        assertSafeProviderTranscript(body);
+        providerBody = body;
       } catch (error) {
         limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+      }
+
+      if (providerBody !== undefined) {
+        artifacts.providerTranscript = await storage.write({
+          appearance,
+          kind: "provider-transcript",
+          content: providerBody,
+          filename: nativeTranscript.filename ?? "transcript.provider",
+        });
+
+        try {
+          const parsed = parseProviderTranscript(nativeTranscript);
+          const checked = validateTranscript(parsed, {
+            duration: resolved.duration,
+            speechDuration: resolved.speechDuration,
+          });
+          if (checked.valid) source = checked.transcript;
+          else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+        } catch (error) {
+          limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+        }
       }
     } else {
       limitations.push("No provider transcript was exposed.");
@@ -260,6 +271,13 @@ function nativeBody(value) {
   if (Buffer.isBuffer(body)) return body;
   if (typeof body === "string") return body;
   return Buffer.from(JSON.stringify(body));
+}
+
+function assertSafeProviderTranscript(body) {
+  const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
+  if (/\b(?:ks|token|session|signature)\s*=/i.test(text)) {
+    throw new Error("provider transcript contains a session-bound address");
+  }
 }
 
 function statusMarkdown({

@@ -1,4 +1,6 @@
 import { attachmentName, externalLinkOf, isFolder } from "../ntulearn/content.mjs";
+import { attachmentPlacement, placedFile, placementsIn } from "../placement.mjs";
+import { orderedName } from "../paths.mjs";
 import { kalturaReferenceOf } from "./kaltura.mjs";
 
 const EMBED = /<(iframe|object|embed)\b([^>]*)>/gi;
@@ -7,8 +9,6 @@ const ATTRIBUTE = /\b(src|href|data)\s*=\s*(["'])(.*?)\2/gi;
 const JSON_ATTRIBUTE = /\bdata-bbfile\s*=\s*(["'])(.*?)\1/i;
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".m4a", ".mp3", ".ogg", ".wav"]);
-// eslint-disable-next-line no-control-regex -- control characters are what this strips
-const RESERVED_CHARACTERS = /[\\/:*?"<>|\x00-\x1F]/g;
 
 export function discoverContentRecordings({ course, snapshot, attachmentsByItem = new Map() }) {
   const placements = placementsIn(snapshot.items ?? []);
@@ -66,11 +66,11 @@ function appearance({ course, item, placement, providerReference, sourceKind, at
 function mediaPlacement({ course, item, placement, attachment }) {
   const itemName = orderedName(item.position, item.title);
   const itemFile = placedFile(placement, itemName, `${item.title}.md`);
-  const attachedVideo = isVideoOrAudio(attachment)
+  const attachedMedia = isVideoOrAudio(attachment)
     ? attachmentPlacement(placement, item, attachment)
     : null;
-  const stem = attachedVideo
-    ? withoutExtension(attachedVideo.path)
+  const stem = attachedMedia
+    ? withoutExtension(attachedMedia.path)
     : withoutExtension(itemFile.path);
   const directory = placement.segments.join("/");
 
@@ -79,53 +79,14 @@ function mediaPlacement({ course, item, placement, attachment }) {
     directorySegments: [...placement.segments],
     trail: placement.trail,
     linkPath: itemFile.path,
-    videoPath: attachedVideo?.path ?? `${stem}.mp4`,
-    videoAlreadyPresent: attachedVideo !== null,
+    videoPath: isVideo(attachment) ? attachedMedia.path : `${stem}.mp4`,
+    videoAlreadyPresent: isVideo(attachment),
+    audioPath: isAudio(attachment) ? attachedMedia.path : `${stem}.m4a`,
+    audioAlreadyPresent: isAudio(attachment),
     formattedTranscriptPath: `${stem}.transcript.md`,
     statusPath: `${stem}.media-status.md`,
     directory,
   };
-}
-
-function placementsIn(items) {
-  const itemsById = new Map(items.map((item) => [item.id, item]));
-  return new Map(items.map((item) => [item.id, placementOf(item, itemsById)]));
-}
-
-function placementOf(item, itemsById) {
-  const folders = [];
-  for (let each = item; each; each = itemsById.get(each.parentId)) {
-    if (isFolder(each)) folders.unshift(each);
-  }
-  return {
-    trail: folders.map((folder) => folder.title).join(" › "),
-    segments: folders.map((folder) => orderedName(folder.position, folder.title)),
-  };
-}
-
-function attachmentPlacement(placement, item, attachment) {
-  const file = attachmentName(item, attachment);
-  return placedFile(placement, orderedName(item.position, file), file);
-}
-
-function placedFile(placement, name, file = name) {
-  const segments = [...placement.segments, name];
-  return { file, trail: placement.trail, segments, path: segments.join("/") };
-}
-
-function orderedName(position, name) {
-  return `${String((position ?? 0) + 1).padStart(2, "0")} ${safeSegment(name)}`;
-}
-
-function safeSegment(value) {
-  return (
-    String(value ?? "")
-      .normalize("NFKC")
-      .replace(RESERVED_CHARACTERS, "_")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/^\.+/, "") || "untitled"
-  );
 }
 
 function attachmentCandidates(attachments) {
@@ -194,11 +155,23 @@ function isLaunchLink(item) {
 }
 
 function isVideoOrAudio(attachment) {
+  return isVideo(attachment) || isAudio(attachment);
+}
+
+function isVideo(attachment) {
   if (!attachment) return false;
-  if (/^(?:audio|video)\//i.test(attachment.mimeType ?? "")) return true;
+  if (/^video\//i.test(attachment.mimeType ?? "")) return true;
   const name = attachmentName({ title: "" }, attachment).toLowerCase();
   const extension = name.slice(name.lastIndexOf("."));
-  return VIDEO_EXTENSIONS.has(extension) || AUDIO_EXTENSIONS.has(extension);
+  return VIDEO_EXTENSIONS.has(extension);
+}
+
+function isAudio(attachment) {
+  if (!attachment) return false;
+  if (/^audio\//i.test(attachment.mimeType ?? "")) return true;
+  const name = attachmentName({ title: "" }, attachment).toLowerCase();
+  const extension = name.slice(name.lastIndexOf("."));
+  return AUDIO_EXTENSIONS.has(extension);
 }
 
 function withoutExtension(path) {

@@ -25,7 +25,7 @@ export function createMediaStorage({ mediaRoot, volumeRoot, write = writeAtomica
   };
 }
 
-function targetFor({ root, appearance, kind, filename }) {
+function targetFor({ root, appearance, kind, mediaKind, filename }) {
   const recordingRoot = join(root, "recordings", recordingKey(appearance.recordingId));
   if (kind === "provider-transcript") {
     return { path: join(recordingRoot, "provider", safeFilename(filename, "transcript.provider")) };
@@ -33,7 +33,11 @@ function targetFor({ root, appearance, kind, filename }) {
   if (kind === "raw-transcript") return { path: join(recordingRoot, "transcript.raw.json") };
   if (kind === "metadata") return { path: join(recordingRoot, "transcript.metadata.json") };
   if (kind === "media") {
-    return { path: visiblePath(appearance, appearance.placement.videoPath) };
+    const relativePath =
+      mediaKind === "audio"
+        ? (appearance.placement.audioPath ?? appearance.placement.videoPath)
+        : appearance.placement.videoPath;
+    return { path: visiblePath(appearance, relativePath) };
   }
   if (kind === "formatted-transcript") {
     return { path: visiblePath(appearance, appearance.placement.formattedTranscriptPath) };

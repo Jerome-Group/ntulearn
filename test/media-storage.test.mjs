@@ -20,6 +20,7 @@ test("keeps source artifacts in Media and visible content-tree derivatives besid
       destination,
       directorySegments: ["01 Lectures"],
       videoPath: "01 Lectures/01 Lecture.mp4",
+      audioPath: "01 Lectures/01 Lecture.m4a",
       formattedTranscriptPath: "01 Lectures/01 Lecture.transcript.md",
       statusPath: "01 Lectures/01 Lecture.media-status.md",
       videoAlreadyPresent: false,
@@ -49,15 +50,24 @@ test("keeps source artifacts in Media and visible content-tree derivatives besid
     filename: "lecture.mp4",
     content: Buffer.from("video"),
   });
+  const audio = await storage.write({
+    appearance,
+    kind: "media",
+    mediaKind: "audio",
+    filename: "lecture.m4a",
+    content: Buffer.from("audio"),
+  });
 
   assert.match(raw.path, /RAID0[\\/]Media[\\/]recordings[\\/]/);
   assert.equal(provider.path.endsWith("/provider/captions.json"), true);
   assert.doesNotMatch(provider.path, /session-secret|https?:/);
   assert.equal(formatted.path, join(destination, "01 Lectures/01 Lecture.transcript.md"));
   assert.equal(media.path, join(destination, "01 Lectures/01 Lecture.mp4"));
+  assert.equal(audio.path, join(destination, "01 Lectures/01 Lecture.m4a"));
   assert.equal(await readFile(raw.path, "utf8"), '{"language":"en"}\n');
   assert.equal(await readFile(formatted.path, "utf8"), "# Lecture\n");
   assert.equal(await readFile(media.path, "utf8"), "video");
+  assert.equal(await readFile(audio.path, "utf8"), "audio");
 });
 
 test("does not replace a video attachment that already supplies the content-tree sibling", async () => {
