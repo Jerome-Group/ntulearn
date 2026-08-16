@@ -219,6 +219,17 @@ function validateFormattedArtifact({
       regenerationRequired: true,
     };
   }
+  if (regenerate) {
+    return {
+      formattedTranscript: null,
+      formattedReplacement: {
+        path: artifact.path,
+        sha256: transcriptDigest(textContent(artifact.content)),
+        sourceSha256,
+      },
+      regenerationRequired: true,
+    };
+  }
   try {
     const content = assertFormattedTranscript(textContent(artifact.content), segments);
     const sha256 = transcriptDigest(content);
@@ -231,13 +242,7 @@ function validateFormattedArtifact({
   } catch {
     return {
       formattedTranscript: null,
-      formattedReplacement: regenerate
-        ? {
-            path: artifact.path,
-            sha256: transcriptDigest(textContent(artifact.content)),
-            sourceSha256,
-          }
-        : null,
+      formattedReplacement: null,
       regenerationRequired: true,
     };
   }

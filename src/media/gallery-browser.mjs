@@ -3,21 +3,45 @@ import { discoverMediaGallery, isMediaCourseEnabled } from "./gallery.mjs";
 import { publicMediaError } from "./errors.mjs";
 
 const MAX_GALLERY_PAGES = 100;
+const MAX_CONTENT_LOADS = 100;
+const MAX_GALLERY_FRAME_POLLS = 60;
 const GALLERY_TRIGGER = /media\s+gallery/i;
 const MORE_CONTROL =
   /load\s+more|show\s+more|\bnext(?:\s+page)?\b|\bmore\s+(?:recordings?|videos?|items?)\b/i;
 const PAGE_CONTROL = /\bpage\s*\d+\b|^\d+$/i;
+const MEDIA_DATE =
+  /\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s*,\s*(\d{4})\b(?:\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(AM|PM)?)?/i;
+const MONTHS = new Map([
+  ["january", "01"],
+  ["february", "02"],
+  ["march", "03"],
+  ["april", "04"],
+  ["may", "05"],
+  ["june", "06"],
+  ["july", "07"],
+  ["august", "08"],
+  ["september", "09"],
+  ["october", "10"],
+  ["november", "11"],
+  ["december", "12"],
+]);
 
 export async function readKalturaMediaGallery({ page, course }) {
   if (!isMediaCourseEnabled(course)) return discoverMediaGallery({ course, pages: null });
 
   try {
     const surface = await openGallerySurface(page, course.courseId);
+    if (!surface) return absentGallery();
     const pages = await collectMediaGalleryPages({
       readPage: () => readGalleryPage(surface),
       clickLoadMore: () => clickGalleryMore(surface),
     });
-    return discoverMediaGallery({ course, pages });
+    const enrichedPages = await enrichGalleryDates({
+      page,
+      pages,
+      baseUrl: typeof surface.url === "function" ? surface.url() : null,
+    });
+    return discoverMediaGallery({ course, pages: enrichedPages });
   } catch (error) {
     return inaccessibleGallery(publicError(error, page));
   }
@@ -61,9 +85,14 @@ async function openGallerySurface(page, courseId) {
     throw new Error("Media Gallery needs the signed-in browser page.");
   }
   await page.goto(courseUrl(courseId), { waitUntil: "domcontentloaded" });
+  if (typeof page.waitForLoadState === "function") {
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  }
+  await waitForCourseContent(page);
+  await loadLazyCourseContent(page);
 
   const trigger = await findGalleryTrigger(page);
-  if (!trigger) throw new Error("Kaltura Media Gallery LTI surface is not visible in the course.");
+  if (!trigger) return (await courseContentIsExhausted(page)) ? null : missingGallerySurface();
 
   const popup =
     typeof page.waitForEvent === "function"
@@ -76,6 +105,61 @@ async function openGallerySurface(page, courseId) {
     await surface.waitForLoadState("domcontentloaded").catch(() => {});
   }
   return findGalleryFrame(surface);
+}
+
+async function courseContentIsExhausted(page) {
+  if (typeof page.locator !== "function") return false;
+  const controls = page.locator('button[data-analytics-id*="loadMoreButton"]');
+  if ((await controls.count()) > 0) {
+    const control = controls.first();
+    if (await controlIsDisabled(control)) return true;
+    return false;
+  }
+  const body = page.locator("body");
+  const text = typeof body?.innerText === "function" ? await body.innerText().catch(() => "") : "";
+  return /no more content items to load/i.test(text);
+}
+
+async function waitForCourseContent(page) {
+  if (typeof page.waitForFunction !== "function") return;
+  await page
+    .waitForFunction(
+      () =>
+        Boolean(document.querySelector('button[data-analytics-id*="loadMoreButton"]')) ||
+        Boolean(document.querySelector("a[data-launch-handle]")) ||
+        /no more content items to load|media gallery/i.test(document.body?.innerText ?? ""),
+      undefined,
+      { timeout: 15_000 },
+    )
+    .catch(() => {});
+}
+
+async function loadLazyCourseContent(page) {
+  if (typeof page.locator !== "function") return;
+
+  const controls = page.locator('button[data-analytics-id*="loadMoreButton"]');
+  for (let attempt = 0; attempt < MAX_CONTENT_LOADS; attempt += 1) {
+    if ((await controls.count()) === 0) return;
+
+    const control = controls.first();
+    if (await controlIsDisabled(control)) return;
+
+    const body = page.locator("body");
+    const before =
+      typeof body?.innerText === "function" ? await body.innerText().catch(() => null) : null;
+    await control.evaluate((element) => element.click());
+    if (before !== null && typeof page.waitForFunction === "function") {
+      await page
+        .waitForFunction((previous) => (document.body?.innerText ?? "") !== previous, before, {
+          timeout: 5_000,
+        })
+        .catch(() => {});
+    } else if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(250);
+    }
+  }
+
+  throw new Error(`Course content pagination exceeded the ${MAX_CONTENT_LOADS}-page safety limit.`);
 }
 
 async function findGalleryTrigger(page) {
@@ -95,7 +179,7 @@ async function findGalleryTrigger(page) {
 }
 
 async function findGalleryFrame(surface) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_GALLERY_FRAME_POLLS; attempt += 1) {
     const allFrames = surface.frames?.() ?? [];
     const mainFrame = surface.mainFrame?.();
     const childFrames = allFrames.filter((frame) => frame !== mainFrame && frame !== surface);
@@ -112,7 +196,8 @@ async function findGalleryFrame(surface) {
       const bodyLocator = frame.locator?.("body");
       const body = bodyLocator ? await bodyLocator.innerText?.().catch(() => "") : "";
       if (frame !== surface && /media\s+gallery|load\s+more|show\s+more|total/i.test(body)) {
-        return frame;
+        const frameUrl = typeof frame.url === "function" ? frame.url() : "";
+        if (/\/channel\//i.test(frameUrl)) return frame;
       }
       if (
         frame === surface &&
@@ -131,6 +216,56 @@ async function readGalleryPage(surface) {
     throw new Error("Kaltura Media Gallery surface cannot be inspected.");
   }
   return surface.evaluate(extractGallerySnapshot);
+}
+
+async function enrichGalleryDates({ page, pages, baseUrl }) {
+  const missing = pages
+    .flatMap((galleryPage) => galleryPage.entries ?? [])
+    .filter((entry) => !entry?.createdAt && !entry?.creationDate && !entry?.created);
+  if (!missing.length || typeof page?.context !== "function" || !baseUrl) return pages;
+
+  const detail = await page.context().newPage();
+  const dates = new Map();
+  try {
+    for (const entry of missing) {
+      if (typeof entry?.href !== "string" || !entry.href.trim()) continue;
+      const target = new URL(entry.href, baseUrl).href;
+      if (!dates.has(target)) {
+        await detail.goto(target, { waitUntil: "domcontentloaded" });
+        const body = await detail
+          .locator("body")
+          .innerText()
+          .catch(() => "");
+        dates.set(target, parseMediaDetailCreatedAt(body));
+      }
+      const createdAt = dates.get(target);
+      if (createdAt) entry.createdAt = createdAt;
+    }
+  } finally {
+    await detail.close();
+  }
+  return pages;
+}
+
+export function parseMediaDetailCreatedAt(text) {
+  if (typeof text !== "string") return null;
+  const match = text.match(MEDIA_DATE);
+  if (!match) return null;
+  const day = match[1].padStart(2, "0");
+  const month = MONTHS.get(match[2].toLowerCase());
+  if (!month) return null;
+  const hour = mediaHour(match[4], match[6]);
+  const minute = match[5] ?? "00";
+  return `${match[3]}-${month}-${day}T${hour}:${minute}:00`;
+}
+
+function mediaHour(value, meridiem) {
+  if (!value) return "00";
+  let hour = Number(value);
+  if (!Number.isSafeInteger(hour) || hour < 1 || hour > 12) return "00";
+  if (meridiem?.toLowerCase() === "pm" && hour < 12) hour += 12;
+  if (meridiem?.toLowerCase() === "am" && hour === 12) hour = 0;
+  return String(hour).padStart(2, "0");
 }
 
 async function clickGalleryMore(surface) {
@@ -296,11 +431,7 @@ export function extractGallerySnapshot() {
       : baseIdentity;
     usedIdentities.add(identity);
 
-    const title =
-      card.getAttribute?.("data-title") ??
-      card.querySelector?.("[data-title],h1,h2,h3,h4")?.textContent?.trim() ??
-      anchor.textContent?.trim() ??
-      "";
+    const title = galleryTitle(card, anchor);
     const createdAt =
       card.getAttribute?.("data-created-at") ??
       card.getAttribute?.("data-creation-date") ??
@@ -326,11 +457,35 @@ export function extractGallerySnapshot() {
     });
   }
 
+  const total = explicitTotals[0] ?? displayedCount(bodyText);
   return {
-    displayedCount: explicitTotals[0] ?? displayedCount(bodyText),
+    displayedCount: total,
     entries,
     hasMore: hasMoreControl(),
   };
+  function galleryTitle(card, anchor) {
+    const explicit = card.getAttribute?.("data-title")?.trim();
+    if (explicit) return explicit;
+
+    const lines = String(card.innerText ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const readable = [...lines]
+      .reverse()
+      .find(
+        (line) =>
+          !/\bduration\b/i.test(line) &&
+          !/^\d{1,2}:\d{2}(?::\d{2})?/.test(line) &&
+          !/\b\d+\s+of\s+\d+\s*$/i.test(line),
+      );
+    return (
+      readable ??
+      card.querySelector?.("[data-title],h1,h2,h3,h4")?.textContent?.trim() ??
+      anchor.textContent?.trim() ??
+      ""
+    );
+  }
   function safeEntryReference(value) {
     const reference = String(value)
       .trim()
@@ -391,10 +546,20 @@ export function extractGallerySnapshot() {
       return null;
     }
     if (/\b(?:published|available|visible)\b/i.test(label)) return true;
+    if (hasMediaLink(card)) return true;
     return normalizedStatus ? true : null;
   }
 
+  function hasMediaLink(card) {
+    return (
+      /\/media\/t(?:\/|$)/i.test(card.getAttribute?.("href") ?? "") ||
+      Boolean(card.querySelector?.('a[href*="/media/t/"]'))
+    );
+  }
+
   function displayedCount(text) {
+    const media = text.match(/\b(\d+)\s+media\b/i)?.[1];
+    if (media !== undefined) return Number(media);
     const explicit =
       text.match(/(?:of|total(?:\s+recordings?)?)\s*[:#]?\s*(\d+)/i)?.[1] ??
       text.match(/\b(\d+)\s+(?:recordings?|videos?|items?)\b/i)?.[1];
@@ -462,6 +627,31 @@ function inaccessibleGallery(message) {
     limitations: [limitation],
     limitation,
   };
+}
+
+function absentGallery() {
+  return {
+    complete: true,
+    verdict: "green",
+    recordings: [],
+    queue: [],
+    displayedCount: 0,
+    discoveredCount: 0,
+    limitations: ["No Kaltura Media Gallery LTI surface is present in the fully loaded course."],
+    limitation: "No Kaltura Media Gallery LTI surface is present in the fully loaded course.",
+    galleryAvailable: false,
+  };
+}
+
+function missingGallerySurface() {
+  throw new Error(
+    "Kaltura Media Gallery LTI surface is not visible after course content loaded; run media discovery again after confirming the signed-in course page exposes Media Gallery.",
+  );
+}
+
+async function controlIsDisabled(control) {
+  if ((await control.isDisabled?.()) === true) return true;
+  return (await control.getAttribute?.("aria-disabled")) === "true";
 }
 
 function publicError(error, page) {

@@ -29,30 +29,55 @@ export async function acquireRepresentation({
   throwIfAborted(signal);
   const downloaded = await download(representation.url, withSignal({ fresh: true }, signal));
   throwIfAborted(signal);
-  const remuxed = await remux(
-    downloaded,
-    withSignal(
-      {
-        representation,
-        reencode: false,
-      },
-      signal,
-    ),
-  );
-  throwIfAborted(signal);
-  const body = Buffer.isBuffer(remuxed) ? remuxed : remuxed?.body;
-  if (!Buffer.isBuffer(body)) throw new Error(`${provider} ${kind} remux did not return bytes.`);
+  let remuxed;
+  try {
+    remuxed = await remux(
+      downloaded,
+      withSignal(
+        {
+          representation,
+          reencode: false,
+        },
+        signal,
+      ),
+    );
+    throwIfAborted(signal);
+    const body = Buffer.isBuffer(remuxed) ? remuxed : remuxed?.body;
+    const sourcePath = typeof remuxed?.path === "string" ? remuxed.path : null;
+    if (!Buffer.isBuffer(body) && !sourcePath) {
+      throw new Error(`${provider} ${kind} remux did not return bytes or a source path.`);
+    }
 
-  return {
-    kind,
-    body,
-    filename:
-      remuxed?.filename ??
-      representation.filename ??
-      `${representation.id ?? kind}.${kind === "audio" ? "m4a" : "mp4"}`,
-    quality: representation.height,
-    audio: kind === "audio" || (remuxed?.audio !== false && representation.audio !== false),
-  };
+    return {
+      kind,
+      ...(body ? { body } : {}),
+      ...(sourcePath ? { sourcePath } : {}),
+      ...(typeof remuxed?.cleanup === "function" ? { cleanup: remuxed.cleanup } : {}),
+      filename:
+        remuxed?.filename ??
+        representation.filename ??
+        `${representation.id ?? kind}.${kind === "audio" ? "m4a" : "mp4"}`,
+      quality: representation.height,
+      audio: kind === "audio" || (remuxed?.audio !== false && representation.audio !== false),
+    };
+  } catch (error) {
+    if (typeof remuxed?.cleanup === "function") {
+      try {
+        await remuxed.cleanup();
+      } catch (cleanupError) {
+        const wrapped = new Error(
+          `${publicMediaError(error)}; temporary media cleanup failed: ${publicMediaError(cleanupError)}; retry the media job after checking the RAID0 Media work directory`,
+          { cause: cleanupError },
+        );
+        if (error?.code) wrapped.code = error.code;
+        if (isGlobalMediaSafetyFailure(error) || isGlobalMediaSafetyFailure(cleanupError)) {
+          wrapped.globalSafety = true;
+        }
+        throw wrapped;
+      }
+    }
+    throw error;
+  }
 }
 
 export async function acquireWithAudioFallback({

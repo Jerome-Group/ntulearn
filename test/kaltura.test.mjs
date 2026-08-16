@@ -70,6 +70,94 @@ test("resolves fresh playback data and remuxes without re-encoding", async () =>
   });
 });
 
+test("passes a file-backed remux through without retaining a media buffer", async () => {
+  const cleanup = async () => {};
+  const provider = createKalturaProvider({
+    async resolveEntry() {
+      return { media: { video: [{ height: 720, url: "https://video.test/720" }] } };
+    },
+    async download() {
+      return { body: Buffer.from("transport bytes") };
+    },
+    async remux() {
+      return { path: "/Volumes/RAID0/Media/.runtime/work/lecture.mp4", cleanup };
+    },
+  });
+
+  const media = await provider.media(await provider.resolve({ providerReference: "entry:abc" }));
+
+  assert.equal(media.body, undefined);
+  assert.equal(media.sourcePath, "/Volumes/RAID0/Media/.runtime/work/lecture.mp4");
+  assert.equal(media.cleanup, cleanup);
+});
+
+test("cleans a file-backed remux when a checkpoint arrives before handoff", async () => {
+  const controller = new globalThis.AbortController();
+  let cleanupCalls = 0;
+  const checkpoint = new Error("04:00 checkpoint");
+  checkpoint.code = "MEDIA_CHECKPOINT";
+  const provider = createKalturaProvider({
+    async resolveEntry() {
+      return { media: { video: [{ height: 720, url: "https://video.test/720" }] } };
+    },
+    async download() {
+      return { body: Buffer.from("transport bytes") };
+    },
+    async remux() {
+      controller.abort(checkpoint);
+      return {
+        path: "/Volumes/RAID0/Media/.runtime/work/lecture.mp4",
+        cleanup: async () => {
+          cleanupCalls += 1;
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    provider.media(await provider.resolve({ providerReference: "entry:abc" }), {
+      signal: controller.signal,
+    }),
+    (error) => error === checkpoint,
+  );
+  assert.equal(cleanupCalls, 1);
+});
+
+test("preserves checkpoint and safety metadata when remux cleanup fails", async () => {
+  const controller = new globalThis.AbortController();
+  const checkpoint = new Error("04:00 checkpoint");
+  checkpoint.code = "MEDIA_CHECKPOINT";
+  const cleanupError = new Error("media volume is full");
+  cleanupError.code = "ENOSPC";
+  const provider = createKalturaProvider({
+    async resolveEntry() {
+      return { media: { video: [{ height: 720, url: "https://video.test/720" }] } };
+    },
+    async download() {
+      return { body: Buffer.from("transport bytes") };
+    },
+    async remux() {
+      controller.abort(checkpoint);
+      return {
+        path: "/Volumes/RAID0/Media/.runtime/work/lecture.mp4",
+        cleanup: async () => {
+          throw cleanupError;
+        },
+      };
+    },
+  });
+
+  await assert.rejects(
+    provider.media(await provider.resolve({ providerReference: "entry:abc" }), {
+      signal: controller.signal,
+    }),
+    (error) =>
+      error.code === "MEDIA_CHECKPOINT" &&
+      error.globalSafety === true &&
+      /retry the media job/.test(error.message),
+  );
+});
+
 test("aborts a hanging media download at the queue checkpoint", async () => {
   const controller = new globalThis.AbortController();
   let downloadOptions;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -84,6 +84,75 @@ test("runs a Gallery appearance through the existing media-job seam", async () =
     "state",
     "status",
   ]);
+});
+
+test("stores file-backed media before releasing its temporary source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-job-file-backed-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  const sourcePath = join(root, "runtime", "recording.mp4");
+  await mkdir(mediaRoot, { recursive: true });
+  await mkdir(join(root, "runtime"), { recursive: true });
+  await writeFile(sourcePath, "file-backed video");
+  const appearance = {
+    ...recordingAppearance(),
+    placement: {
+      ...recordingAppearance().placement,
+      destination: join(root, "course"),
+    },
+  };
+  const storage = createMediaStorage({ mediaRoot, volumeRoot });
+  let cleanupCalled = false;
+  let transcriberMedia;
+  const result = await runMediaJob({
+    appearance,
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        return { duration: 10 };
+      },
+      async transcript() {
+        return null;
+      },
+      async media() {
+        return {
+          kind: "video",
+          sourcePath,
+          filename: "lecture.mp4",
+          quality: 720,
+          audio: true,
+          cleanup: async () => {
+            cleanupCalled = true;
+            await unlink(sourcePath);
+          },
+        };
+      },
+    },
+    storage,
+    transcriber: {
+      version: "whisper-test",
+      async transcribe({ media }) {
+        transcriberMedia = media;
+        return {
+          sourceKind: "generated",
+          language: "en",
+          segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+        };
+      },
+      async release() {},
+    },
+    formatter: {
+      version: "formatter-test",
+      async format({ segments }) {
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(cleanupCalled, true);
+  assert.equal(transcriberMedia.body, undefined);
+  assert.equal(await readFile(transcriberMedia.path, "utf8"), "file-backed video");
 });
 
 test("persists media before a checkpoint so the next run does not reacquire it", async () => {
@@ -1002,6 +1071,93 @@ test("replaces a corrupt existing derivative without revisiting its source", asy
   const replacement = writes.find(({ kind }) => kind === "formatted-transcript");
   assert.equal(replacement.replaceProof.path, "course/Lecture.transcript.md");
   assert.equal(replacement.replaceProof.sha256, transcriptDigest(""));
+  assert.equal(replacement.replaceProof.sourceSha256, transcriptDigest(rawContent));
+});
+
+test("regenerates an owned formatted derivative when explicitly requested", async () => {
+  const writes = [];
+  let formatCalls = 0;
+  const rawContent = JSON.stringify({
+    sourceKind: "generated",
+    language: "en-SG",
+    segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+  });
+  const formattedPath = "course/Lecture.transcript.md";
+  const formattedContent = "The value is 2 + 2 = 4.";
+  const media = {
+    video: { available: true, path: "course/Lecture.mp4", quality: 720, audio: true },
+    audio: { available: true, path: "course/Lecture.mp4", quality: null, audio: true },
+  };
+  const stored = new Map([
+    ["raw-transcript", { path: "media/transcript.raw.json", content: rawContent }],
+    ["formatted-transcript", { path: formattedPath, content: formattedContent }],
+    [
+      "metadata",
+      {
+        path: "media/transcript.metadata.json",
+        content: JSON.stringify({
+          recordingId: recordingAppearance().recordingId,
+          provider: "kaltura",
+          sourceKind: "generated",
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest(formattedContent),
+          language: "en-SG",
+          formatterVersion: "formatter-1",
+          limitations: [],
+          media,
+        }),
+      },
+    ],
+    [
+      "state",
+      {
+        path: "media/transcript.state.json",
+        content: JSON.stringify({
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest(formattedContent),
+          media,
+          artifacts: { media: media.video.path, formattedTranscript: formattedPath },
+        }),
+      },
+    ],
+  ]);
+
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    regenerate: true,
+    provider: {
+      async resolve() {
+        throw new Error("explicit regeneration should not revisit the provider");
+      },
+    },
+    transcriber: {
+      async transcribe() {
+        throw new Error("explicit regeneration should not revisit ASR");
+      },
+    },
+    formatter: {
+      version: "formatter-2",
+      async format({ segments }) {
+        formatCalls += 1;
+        return { markdown: segments.map(({ text }) => text).join(" ") };
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return stored.get(kind) ?? null;
+      },
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(formatCalls, 1);
+  const replacement = writes.find(({ kind }) => kind === "formatted-transcript");
+  assert.equal(replacement.replaceProof.path, formattedPath);
+  assert.equal(replacement.replaceProof.sha256, transcriptDigest(formattedContent));
   assert.equal(replacement.replaceProof.sourceSha256, transcriptDigest(rawContent));
 });
 

@@ -344,15 +344,26 @@ function unavailableMedia() {
 }
 
 async function retainMedia({ appearance, storage, artifacts, media, acquired }) {
-  const artifact = await storage.write({
-    appearance,
-    kind: "media",
-    mediaKind: acquired.kind,
-    content: acquired.body,
-    filename: acquired.filename,
-  });
+  let artifact;
+  try {
+    artifact = await storage.write({
+      appearance,
+      kind: "media",
+      mediaKind: acquired.kind,
+      ...(acquired.sourcePath ? { sourcePath: acquired.sourcePath } : { content: acquired.body }),
+      filename: acquired.filename,
+    });
+  } finally {
+    if (typeof acquired.cleanup === "function") await acquired.cleanup();
+  }
   artifacts.media = artifact;
-  const acquiredMedia = { ...acquired, path: artifact.path };
+  const acquiredMedia = {
+    kind: acquired.kind,
+    path: artifact.path,
+    audio: acquired.audio !== false,
+    quality: acquired.quality ?? null,
+    ...(acquired.body ? { body: acquired.body } : {}),
+  };
   const nextMedia = { ...media };
   nextMedia[acquired.kind] = {
     available: true,

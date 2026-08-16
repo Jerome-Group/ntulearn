@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { markGlobalMediaSafety } from "./errors.mjs";
@@ -20,9 +20,21 @@ export function createMediaStorage({
   const root = assertMediaRoot(mediaRoot, volumeRoot);
 
   return {
-    async write({ appearance, kind, mediaKind, content, filename, replace, replaceProof = null }) {
+    async write({
+      appearance,
+      kind,
+      mediaKind,
+      content,
+      sourcePath,
+      filename,
+      replace,
+      replaceProof = null,
+    }) {
       if (replace !== undefined) {
         throw new Error("Replacement requires a proof-bearing formatted transcript request.");
+      }
+      if (content !== undefined && sourcePath !== undefined) {
+        throw new Error("Media storage accepts content or sourcePath, not both.");
       }
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
       if (replaceProof) {
@@ -46,7 +58,8 @@ export function createMediaStorage({
       }
       try {
         await mkdir(dirname(target.path), { recursive: true });
-        await write(target.path, content);
+        if (sourcePath !== undefined) await copyAtomically(sourcePath, target.path);
+        else await write(target.path, content);
       } catch (error) {
         throw markGlobalMediaSafety(error);
       }
@@ -63,6 +76,17 @@ export function createMediaStorage({
       }
     },
   };
+}
+
+async function copyAtomically(source, target) {
+  const partial = `${target}.part-${randomUUID()}`;
+  try {
+    await copyFile(source, partial);
+    await rename(partial, target);
+  } catch (error) {
+    await unlink(partial).catch(() => {});
+    throw error;
+  }
 }
 
 function targetFor({ root, appearance, kind, mediaKind, filename }) {
