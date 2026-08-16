@@ -11,8 +11,8 @@ MIT licensed and public — `docs/adr/0002`.
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
 than a Tuesday. The local media runtime, Kaltura/YouTube/direct content-tree tracers, and
-fixture-driven Kaltura Media Gallery discovery are explicit and Owner-started; capture, queue
-execution and durable media completeness remain separate work.
+fixture-driven Kaltura Media Gallery discovery, and the controlled browser-playback fallback are
+explicit and Owner-started; queue execution and durable media completeness remain separate work.
 
 ## Commands
 
@@ -106,6 +106,13 @@ material and expiring provider addresses are never persisted. A transcript is co
 a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
 source provenance and status remain visible with the course artifacts.
+
+### Controlled browser-playback fallback
+
+Browser playback remains a last resort because it is more intrusive and less reproducible than
+provider retrieval. The fallback is limited to controls and media already visible to the signed-in
+student, checks for meaningful audio before capture, restores temporary routing on every exit, and
+keeps 2x disabled until Owner evidence proves it safe for one provider.
 
 ### Kaltura Media Gallery discovery
 
