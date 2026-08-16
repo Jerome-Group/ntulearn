@@ -21,6 +21,7 @@ test("runs a Gallery appearance through the existing media-job seam", async () =
     },
   };
   const writes = [];
+  let captureAttempted = false;
   const provider = {
     name: "kaltura",
     async resolve() {
@@ -58,11 +59,18 @@ test("runs a Gallery appearance through the existing media-job seam", async () =
   const result = await runMediaJob({
     appearance,
     provider,
+    playbackCapture: {
+      async media() {
+        captureAttempted = true;
+        throw new Error("capture must remain behind provider media");
+      },
+    },
     storage,
     formatter,
   });
 
   assert.equal(result.complete, true);
+  assert.equal(captureAttempted, false);
   assert.deepEqual(writes.sort(), [
     "formatted-transcript",
     "media",
@@ -247,6 +255,209 @@ test("rejects an invalid provider transcript after still attempting media acquis
     ["provider-transcript", "media", "state", "status"],
   );
   assert.match(writes.at(-1).content, /local transcription is not configured/i);
+});
+
+test("captures only after provider media is unavailable and sends captured audio through local ASR", async () => {
+  const events = [];
+  const writes = [];
+  const appearance = recordingAppearance();
+  const result = await runMediaJob({
+    appearance,
+    provider: {
+      name: "opaque-player",
+      async resolve() {
+        events.push("resolve");
+        return { duration: 10 };
+      },
+      async transcript() {
+        events.push("transcript");
+        return null;
+      },
+      async media() {
+        events.push("media");
+        return {
+          kind: "unavailable",
+          limitation: "Authenticated media retrieval exposed no usable representation.",
+          retryable: true,
+        };
+      },
+    },
+    playbackCapture: {
+      async media({ resolved }) {
+        events.push("capture");
+        assert.deepEqual(resolved, { duration: 10 });
+        return {
+          kind: "audio",
+          body: Buffer.from("captured lecture audio"),
+          filename: "lecture.m4a",
+          limitation: "Browser playback capture retained audio-only media.",
+        };
+      },
+    },
+    transcriber: {
+      version: "whisper-small.en",
+      async transcribe({ media }) {
+        events.push(`transcribe:${media.kind}`);
+        assert.equal(media.body.toString(), "captured lecture audio");
+        return {
+          language: "en-SG",
+          segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+        };
+      },
+      async release() {
+        events.push("release");
+      },
+    },
+    formatter: {
+      version: "formatter-1",
+      async format({ segments }) {
+        events.push("format");
+        return { markdown: segments[0].text };
+      },
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.deepEqual(events, [
+    "resolve",
+    "transcript",
+    "media",
+    "capture",
+    "transcribe:audio",
+    "release",
+    "format",
+  ]);
+  assert.equal(result.complete, true);
+  assert.equal(result.verdict, "yellow");
+  assert.equal(result.media.video.available, false);
+  assert.equal(result.media.audio.available, true);
+  assert.match(result.limitations.join(" "), /audio-only/);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /audio-only/);
+});
+
+test("exhausts provider paths before capture when provider resolution fails", async () => {
+  const events = [];
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider: {
+      name: "opaque-player",
+      async resolve() {
+        events.push("resolve");
+        throw new Error("provider metadata unavailable");
+      },
+      async transcript(resolved) {
+        events.push(`transcript:${resolved}`);
+        return null;
+      },
+      async media(resolved) {
+        events.push(`media:${resolved}`);
+        return { kind: "unavailable", limitation: "no authenticated media", retryable: true };
+      },
+    },
+    playbackCapture: {
+      async media({ resolved }) {
+        events.push(`capture:${resolved}`);
+        return { kind: "audio", body: Buffer.from("captured audio"), filename: "lecture.m4a" };
+      },
+    },
+    storage: {
+      async write({ kind }) {
+        return { path: `media/${kind}` };
+      },
+    },
+  });
+
+  assert.deepEqual(events, ["resolve", "transcript:null", "media:null", "capture:null"]);
+  assert.equal(result.complete, false);
+  assert.match(result.limitations.join(" "), /Provider resolution failed/);
+});
+
+test("does not retain capture output after a forced checkpoint", async () => {
+  const controller = new globalThis.AbortController();
+  const writes = [];
+  const provider = validProvider();
+  provider.media = async () => ({
+    kind: "unavailable",
+    limitation: "no authenticated media",
+    retryable: true,
+  });
+
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider,
+    playbackCapture: {
+      async media({ signal }) {
+        controller.abort(new Error("04:00 checkpoint"));
+        assert.equal(signal, controller.signal);
+        return { kind: "video", body: Buffer.from("must not commit") };
+      },
+    },
+    formatter: {
+      version: "formatter-1",
+      format: async () => ({ markdown: "The value is 2 + 2 = 4." }),
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+    signal: controller.signal,
+  });
+
+  assert.equal(result.complete, false);
+  assert.equal(result.stage, "red");
+  assert.equal(
+    writes.some(({ kind }) => kind === "media"),
+    false,
+  );
+  assert.match(result.limitations.join(" "), /interrupted/i);
+});
+
+test("keeps a silent browser fallback red even when the provider transcript is complete", async () => {
+  const writes = [];
+  const provider = validProvider();
+  provider.media = async () => ({
+    kind: "unavailable",
+    limitation: "Authenticated media retrieval exposed no usable representation.",
+    retryable: true,
+  });
+
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider,
+    playbackCapture: {
+      async media() {
+        return {
+          kind: "unavailable",
+          limitation: "Browser playback audio probe was silent or unintelligible; capture aborted.",
+          retryable: true,
+        };
+      },
+    },
+    formatter: {
+      version: "formatter-1",
+      format: async () => ({ markdown: "The value is 2 + 2 = 4." }),
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, false);
+  assert.equal(result.verdict, "red");
+  assert.equal(result.stage, "red");
+  assert.equal(result.retryable, true);
+  assert.match(result.limitation, /no usable representation/i);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /silent or unintelligible/i);
 });
 
 test("generates a transcript from acquired audio and releases ASR before formatting", async () => {
@@ -536,6 +747,104 @@ test("does not revisit a successful source and derivative during a routine run",
     ["state", "status"],
   );
   assert.equal(result.media.audio.available, true);
+});
+
+test("retries missing media capture without revisiting an existing source or derivative", async () => {
+  const appearance = recordingAppearance();
+  const rawContent = JSON.stringify({
+    sourceKind: "generated",
+    language: "en-SG",
+    segments: [{ start: 0, end: 10, text: "The value is 2 + 2 = 4." }],
+  });
+  const formattedContent = "The value is 2 + 2 = 4.\n";
+  const media = {
+    video: { available: false, path: null, quality: null, audio: false },
+    audio: { available: false, path: null, quality: null, audio: false },
+  };
+  const stored = new Map([
+    ["raw-transcript", { path: "media/transcript.raw.json", content: rawContent }],
+    ["formatted-transcript", { path: "course/Lecture.transcript.md", content: formattedContent }],
+    [
+      "metadata",
+      {
+        path: "media/transcript.metadata.json",
+        content: JSON.stringify({
+          recordingId: appearance.recordingId,
+          provider: "kaltura",
+          sourceKind: "generated",
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest(formattedContent),
+          language: "en-SG",
+          formatterVersion: "formatter-1",
+          limitations: [],
+          media,
+        }),
+      },
+    ],
+    [
+      "state",
+      {
+        path: "media/transcript.state.json",
+        content: JSON.stringify({
+          sourceSha256: transcriptDigest(rawContent),
+          formattedSha256: transcriptDigest(formattedContent),
+          media,
+          artifacts: {
+            rawTranscript: "media/transcript.raw.json",
+            formattedTranscript: "course/Lecture.transcript.md",
+          },
+        }),
+      },
+    ],
+  ]);
+  const events = [];
+  const result = await runMediaJob({
+    appearance,
+    provider: {
+      name: "kaltura",
+      async resolve() {
+        events.push("resolve");
+        return { duration: 10 };
+      },
+      async transcript() {
+        throw new Error("existing source should skip provider transcript");
+      },
+      async media() {
+        events.push("media");
+        return { kind: "unavailable", limitation: "direct media unavailable", retryable: true };
+      },
+    },
+    playbackCapture: {
+      async media() {
+        events.push("capture");
+        return { kind: "video", body: Buffer.from("captured video"), filename: "lecture.mp4" };
+      },
+    },
+    formatter: {
+      version: "formatter-2",
+      async format() {
+        throw new Error("existing derivative should skip formatting");
+      },
+    },
+    transcriber: {
+      async transcribe() {
+        throw new Error("existing source should skip ASR");
+      },
+    },
+    storage: {
+      async read({ kind }) {
+        return stored.get(kind) ?? null;
+      },
+      async write({ kind }) {
+        return { path: `media/${kind}` };
+      },
+    },
+  });
+
+  assert.deepEqual(events, ["resolve", "media", "capture"]);
+  assert.equal(result.complete, true);
+  assert.equal(result.media.video.available, true);
+  assert.equal(result.transcript.complete, true);
 });
 
 test("replaces a corrupt existing derivative without revisiting its source", async () => {

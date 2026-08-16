@@ -4,15 +4,18 @@ import { publicMediaError } from "./errors.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 
-// The worker has one public seam: providers resolve fresh data, storage owns placement, and the
-// formatter stays local. No resolved provider object crosses into the result or artifact metadata.
+// The worker has one public seam: providers and playback capture resolve fresh data, storage owns
+// placement, and the formatter stays local. No resolved provider object crosses into the result or
+// artifact metadata.
 export async function runMediaJob({
   appearance,
   provider,
+  playbackCapture = null,
   storage,
   formatter,
   transcriber,
   clock = () => new Date(),
+  signal,
 }) {
   const limitations = mediaLimitations(appearance);
   let retryable = appearance.retryable === true;
@@ -23,6 +26,7 @@ export async function runMediaJob({
   let source = null;
   let resolved = null;
   let nativeTranscript = null;
+  let captureFailed = false;
   const artifactsStore = createMediaArtifacts({ appearance, storage });
   const outcome = createMediaOutcome({ appearance, storage, clock });
   const existing = await artifactsStore.read();
@@ -40,7 +44,7 @@ export async function runMediaJob({
     );
   }
 
-  if (!existing || existing.replaceRawTranscript) {
+  if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
     try {
       resolved = await provider.resolve(appearance);
     } catch (error) {
@@ -48,7 +52,7 @@ export async function runMediaJob({
       limitations.push(`Provider resolution failed: ${publicMediaError(error)}`);
     }
 
-    if (resolved) {
+    if (!source) {
       try {
         nativeTranscript = await provider.transcript(resolved);
       } catch (error) {
@@ -77,8 +81,8 @@ export async function runMediaJob({
           try {
             const parsed = parseProviderTranscript(nativeTranscript);
             const checked = validateTranscript(parsed, {
-              duration: resolved.duration,
-              speechDuration: resolved.speechDuration,
+              duration: resolved?.duration,
+              speechDuration: resolved?.speechDuration,
             });
             if (checked.valid) source = checked.transcript;
             else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
@@ -89,40 +93,59 @@ export async function runMediaJob({
       } else {
         limitations.push("No provider transcript was exposed.");
       }
+    }
 
-      if (!acquiredMedia) {
-        try {
-          const acquired = await provider.media(resolved);
-          if (acquired?.kind === "video" || acquired?.kind === "audio") {
-            retryable ||= acquired.retryable === true;
-            limitations.push(...mediaLimitations(acquired));
-            const artifact = await storage.write({
-              appearance,
-              kind: "media",
-              mediaKind: acquired.kind,
-              content: acquired.body,
-              filename: acquired.filename,
-            });
-            artifacts.media = artifact;
-            acquiredMedia = { ...acquired, path: artifact.path };
-            media[acquired.kind] = {
-              available: true,
-              path: artifact.path,
-              quality: acquired.quality ?? null,
-              audio: acquired.audio !== false || acquired.kind === "audio",
-            };
-            if (acquired.kind === "video" && acquired.audio !== false) {
-              media.audio = { available: true, path: artifact.path, quality: null, audio: true };
-            }
-          } else {
-            retryable ||= acquired?.retryable === true;
-            limitations.push(...mediaLimitations(acquired, "Provider returned no usable media."));
-          }
-        } catch (error) {
-          retryable = true;
-          limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
+    if (!acquiredMedia) {
+      try {
+        const acquired = await provider.media(resolved);
+        if (acquired?.kind === "video" || acquired?.kind === "audio") {
+          retryable ||= acquired.retryable === true;
+          limitations.push(...mediaLimitations(acquired));
+          ({ acquiredMedia, media } = await retainMedia({
+            appearance,
+            storage,
+            artifacts,
+            media,
+            acquired,
+          }));
+        } else {
+          retryable ||= acquired?.retryable === true;
+          limitations.push(...mediaLimitations(acquired, "Provider returned no usable media."));
         }
+      } catch (error) {
+        retryable = true;
+        limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
       }
+    }
+  }
+
+  if (!acquiredMedia && playbackCapture) {
+    try {
+      const captured = await playbackCapture.media({ appearance, resolved, signal });
+      if (signal?.aborted) {
+        throw new Error("Browser playback capture interrupted; retry after the checkpoint.");
+      }
+      if (captured?.kind === "video" || captured?.kind === "audio") {
+        retryable ||= captured.retryable === true;
+        limitations.push(...mediaLimitations(captured));
+        ({ acquiredMedia, media } = await retainMedia({
+          appearance,
+          storage,
+          artifacts,
+          media,
+          acquired: captured,
+        }));
+      } else {
+        captureFailed = true;
+        retryable ||= captured?.retryable === true;
+        limitations.push(
+          ...mediaLimitations(captured, "Browser playback capture returned no usable media."),
+        );
+      }
+    } catch (error) {
+      captureFailed = true;
+      retryable = true;
+      limitations.push(captureErrorMessage(error));
     }
   }
 
@@ -159,8 +182,8 @@ export async function runMediaJob({
       sourceSha256,
       artifacts,
       limitations,
-      complete: true,
-      stage: "complete",
+      complete: !captureFailed,
+      stage: captureFailed ? "red" : "complete",
       retryable: retryable || undefined,
       formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
       existingMetadata: existing.metadata,
@@ -216,8 +239,8 @@ export async function runMediaJob({
           sourceSha256,
           artifacts,
           limitations,
-          complete: true,
-          stage: "complete",
+          complete: !captureFailed,
+          stage: captureFailed ? "red" : "complete",
           retryable: retryable || undefined,
           formatterVersion:
             source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
@@ -240,7 +263,7 @@ export async function runMediaJob({
     artifacts,
     limitations,
     complete: false,
-    stage: failureStage(limitations),
+    stage: failureStage(limitations, captureFailed),
     retryable: retryable || undefined,
     formatterVersion,
     transcriber,
@@ -264,6 +287,29 @@ function assertSafeProviderTranscript(body) {
 
 function unavailableMedia() {
   return { available: false, path: null, quality: null, audio: false };
+}
+
+async function retainMedia({ appearance, storage, artifacts, media, acquired }) {
+  const artifact = await storage.write({
+    appearance,
+    kind: "media",
+    mediaKind: acquired.kind,
+    content: acquired.body,
+    filename: acquired.filename,
+  });
+  artifacts.media = artifact;
+  const acquiredMedia = { ...acquired, path: artifact.path };
+  const nextMedia = { ...media };
+  nextMedia[acquired.kind] = {
+    available: true,
+    path: artifact.path,
+    quality: acquired.quality ?? null,
+    audio: acquired.audio !== false || acquired.kind === "audio",
+  };
+  if (acquired.kind === "video" && acquired.audio !== false) {
+    nextMedia.audio = { available: true, path: artifact.path, quality: null, audio: true };
+  }
+  return { acquiredMedia, media: nextMedia };
 }
 
 async function generateLocalTranscript({
@@ -328,7 +374,8 @@ function usableTranscriptionMedia(media) {
   );
 }
 
-function failureStage(limitations) {
+function failureStage(limitations, captureFailed = false) {
+  if (captureFailed) return "red";
   return limitations.some((limitation) =>
     /provider (?:resolution|transcript)|local transcription/i.test(limitation),
   )
@@ -345,4 +392,11 @@ function mediaLimitations(value, fallback = null) {
   if (value?.limitation) limitations.push(value.limitation);
   if (!limitations.length && fallback) limitations.push(fallback);
   return limitations;
+}
+
+function captureErrorMessage(error) {
+  const message = publicMediaError(error);
+  return /^(?:Browser playback capture failed|Playback cleanup failed):/.test(message)
+    ? message
+    : `Browser playback capture failed: ${message}`;
 }
