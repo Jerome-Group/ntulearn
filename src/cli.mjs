@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
 import { walkCourses } from "./courses.mjs";
 import { discoverContentRecordings } from "./media/discovery.mjs";
-import { discoverCourseMediaGallery } from "./media/workflow.mjs";
+import { discoverCourseMedia } from "./media/workflow.mjs";
 import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
@@ -105,7 +105,7 @@ async function mediaSetup(config) {
 
 async function mediaDiscover(config, key) {
   const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
-    const discovery = await discoverCourseMediaGallery({ client, course });
+    const discovery = await discoverCourseMedia({ client, course });
     if (!discovery.skipped) {
       const saved = await writeMediaQueue({
         statePath: config.statePath,
@@ -128,7 +128,7 @@ async function mediaWithdraw(config, key, recordingId, confirmation) {
   const loaded = await readMediaQueue({ statePath: config.statePath, courseKey: course.key });
   if (!loaded.record || !Array.isArray(loaded.record.queue)) {
     throw new Error(
-      `No durable Media Gallery queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
+      `No durable media queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
     );
   }
   const saved = await writeMediaQueue({

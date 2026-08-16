@@ -65,6 +65,39 @@ export async function setupMediaRuntime(media, options = {}) {
   return { manifestPath: runtime.manifest, runtime, artifacts: records };
 }
 
+export async function verifyMediaRuntime(media, options = {}) {
+  if (!media) {
+    throw new Error(
+      "Media runtime is not configured. Add media.mediaRoot and media.setup to config/courses.json.",
+    );
+  }
+  if (!media.setup) {
+    throw new Error(
+      "Media runtime is not prepared. Add media.setup, then run: npm run media:setup",
+    );
+  }
+
+  const fileSystem = options.fileSystem ?? defaultFileSystem();
+  const volumeRoot = options.volumeRoot ?? MEDIA_VOLUME_ROOT;
+  const mediaRoot = assertMediaRoot(media.mediaRoot, volumeRoot);
+  const runtime = mediaRuntimePaths(mediaRoot);
+  await verifyMediaStore({
+    mediaRoot,
+    runtime,
+    volumeRoot,
+    reserve: media.freeSpaceReserveBytes,
+    fileSystem,
+    options,
+  });
+  const manifest = await fileSystem.stat(runtime.manifest).catch(() => null);
+  if (!manifest?.isFile()) {
+    throw new Error(
+      `Media runtime is not prepared at ${runtime.manifest}. Run: npm run media:setup`,
+    );
+  }
+  return { mediaRoot, runtime, manifestPath: runtime.manifest };
+}
+
 async function verifyMediaStore({ mediaRoot, runtime, volumeRoot, reserve, fileSystem, options }) {
   const rootInfo = await fileSystem.stat(mediaRoot).catch(() => null);
   if (!rootInfo?.isDirectory()) {

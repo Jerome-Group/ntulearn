@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
+import { markGlobalMediaSafety } from "./errors.mjs";
 import { assertMediaRoot } from "./paths.mjs";
 
 // eslint-disable-next-line no-control-regex -- control characters cannot be filenames
@@ -28,17 +29,27 @@ export function createMediaStorage({
         assertReplacementProof({ kind, target, replaceProof });
         const current = await read(target.path).catch((error) => {
           if (error.code === "ENOENT") return null;
-          throw error;
+          throw markGlobalMediaSafety(error);
         });
         if (!current || digest(current) !== replaceProof.sha256) {
           throw new Error("Formatted transcript replacement proof is stale.");
         }
       }
-      if (!replaceProof && writeOnce(kind) && (await isFilePresent(target.path))) {
+      let alreadyPresent;
+      try {
+        alreadyPresent = !replaceProof && writeOnce(kind) && (await isFilePresent(target.path));
+      } catch (error) {
+        throw markGlobalMediaSafety(error);
+      }
+      if (alreadyPresent) {
         return { path: target.path, status: "existing" };
       }
-      await mkdir(dirname(target.path), { recursive: true });
-      await write(target.path, content);
+      try {
+        await mkdir(dirname(target.path), { recursive: true });
+        await write(target.path, content);
+      } catch (error) {
+        throw markGlobalMediaSafety(error);
+      }
       return { path: target.path, status: "written" };
     },
 
@@ -48,7 +59,7 @@ export function createMediaStorage({
         return { path: target.path, content: await read(target.path) };
       } catch (error) {
         if (error.code === "ENOENT") return null;
-        throw error;
+        throw markGlobalMediaSafety(error);
       }
     },
   };

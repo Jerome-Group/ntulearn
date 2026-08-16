@@ -11,8 +11,9 @@ MIT licensed and public — `docs/adr/0002`.
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
 than a Tuesday. The local media runtime, Kaltura/YouTube/direct content-tree tracers, and
-fixture-driven Kaltura Media Gallery discovery, and the controlled browser-playback fallback are
-explicit and Owner-started; queue execution and durable media completeness remain separate work.
+fixture-driven Kaltura Media Gallery discovery, controlled browser-playback fallback, and
+one-at-a-time queue worker are explicit and Owner-started; durable media completeness remains
+separate work.
 
 ## Commands
 
@@ -25,13 +26,23 @@ npm run sync -- all           # sync every configured course
 npm run verify -- all         # check what is on disk against NTULearn, writing nothing
 npm run renumber -- MH2500    # rename what is on disk back into the course's order today
 npm run media:setup            # Owner-started: prepare and verify the local media runtime
-npm run media:discover -- all  # Owner-started: discover and queue Gallery appearances
+npm run media:discover -- all  # Owner-started: discover and queue recording appearances
 npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # confirm one withdrawal
 ```
 
 `media:setup` is the only command that prepares media dependencies or models. Sync, verify,
-watchdog and future scheduled media runs never install anything. A successful or red Gallery
-discovery writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
+watchdog and future scheduled media runs never install anything. A successful media discovery
+writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
+
+The queue worker is `runMediaQueue` in `src/media/worker.mjs`. Its caller supplies the existing
+provider-backed media-job seam and an explicit media-runtime preflight (or `config.media`); the
+worker refuses to run without that safety check. `mode: "scheduled"` runs only from 00:00 through
+03:59 local time, checkpoints the active appearance at 04:00, and writes the independent
+`.data/media-latest.json` digest plus `.data/media-logs/`. `mode: "manual"` ignores that time
+boundary. Queue entries are `queued`, `active`, `checkpointed`, `complete`, or `red`; successful
+entries are skipped on later runs, while failures remain retryable. Runs share
+`.data/media-queue.lock`, so a manual run cannot overlap a scheduled one. The worker never calls
+`media:setup`.
 
 ## Configuration
 
@@ -125,9 +136,10 @@ provider transcripts, normalized sources, and working artifacts stay under the R
 Formatted transcripts and per-recording status stay under the course destination's `Media Gallery/`
 folder. Courses with `mediaMode: "off"` are never opened. The `media:discover` command emits the
 reconciled appearance queue but does not change `sync` or `verify`'s completeness verdict. The
-complete queue is the handoff to the existing media-job seam; the later queue worker supplies its
-provider, storage, formatter and ASR adapters. The queue artifact is the durable handoff; #105
-owns consuming it one job at a time.
+complete queue is the handoff to the existing media-job seam; the queue worker consumes it one
+job at a time and supplies the execution context (`course`, `signal`, `mode`, and
+`requestCheckpoint`) to the provider-backed runner. The queue artifact is the durable handoff; its
+independent worker digest never changes `sync` or `verify`'s completeness verdict.
 
 `media:withdraw` is the explicit confirmation route for one queued appearance. It writes a
 withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a

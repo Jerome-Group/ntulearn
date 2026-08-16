@@ -75,15 +75,19 @@ export function createYoutubeProvider({
   return {
     name: "youtube",
 
-    resolve(appearance) {
-      return resolveVideo({ reference: appearance.providerReference, fresh: true });
+    resolve(appearance, { signal } = {}) {
+      return resolveVideo({
+        reference: appearance.providerReference,
+        fresh: true,
+        ...(signal ? { signal } : {}),
+      });
     },
 
-    async transcript(resolved) {
+    async transcript(resolved, { signal } = {}) {
       const transcript =
         resolved?.transcript ?? resolved?.providerTranscript ?? selectCaption(resolved);
       if (!transcript) return null;
-      const fetched = await fetchCaptionBody(transcript, fetchTranscript);
+      const fetched = await fetchCaptionBody(transcript, fetchTranscript, signal);
       if (fetched) return fetched;
       if (typeof transcript === "string") {
         return {
@@ -98,7 +102,7 @@ export function createYoutubeProvider({
       };
     },
 
-    async media(resolved) {
+    async media(resolved, { signal } = {}) {
       const video = chooseRepresentation(videoRepresentations(resolved));
       const audio = chooseRepresentation(audioRepresentations(resolved), 0);
       if (video) {
@@ -108,6 +112,7 @@ export function createYoutubeProvider({
           download,
           remux,
           provider: "YouTube",
+          signal,
         });
       }
       if (audio) {
@@ -117,6 +122,7 @@ export function createYoutubeProvider({
           download,
           remux,
           provider: "YouTube",
+          signal,
         });
       }
 
@@ -156,14 +162,17 @@ function selectCaption(resolved) {
   return resolved?.caption ?? captions ?? null;
 }
 
-async function fetchCaptionBody(transcript, fetchTranscript) {
+async function fetchCaptionBody(transcript, fetchTranscript, signal) {
   if (!transcript || typeof transcript !== "object" || !fetchTranscript) return null;
   if (transcript.body !== undefined || transcript.content !== undefined || transcript.segments) {
     return null;
   }
   const address = transcript.url ?? transcript.baseUrl;
   if (typeof address !== "string" || !address) return null;
-  const fetched = await fetchTranscript(address, { fresh: true });
+  const fetched = await fetchTranscript(address, {
+    fresh: true,
+    ...(signal ? { signal } : {}),
+  });
   const body = fetched?.body ?? fetched?.content ?? fetched;
   if (body === undefined || body === null)
     throw new Error("YouTube caption fetch returned no body.");

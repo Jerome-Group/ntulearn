@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { runMediaJob } from "../src/media/job.mjs";
+import { createMediaStorage } from "../src/media/storage.mjs";
 import { transcriptDigest } from "../src/media/transcript.mjs";
 
 test("runs a Gallery appearance through the existing media-job seam", async () => {
@@ -80,6 +84,72 @@ test("runs a Gallery appearance through the existing media-job seam", async () =
     "state",
     "status",
   ]);
+});
+
+test("persists media before a checkpoint so the next run does not reacquire it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-job-resume-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  await mkdir(mediaRoot, { recursive: true });
+  const baseStorage = createMediaStorage({ mediaRoot, volumeRoot });
+  const appearance = {
+    ...recordingAppearance(),
+    placement: {
+      ...recordingAppearance().placement,
+      destination: join(root, "course"),
+    },
+  };
+  const controller = new globalThis.AbortController();
+  let mediaWrites = 0;
+  let mediaCalls = 0;
+  const storage = {
+    async write(value) {
+      const result = await baseStorage.write(value);
+      if (value.kind === "media") {
+        mediaWrites += 1;
+        const error = new Error("04:00 checkpoint");
+        error.code = "MEDIA_CHECKPOINT";
+        controller.abort(error);
+      }
+      return result;
+    },
+    read: baseStorage.read,
+  };
+  const provider = {
+    name: "kaltura",
+    async resolve() {
+      return { duration: 10 };
+    },
+    async transcript() {
+      return null;
+    },
+    async media() {
+      mediaCalls += 1;
+      return { kind: "video", body: Buffer.from("video"), filename: "lecture.mp4", audio: true };
+    },
+  };
+
+  const first = await runMediaJob({ appearance, provider, storage, signal: controller.signal });
+
+  assert.equal(first.stage, "checkpointed");
+  assert.equal(first.complete, false);
+  assert.equal(mediaWrites, 1);
+  assert.equal(mediaCalls, 1);
+
+  const second = await runMediaJob({
+    appearance,
+    provider: {
+      ...provider,
+      async media() {
+        throw new Error("resume must use retained media");
+      },
+    },
+    storage,
+  });
+
+  assert.equal(second.complete, false);
+  assert.equal(mediaWrites, 1);
+  assert.equal(mediaCalls, 1);
 });
 
 test("runs the provider transcript and independent media paths through one pure job seam", async () => {

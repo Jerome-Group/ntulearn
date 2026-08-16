@@ -78,11 +78,12 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
   return {
     name: "direct",
 
-    resolve(appearance) {
+    resolve(appearance, { signal } = {}) {
       return resolveMedia({
         reference: appearance.providerReference,
         ...(appearance.mediaType ? { kind: appearance.mediaType } : {}),
         fresh: true,
+        ...(signal ? { signal } : {}),
       });
     },
 
@@ -90,7 +91,7 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
       return resolved?.transcript ?? resolved?.providerTranscript ?? null;
     },
 
-    async media(resolved) {
+    async media(resolved, { signal } = {}) {
       const video = chooseRepresentation(videoRepresentations(resolved));
       const audio = chooseRepresentation(audioRepresentations(resolved), 0);
       if (video) {
@@ -100,6 +101,7 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
           download,
           remux,
           provider: "Direct",
+          signal,
         });
       }
       if (audio) {
@@ -109,6 +111,7 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
           download,
           remux,
           provider: "Direct",
+          signal,
         });
       }
 
@@ -120,6 +123,7 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
           download,
           remux,
           provider: "Direct",
+          signal,
         });
       }
 

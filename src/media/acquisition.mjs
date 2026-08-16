@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { publicMediaError } from "./errors.mjs";
+import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
 
 export function chooseRepresentation(representations, preferredHeight = 720) {
   const usable = (representations ?? [])
@@ -18,12 +18,28 @@ export function chooseRepresentation(representations, preferredHeight = 720) {
   );
 }
 
-export async function acquireRepresentation({ representation, kind, download, remux, provider }) {
-  const downloaded = await download(representation.url, { fresh: true });
-  const remuxed = await remux(downloaded, {
-    representation,
-    reencode: false,
-  });
+export async function acquireRepresentation({
+  representation,
+  kind,
+  download,
+  remux,
+  provider,
+  signal,
+}) {
+  throwIfAborted(signal);
+  const downloaded = await download(representation.url, withSignal({ fresh: true }, signal));
+  throwIfAborted(signal);
+  const remuxed = await remux(
+    downloaded,
+    withSignal(
+      {
+        representation,
+        reencode: false,
+      },
+      signal,
+    ),
+  );
+  throwIfAborted(signal);
   const body = Buffer.isBuffer(remuxed) ? remuxed : remuxed?.body;
   if (!Buffer.isBuffer(body)) throw new Error(`${provider} ${kind} remux did not return bytes.`);
 
@@ -39,7 +55,14 @@ export async function acquireRepresentation({ representation, kind, download, re
   };
 }
 
-export async function acquireWithAudioFallback({ video, audio, download, remux, provider }) {
+export async function acquireWithAudioFallback({
+  video,
+  audio,
+  download,
+  remux,
+  provider,
+  signal,
+}) {
   try {
     return await acquireRepresentation({
       representation: video,
@@ -47,8 +70,11 @@ export async function acquireWithAudioFallback({ video, audio, download, remux, 
       download,
       remux,
       provider,
+      signal,
     });
   } catch (videoError) {
+    throwIfAborted(signal);
+    throwIfGlobalSafety(videoError);
     if (!audio) {
       return {
         kind: "unavailable",
@@ -63,6 +89,7 @@ export async function acquireWithAudioFallback({ video, audio, download, remux, 
         download,
         remux,
         provider,
+        signal,
       });
       return {
         ...retained,
@@ -70,6 +97,8 @@ export async function acquireWithAudioFallback({ video, audio, download, remux, 
         limitation: `${provider} video acquisition failed: ${publicMediaError(videoError)}; retained audio-only media.`,
       };
     } catch (audioError) {
+      throwIfAborted(signal);
+      throwIfGlobalSafety(audioError);
       return {
         kind: "unavailable",
         limitation:
@@ -79,6 +108,21 @@ export async function acquireWithAudioFallback({ video, audio, download, remux, 
       };
     }
   }
+}
+
+function withSignal(options, signal) {
+  return signal ? { ...options, signal } : options;
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw new Error("Media acquisition interrupted; retry after the queue checkpoint.");
+}
+
+function throwIfGlobalSafety(error) {
+  if (isGlobalMediaSafetyFailure(error)) throw error;
 }
 
 function highestAtOrBelow(representations, height) {
