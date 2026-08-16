@@ -10,9 +10,9 @@ MIT licensed and public — `docs/adr/0002`.
 
 In use. Course pages, announcements and attachments sync today, and the command line and the
 shape of `config/courses.json` are settled — a change to either would be a breaking change rather
-than a Tuesday. The local media runtime foundation and the first Kaltura content-tree recording
-tracer are explicit and Owner-started; Media Gallery, local-ASR fallback, capture, queueing and
-durable media completeness remain separate work.
+than a Tuesday. The local media runtime, Kaltura content-tree tracer, and fixture-driven Kaltura
+Media Gallery discovery are explicit and Owner-started; capture, queue execution and durable
+media completeness remain separate work.
 
 ## Commands
 
@@ -25,10 +25,13 @@ npm run sync -- all           # sync every configured course
 npm run verify -- all         # check what is on disk against NTULearn, writing nothing
 npm run renumber -- MH2500    # rename what is on disk back into the course's order today
 npm run media:setup            # Owner-started: prepare and verify the local media runtime
+npm run media:discover -- all  # Owner-started: discover and queue Gallery appearances
+npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # confirm one withdrawal
 ```
 
 `media:setup` is the only command that prepares media dependencies or models. Sync, verify,
-watchdog and future scheduled media runs never install anything.
+watchdog and future scheduled media runs never install anything. A successful or red Gallery
+discovery writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
 
 ## Configuration
 
@@ -101,6 +104,25 @@ Session material and expiring provider addresses are never persisted. A transcri
 when both a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
 source provenance and status remain visible with the course artifacts.
+
+### Kaltura Media Gallery discovery
+
+Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the
+signed-in course surface, exhausts its visible `Load More`/pagination controls, and refuses to
+queue any appearance until the discovered visible count matches the Gallery's displayed total.
+Gallery order is retained; repeated provider entries remain separate appearances, and sanitized
+creation-time/title names receive a collision number only when necessary. Kaltura provider media,
+provider transcripts, normalized sources, and working artifacts stay under the RAID0 Media store.
+Formatted transcripts and per-recording status stay under the course destination's `Media Gallery/`
+folder. Courses with `mediaMode: "off"` are never opened. The `media:discover` command emits the
+reconciled appearance queue but does not change `sync` or `verify`'s completeness verdict. The
+complete queue is the handoff to the existing media-job seam; the later queue worker supplies its
+provider, storage, formatter and ASR adapters. The queue artifact is the durable handoff; #105
+owns consuming it one job at a time.
+
+`media:withdraw` is the explicit confirmation route for one queued appearance. It writes a
+withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a
+completed appearance.
 
 ## Scheduling the watchdog
 

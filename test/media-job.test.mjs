@@ -4,6 +4,76 @@ import test from "node:test";
 import { runMediaJob } from "../src/media/job.mjs";
 import { transcriptDigest } from "../src/media/transcript.mjs";
 
+test("runs a Gallery appearance through the existing media-job seam", async () => {
+  const appearance = {
+    recordingId: "media-gallery:_9_1:gallery-1",
+    provider: "kaltura",
+    providerReference: "entry:one",
+    sourceKind: "media-gallery",
+    storageSurface: "media-gallery",
+    title: "Lecture",
+    placement: {
+      destination: "/courses/MH1101/NTULearn",
+      formattedTranscriptPath: "Media Gallery/Lecture.transcript.md",
+      statusPath: "Media Gallery/Lecture.media-status.md",
+      videoPath: "Media Gallery/Lecture.mp4",
+      audioPath: "Media Gallery/Lecture.m4a",
+    },
+  };
+  const writes = [];
+  const provider = {
+    name: "kaltura",
+    async resolve() {
+      return {
+        duration: 10,
+        transcript: {
+          body: JSON.stringify({
+            language: "en",
+            segments: [{ start: 0, end: 10, text: "The value is 2 + 2." }],
+          }),
+          filename: "captions.json",
+        },
+      };
+    },
+    async transcript(resolved) {
+      return resolved.transcript;
+    },
+    async media() {
+      return { kind: "video", body: Buffer.from("video"), filename: "lecture.mp4", audio: true };
+    },
+  };
+  const storage = {
+    async write({ kind }) {
+      writes.push(kind);
+      return { path: `gallery/${kind}`, status: "written" };
+    },
+  };
+  const formatter = {
+    version: "gallery-formatter-1",
+    async format() {
+      return { markdown: "The value is 2 + 2." };
+    },
+  };
+
+  const result = await runMediaJob({
+    appearance,
+    provider,
+    storage,
+    formatter,
+  });
+
+  assert.equal(result.complete, true);
+  assert.deepEqual(writes.sort(), [
+    "formatted-transcript",
+    "media",
+    "metadata",
+    "provider-transcript",
+    "raw-transcript",
+    "state",
+    "status",
+  ]);
+});
+
 test("runs the provider transcript and independent media paths through one pure job seam", async () => {
   const writes = [];
   const calls = [];

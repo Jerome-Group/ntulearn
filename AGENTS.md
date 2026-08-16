@@ -21,11 +21,11 @@ everything but running the tool — it skips Playwright's browser download, and 
 `test/` needs a browser or a network, which is the property `CODING_STANDARDS.md` §6 exists to
 hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
-`npm run login`, `npm run discover`, `npm run watchdog`, `npm run sync`, `npm run verify` and
-`npm run renumber` reach NTULearn as a real signed-in student, and the sync writes to real folders
-on this machine. Change them, test the pure parts, and leave the five data commands to the Owner:
-`discover`, `watchdog`, `sync`, `verify` and `renumber` spend the live session. `verify` writing
-nothing does not make it yours to run.
+`npm run login`, `npm run discover`, `npm run watchdog`, `npm run sync`, `npm run verify`,
+`npm run renumber` and `npm run media:discover` reach NTULearn as a real signed-in student, and
+the sync writes to real folders on this machine. Change them, test the pure parts, and leave the
+six data commands to the Owner: `discover`, `watchdog`, `sync`, `verify`, `renumber` and
+`media:discover` spend the live session. `verify` writing nothing does not make it yours to run.
 
 After a saved-session read times out on the identity-provider page instead of reaching Courses, an
 agent runs `npm run login` before declaring the session expired. If the Courses page appears

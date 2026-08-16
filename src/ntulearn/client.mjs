@@ -79,6 +79,16 @@ class NtulearnClient {
     return attachmentsOf(await this.#readContentItem(courseId, item.id));
   }
 
+  async withBrowserPage(read) {
+    if (typeof read !== "function") throw new Error("Browser page work needs a reader function.");
+    const page = await this.#context.newPage();
+    try {
+      return await read(page);
+    } finally {
+      await page.close();
+    }
+  }
+
   async download(attachment) {
     const response = await this.#context.request.get(absoluteUrl(attachment.resourceUrl));
     if (!response.ok()) throw new Error(`Download failed: HTTP ${response.status()}`);
