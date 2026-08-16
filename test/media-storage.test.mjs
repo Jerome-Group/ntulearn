@@ -121,3 +121,45 @@ test("does not trust an attachment flag when the visible video is absent", async
   assert.deepEqual(result, { path: target, status: "written" });
   assert.equal(await readFile(target, "utf8"), "downloaded video");
 });
+
+test("keeps successful transcript artifacts write-once and reads them at the storage seam", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  await mkdir(mediaRoot, { recursive: true });
+  const storage = createMediaStorage({ mediaRoot, volumeRoot });
+  const appearance = {
+    recordingId: "content-tree:item",
+    placement: {
+      destination: join(root, "course"),
+      videoPath: "01 Lecture/01 Lecture.mp4",
+      formattedTranscriptPath: "01 Lecture/01 Lecture.transcript.md",
+      statusPath: "01 Lecture/01 Lecture.media-status.md",
+    },
+  };
+
+  const first = await storage.write({
+    appearance,
+    kind: "raw-transcript",
+    content: '{"sourceKind":"generated"}\n',
+  });
+  const second = await storage.write({
+    appearance,
+    kind: "raw-transcript",
+    content: '{"sourceKind":"provider"}\n',
+  });
+  const read = await storage.read({ appearance, kind: "raw-transcript" });
+
+  assert.deepEqual(second, { path: first.path, status: "existing" });
+  await assert.rejects(
+    storage.write({
+      appearance,
+      kind: "raw-transcript",
+      content: "replace",
+      replace: true,
+    }),
+    /proof-bearing formatted transcript/i,
+  );
+  assert.equal(read.path, first.path);
+  assert.equal(read.content.toString(), '{"sourceKind":"generated"}\n');
+});

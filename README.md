@@ -98,8 +98,9 @@ completeness is a separate concern: the sync remains additive and does not claim
 complete. Each appearance keeps its own placement and status, while source evidence and working
 artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
 Session material and expiring provider addresses are never persisted. A transcript is complete only
-when both a validated source and formatted Markdown derivative exist; unsupported fallback remains
-visible until its later workflow is available.
+when both a validated source and formatted Markdown derivative exist. Recording completeness remains
+independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
+source provenance and status remain visible with the course artifacts.
 
 ## Scheduling the watchdog
 

@@ -1,11 +1,7 @@
 import { Buffer } from "node:buffer";
-import {
-  assertFormattedTranscript,
-  parseProviderTranscript,
-  rawTranscriptJson,
-  transcriptDigest,
-  validateTranscript,
-} from "./transcript.mjs";
+import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
+import { createMediaOutcome } from "./outcome.mjs";
+import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 
 // The worker has one public seam: providers resolve fresh data, storage owns placement, and the
 // formatter stays local. No resolved provider object crosses into the result or artifact metadata.
@@ -14,162 +10,210 @@ export async function runMediaJob({
   provider,
   storage,
   formatter,
+  transcriber,
   clock = () => new Date(),
 }) {
   const limitations = [];
   const artifacts = {};
-  const providerName = provider?.name ?? appearance.provider;
+  let providerName = provider?.name ?? appearance.provider;
   const formatterVersion = nonEmpty(formatter?.version);
-  const media = { video: unavailableMedia(), audio: unavailableMedia() };
+  let media = { video: unavailableMedia(), audio: unavailableMedia() };
   let source = null;
   let resolved = null;
   let nativeTranscript = null;
+  const artifactsStore = createMediaArtifacts({ appearance, storage });
+  const outcome = createMediaOutcome({ appearance, storage, clock });
+  const existing = await artifactsStore.read();
+  let acquiredMedia = existing?.retainedMedia ?? null;
+  let asrReleased = true;
+  let sourceSha256 = existing?.sourceSha256 ?? null;
 
-  try {
-    resolved = await provider.resolve(appearance);
-  } catch (error) {
-    limitations.push(`Provider resolution failed: ${publicError(error)}`);
+  if (existing) {
+    source = existing.source;
+    Object.assign(artifacts, existing.artifacts);
+    providerName = existing.metadata?.provider ?? providerName;
+    media = restoreMedia(existing.metadata?.media);
+    limitations.push(
+      ...(Array.isArray(existing.metadata?.limitations) ? existing.metadata.limitations : []),
+    );
   }
 
-  if (resolved) {
+  if (!existing || existing.replaceRawTranscript) {
     try {
-      nativeTranscript = await provider.transcript(resolved);
+      resolved = await provider.resolve(appearance);
     } catch (error) {
-      limitations.push(`Provider transcript retrieval failed: ${publicError(error)}`);
+      limitations.push(`Provider resolution failed: ${publicError(error)}`);
     }
 
-    if (nativeTranscript !== null && nativeTranscript !== undefined) {
-      let providerBody;
+    if (resolved) {
       try {
-        const body = nativeBody(nativeTranscript);
-        assertSafeProviderTranscript(body);
-        providerBody = body;
+        nativeTranscript = await provider.transcript(resolved);
       } catch (error) {
-        limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+        limitations.push(`Provider transcript retrieval failed: ${publicError(error)}`);
       }
 
-      if (providerBody !== undefined) {
-        artifacts.providerTranscript = await storage.write({
-          appearance,
-          kind: "provider-transcript",
-          content: providerBody,
-          filename: nativeTranscript.filename ?? "transcript.provider",
-        });
-
+      if (nativeTranscript !== null && nativeTranscript !== undefined) {
+        let providerBody;
         try {
-          const parsed = parseProviderTranscript(nativeTranscript);
-          const checked = validateTranscript(parsed, {
-            duration: resolved.duration,
-            speechDuration: resolved.speechDuration,
-          });
-          if (checked.valid) source = checked.transcript;
-          else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+          const body = nativeBody(nativeTranscript);
+          assertSafeProviderTranscript(body);
+          providerBody = body;
         } catch (error) {
           limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
         }
-      }
-    } else {
-      limitations.push("No provider transcript was exposed.");
-    }
 
-    try {
-      const acquired = await provider.media(resolved);
-      if (acquired?.kind === "video" || acquired?.kind === "audio") {
-        const artifact = await storage.write({
-          appearance,
-          kind: "media",
-          mediaKind: acquired.kind,
-          content: acquired.body,
-          filename: acquired.filename,
-        });
-        artifacts.media = artifact;
-        media[acquired.kind] = {
-          available: true,
-          path: artifact.path,
-          quality: acquired.quality ?? null,
-          audio: acquired.audio !== false || acquired.kind === "audio",
-        };
-        if (acquired.kind === "video" && acquired.audio !== false) {
-          media.audio = { available: true, path: artifact.path, quality: null, audio: true };
+        if (providerBody !== undefined) {
+          artifacts.providerTranscript = await storage.write({
+            appearance,
+            kind: "provider-transcript",
+            content: providerBody,
+            filename: nativeTranscript.filename ?? "transcript.provider",
+          });
+
+          try {
+            const parsed = parseProviderTranscript(nativeTranscript);
+            const checked = validateTranscript(parsed, {
+              duration: resolved.duration,
+              speechDuration: resolved.speechDuration,
+            });
+            if (checked.valid) source = checked.transcript;
+            else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+          } catch (error) {
+            limitations.push(`Provider transcript rejected: ${publicError(error)}.`);
+          }
         }
       } else {
-        limitations.push(acquired?.limitation ?? "Provider returned no usable media.");
+        limitations.push("No provider transcript was exposed.");
       }
-    } catch (error) {
-      limitations.push(`Media acquisition failed: ${publicError(error)}`);
+
+      if (!acquiredMedia) {
+        try {
+          const acquired = await provider.media(resolved);
+          if (acquired?.kind === "video" || acquired?.kind === "audio") {
+            const artifact = await storage.write({
+              appearance,
+              kind: "media",
+              mediaKind: acquired.kind,
+              content: acquired.body,
+              filename: acquired.filename,
+            });
+            artifacts.media = artifact;
+            acquiredMedia = { ...acquired, path: artifact.path };
+            media[acquired.kind] = {
+              available: true,
+              path: artifact.path,
+              quality: acquired.quality ?? null,
+              audio: acquired.audio !== false || acquired.kind === "audio",
+            };
+            if (acquired.kind === "video" && acquired.audio !== false) {
+              media.audio = { available: true, path: artifact.path, quality: null, audio: true };
+            }
+          } else {
+            limitations.push(acquired?.limitation ?? "Provider returned no usable media.");
+          }
+        } catch (error) {
+          limitations.push(`Media acquisition failed: ${publicError(error)}`);
+        }
+      }
     }
   }
 
-  if (source) {
-    const rawJson = rawTranscriptJson(source);
-    artifacts.rawTranscript = await storage.write({
+  if (!source) {
+    const generated = await generateLocalTranscript({
       appearance,
-      kind: "raw-transcript",
-      content: rawJson,
-      filename: "transcript.raw.json",
+      transcriber,
+      media: acquiredMedia,
+      duration: resolved?.duration,
+      speechDuration: resolved?.speechDuration,
     });
-    const sourceSha256 = transcriptDigest(rawJson);
+    source = generated.source;
+    asrReleased = generated.released;
+    limitations.push(...generated.limitations);
+  }
 
-    if (!formatterVersion) {
+  if (source && existing?.artifacts.formattedTranscript) {
+    if (!artifacts.metadata) {
+      artifacts.metadata = await artifactsStore.writeMetadata({
+        providerName,
+        source,
+        sourceSha256,
+        formattedSha256: existing.formattedSha256 ?? existing.artifacts.formattedTranscript?.sha256,
+        formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
+        existingMetadata: existing.metadata,
+        media,
+        limitations,
+      });
+    }
+    return outcome.persist({
+      providerName,
+      media,
+      source,
+      sourceSha256,
+      artifacts,
+      limitations,
+      complete: true,
+      stage: "complete",
+      formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
+      existingMetadata: existing.metadata,
+    });
+  }
+
+  if (source) {
+    const raw = await artifactsStore.writeSource(source);
+    artifacts.rawTranscript = raw.artifact;
+    const rawBlocked = existing?.replaceRawTranscript && raw.artifact.status === "existing";
+    sourceSha256 = rawBlocked ? null : (existing?.sourceSha256 ?? raw.sourceSha256);
+
+    if (rawBlocked) {
+      limitations.push("Existing raw transcript is invalid and cannot be replaced routinely.");
+    } else if (!formatterVersion && source.sourceKind !== "non-speech") {
       limitations.push("Local formatter/model version is not configured.");
     } else {
       try {
-        const formatted = await formatter.format({
-          appearance,
-          language: source.language,
-          segments: source.segments,
-        });
+        const formatted =
+          source.sourceKind === "non-speech"
+            ? { markdown: `No intelligible speech detected: ${source.reason}` }
+            : asrReleased
+              ? await formatter.format({
+                  appearance,
+                  language: source.language,
+                  segments: source.segments,
+                })
+              : null;
+        if (!formatted) throw new Error("ASR resources were not released before formatting");
         if (Array.isArray(formatted?.limitations)) limitations.push(...formatted.limitations);
-        const markdown = assertFormattedTranscript(
-          typeof formatted === "string" ? formatted : formatted?.markdown,
-          source.segments,
-        );
-        artifacts.formattedTranscript = await storage.write({
-          appearance,
-          kind: "formatted-transcript",
-          content: markdown,
-          filename: appearance.placement.formattedTranscriptPath,
-        });
-
-        const metadata = {
-          recordingId: appearance.recordingId,
-          provider: providerName,
-          sourceKind: "provider",
-          recordingReference: appearance.providerReference,
+        artifacts.formattedTranscript = await artifactsStore.writeFormatted({
+          source,
           sourceSha256,
-          language: source.language,
-          formatterVersion,
-          limitations: unique(limitations),
-        };
-        artifacts.metadata = await storage.write({
-          appearance,
-          kind: "metadata",
-          content: `${JSON.stringify(metadata, null, 2)}\n`,
-          filename: "transcript.metadata.json",
+          markdown: typeof formatted === "string" ? formatted : formatted?.markdown,
+          replaceProof: existing?.formattedReplacement ?? null,
         });
-        const result = mediaResult({
-          appearance,
+        artifacts.metadata = await artifactsStore.writeMetadata({
+          providerName,
+          source,
+          sourceSha256,
+          formattedSha256: artifacts.formattedTranscript.sha256,
+          formatterVersion:
+            source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
+          transcriber,
+          existingMetadata: existing?.metadata,
+          media,
+          limitations,
+        });
+        return outcome.persist({
           providerName,
           media,
           source,
+          sourceSha256,
           artifacts,
           limitations,
           complete: true,
           stage: "complete",
+          formatterVersion:
+            source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
+          transcriber,
+          existingMetadata: existing?.metadata,
         });
-        artifacts.status = await writeStatus({
-          appearance,
-          providerName,
-          media,
-          source,
-          stage: result.stage,
-          retryable: result.retryable,
-          formatterVersion,
-          limitations: result.limitations,
-          storage,
-          clock,
-        });
-        return result;
       } catch (error) {
         limitations.push(`Formatted transcript rejected: ${publicError(error)}`);
       }
@@ -178,91 +222,18 @@ export async function runMediaJob({
     limitations.push("Local transcription is not configured for this job.");
   }
 
-  const result = mediaResult({
-    appearance,
+  return outcome.persist({
     providerName,
     media,
     source,
+    sourceSha256,
     artifacts,
     limitations,
     complete: false,
     stage: failureStage(limitations),
-  });
-  artifacts.status = await writeStatus({
-    appearance,
-    providerName,
-    media,
-    source,
-    stage: result.stage,
-    retryable: result.retryable,
     formatterVersion,
-    limitations: result.limitations,
-    storage,
-    clock,
-  });
-  return result;
-}
-
-function mediaResult({
-  appearance,
-  providerName,
-  media,
-  source,
-  artifacts,
-  limitations,
-  complete,
-  stage,
-}) {
-  const finalLimitations = unique(limitations);
-  const verdict = complete ? (finalLimitations.length ? "yellow" : "green") : "red";
-
-  return {
-    recordingId: appearance.recordingId,
-    provider: providerName,
-    sourceKind: appearance.sourceKind,
-    stage,
-    verdict,
-    complete,
-    transcript: {
-      complete: Boolean(source && artifacts.formattedTranscript),
-      sourceKind: source ? "provider" : null,
-      language: source?.language ?? null,
-    },
-    media,
-    artifacts,
-    limitations: finalLimitations,
-    limitation: finalLimitations[0] ?? null,
-    retryable: !complete || finalLimitations.length > 0,
-  };
-}
-
-async function writeStatus({
-  appearance,
-  providerName,
-  media,
-  source,
-  limitations,
-  stage,
-  retryable,
-  formatterVersion,
-  storage,
-  clock,
-}) {
-  return storage.write({
-    appearance,
-    kind: "status",
-    content: statusMarkdown({
-      appearance,
-      providerName,
-      media,
-      source,
-      limitations,
-      stage,
-      retryable,
-      formatterVersion: formatterVersion ?? "not configured",
-      updatedAt: clock().toISOString(),
-    }),
-    filename: appearance.placement.statusPath,
+    transcriber,
+    existingMetadata: existing?.metadata,
   });
 }
 
@@ -280,57 +251,76 @@ function assertSafeProviderTranscript(body) {
   }
 }
 
-function statusMarkdown({
-  appearance,
-  providerName,
-  media,
-  source,
-  limitations,
-  stage,
-  retryable,
-  formatterVersion,
-  updatedAt,
-}) {
-  const video = media.video.available
-    ? `available${media.video.quality ? ` (${media.video.quality}p)` : ""}`
-    : "unavailable";
-  const audio = media.audio.available ? "available" : "unavailable";
-  return [
-    `# ${appearance.title} — media status`,
-    "",
-    `- Recording: ${appearance.recordingId}`,
-    `- Provider: ${displayName(providerName)}`,
-    `- Source: ${appearance.sourceKind}`,
-    `- Video: ${video}`,
-    `- Audio: ${audio}`,
-    `- Transcript: ${source ? `${source.language} provider transcript` : "not complete"}`,
-    `- Formatter: ${formatterVersion}`,
-    `- Stage: ${stage}`,
-    `- Retryable: ${retryable ? "yes" : "no"}`,
-    `- Limitations: ${limitations.length ? limitations.join(" ") : "None"}`,
-    `- Updated: ${updatedAt}`,
-    "",
-  ].join("\n");
-}
-
 function unavailableMedia() {
   return { available: false, path: null, quality: null, audio: false };
 }
 
-function displayName(value) {
-  return String(value ?? "unknown")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+async function generateLocalTranscript({
+  appearance,
+  transcriber,
+  media,
+  duration,
+  speechDuration,
+}) {
+  if (!transcriber) {
+    return {
+      source: null,
+      released: true,
+      limitations: ["Local transcription is not configured for this job."],
+    };
+  }
+  if (!usableTranscriptionMedia(media)) {
+    return {
+      source: null,
+      released: true,
+      limitations: ["Local transcription needs acquired video audio or audio-only media."],
+    };
+  }
+
+  let source = null;
+  const limitations = [];
+  let released = true;
+  try {
+    const generated = await transcriber.transcribe({ appearance, media, duration, speechDuration });
+    const candidate = {
+      ...generated,
+      sourceKind:
+        generated?.sourceKind === "non-speech" ||
+        generated?.kind === "non-speech" ||
+        generated?.nonSpeech
+          ? "non-speech"
+          : "generated",
+    };
+    const checked = validateTranscript(candidate, { duration, speechDuration });
+    if (checked.valid) source = checked.transcript;
+    else limitations.push(`Local transcription rejected: ${checked.reason}.`);
+  } catch (error) {
+    limitations.push(`Local transcription failed: ${publicError(error)}`);
+  } finally {
+    if (typeof transcriber.release === "function") {
+      try {
+        await transcriber.release();
+      } catch (error) {
+        released = false;
+        limitations.push(`Local transcription cleanup failed: ${publicError(error)}`);
+      }
+    }
+  }
+  return { source, released, limitations };
+}
+
+function usableTranscriptionMedia(media) {
+  return Boolean(
+    media &&
+    (media.body !== undefined || media.path) &&
+    (media.kind === "audio" || (media.kind === "video" && media.audio !== false)),
+  );
 }
 
 function publicError(error) {
   return String(error?.message ?? error ?? "unknown error")
     .replace(/https?:\/\/[^\s)]+/gi, "[provider address omitted]")
     .replace(/\b(ks|token|session|signature)=[^\s&]+/gi, "$1=[redacted]");
-}
-
-function unique(values) {
-  return [...new Set(values)];
 }
 
 function failureStage(limitations) {
