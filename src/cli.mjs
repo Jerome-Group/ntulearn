@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
 import { walkCourses } from "./courses.mjs";
 import { writeLine } from "./output.mjs";
+import { setupMediaRuntime } from "./media/setup.mjs";
 import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
@@ -17,7 +18,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all>";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup";
 
 const commands = {
   login,
@@ -26,6 +27,7 @@ const commands = {
   verify,
   renumber,
   watchdog,
+  "media-setup": mediaSetup,
   "watchdog-locked": watchdogLocked,
 };
 
@@ -80,6 +82,15 @@ async function watchdog(config) {
   const result = await runWatchdog({ config, root: ROOT, runner: watchdogRunner() });
   await writeLine(stdout, asJson(result.digest));
   return result.exitCode;
+}
+
+async function mediaSetup(config) {
+  const result = await setupMediaRuntime(config.media);
+  await writeLine(
+    stdout,
+    asJson({ manifestPath: result.manifestPath, artifacts: result.artifacts }),
+  );
+  return 0;
 }
 
 async function watchdogLocked(config) {
