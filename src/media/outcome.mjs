@@ -9,6 +9,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
       limitations,
       complete,
       stage,
+      retryable,
       formatterVersion,
       transcriber,
       existingMetadata,
@@ -22,6 +23,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         limitations,
         complete,
         stage,
+        retryable,
       });
       artifacts.state = await writeState({
         appearance,
@@ -66,6 +68,7 @@ function mediaResult({
   limitations,
   complete,
   stage,
+  retryable,
 }) {
   const finalLimitations = unique(limitations);
   const verdict = complete ? (finalLimitations.length ? "yellow" : "green") : "red";
@@ -86,7 +89,7 @@ function mediaResult({
     artifacts,
     limitations: finalLimitations,
     limitation: finalLimitations[0] ?? null,
-    retryable: !complete,
+    retryable: retryable ?? !complete,
   };
 }
 

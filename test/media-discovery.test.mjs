@@ -134,3 +134,143 @@ test("deduplicates repeated Kaltura surfaces inside one content item but not pla
   assert.equal(recordings.length, 1);
   assert.equal(recordings[0].providerReference, "entry:shared");
 });
+
+test("classifies YouTube and direct recordings while ignoring ordinary course links", () => {
+  const course = { key: "MH2100", courseId: "_9_1", destination: "/courses/MH2100" };
+  const snapshot = {
+    items: [
+      {
+        id: "youtube",
+        parentId: null,
+        position: 0,
+        title: "YouTube lecture",
+        contentHandler: "resource/x-bb-document",
+        body: {
+          displayText: '<iframe src="https://www.youtube.com/watch?v=lecture123"></iframe>',
+        },
+      },
+      {
+        id: "direct",
+        parentId: null,
+        position: 1,
+        title: "Direct lecture",
+        contentHandler: "resource/x-bb-document",
+        body: {
+          displayText:
+            '<video src="https://cdn.example.test/lecture.mp4?signature=secret"></video>',
+        },
+      },
+      {
+        id: "ordinary",
+        parentId: null,
+        position: 2,
+        title: "Reading",
+        contentHandler: "resource/x-bb-externallink",
+        contentDetail: { link: { url: "https://example.test/reading" } },
+      },
+      {
+        id: "opaque",
+        parentId: null,
+        position: 3,
+        title: "Opaque player",
+        contentHandler: "resource/x-bb-lti-launch",
+        contentDetail: {
+          lti: { placement: { launchLink: "https://player.example.test/lecture" } },
+        },
+      },
+      {
+        id: "direct-link",
+        parentId: null,
+        position: 4,
+        title: "Direct linked lecture",
+        contentHandler: "resource/x-bb-document",
+        body: {
+          displayText: '<a href="https://cdn.example.test/linked-lecture.webm">watch</a>',
+        },
+      },
+    ],
+  };
+
+  const recordings = discoverContentRecordings({
+    course,
+    snapshot,
+    attachmentsByItem: new Map([
+      [
+        "youtube",
+        [
+          {
+            fileName: "captions.vtt",
+            mimeType: "text/vtt",
+            resourceUrl: "/bbcswebdav/captions.vtt",
+          },
+        ],
+      ],
+      [
+        "direct",
+        [
+          {
+            fileName: "lecture-audio.m4a",
+            mimeType: "audio/mp4",
+            resourceUrl: "/bbcswebdav/lecture-audio.m4a",
+          },
+        ],
+      ],
+    ]),
+  });
+
+  assert.deepEqual(
+    recordings.map(({ provider, sourceKind }) => [provider, sourceKind]),
+    [
+      ["youtube", "embedded-player"],
+      ["direct", "attachment"],
+      ["direct", "embedded-player"],
+      ["unsupported", "launch-link"],
+      ["direct", "external-link"],
+    ],
+  );
+  assert.equal(recordings[0].providerReference, "youtube:lecture123");
+  assert.match(recordings[1].providerReference, /^direct:/);
+  assert.match(recordings[2].providerReference, /^direct:/);
+  assert.equal(recordings[1].mediaType, "audio");
+  assert.match(recordings[3].limitation, /unsupported/i);
+  assert.equal(
+    recordings.some(({ title }) => title === "Reading"),
+    false,
+  );
+  assert.doesNotMatch(JSON.stringify(recordings), /signature=secret/);
+});
+
+test("keeps repeated YouTube appearances as separate recordings", () => {
+  const course = { key: "MH2100", courseId: "_9_1", destination: "/courses/MH2100" };
+  const youtube = "https://youtu.be/repeated123?si=secret";
+  const recordings = discoverContentRecordings({
+    course,
+    snapshot: {
+      items: [
+        {
+          id: "first",
+          position: 0,
+          title: "First appearance",
+          contentHandler: "resource/x-bb-document",
+          body: { displayText: `<a href="${youtube}">watch</a>` },
+        },
+        {
+          id: "second",
+          position: 1,
+          title: "Second appearance",
+          contentHandler: "resource/x-bb-document",
+          body: { displayText: `<a href="${youtube}">watch again</a>` },
+        },
+      ],
+    },
+  });
+
+  assert.equal(recordings.length, 2);
+  assert.deepEqual(
+    recordings.map(({ recordingId, providerReference }) => [recordingId, providerReference]),
+    [
+      ["content-tree:_9_1:first:youtube:repeated123", "youtube:repeated123"],
+      ["content-tree:_9_1:second:youtube:repeated123", "youtube:repeated123"],
+    ],
+  );
+});

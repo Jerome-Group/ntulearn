@@ -738,6 +738,70 @@ test("redacts session-bound provider addresses from a failure status", async () 
   assert.match(writes.at(-1).content, /provider address omitted/);
 });
 
+test("keeps a provider media limitation visible after audio-only fallback", async () => {
+  const writes = [];
+  const provider = validProvider();
+  provider.media = async () => ({
+    kind: "audio",
+    body: Buffer.from("audio"),
+    filename: "lecture.m4a",
+    retryable: true,
+    limitation: "Video acquisition failed; retained audio-only media.",
+  });
+
+  const result = await runMediaJob({
+    appearance: recordingAppearance(),
+    provider,
+    formatter: {
+      version: "formatter-1",
+      format: async () => ({ markdown: "The value is 2 + 2 = 4." }),
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.verdict, "yellow");
+  assert.equal(result.retryable, true);
+  assert.match(result.limitation, /audio-only/);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /audio-only/);
+});
+
+test("carries an unsupported discovery limitation into red job status", async () => {
+  const writes = [];
+  const result = await runMediaJob({
+    appearance: {
+      ...recordingAppearance(),
+      provider: "unsupported",
+      providerReference: "unsupported:player.example.test/lecture",
+      limitation:
+        "Unsupported recording provider shape from embedded-player; media acquisition is unavailable.",
+    },
+    provider: {
+      name: "unsupported",
+      async resolve() {
+        throw new Error("unsupported provider shape");
+      },
+    },
+    storage: {
+      async write(value) {
+        writes.push(value);
+        return { path: `media/${value.kind}` };
+      },
+    },
+  });
+
+  assert.equal(result.provider, "unsupported");
+  assert.equal(result.complete, false);
+  assert.equal(result.retryable, true);
+  assert.match(result.limitation, /unsupported recording provider shape/i);
+  assert.match(writes.find(({ kind }) => kind === "status").content, /embedded-player/);
+});
+
 function validProvider() {
   return {
     name: "kaltura",

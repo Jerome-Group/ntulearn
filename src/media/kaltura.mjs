@@ -1,5 +1,7 @@
-import { Buffer } from "node:buffer";
 import { absoluteUrl } from "../ntulearn/urls.mjs";
+import { acquireRepresentation, chooseRepresentation } from "./acquisition.mjs";
+
+export { chooseRepresentation };
 
 const ENTRY_KEYS = ["entry_id", "entryId", "entryid", "kalturaEntryId"];
 const ENTRY_PATH = /(?:^|[/:_-])entry[_-]?id[/:_-]([^/?#&]+)/i;
@@ -61,23 +63,6 @@ export function isKalturaUrl(value) {
   }
 }
 
-export function chooseRepresentation(representations, preferredHeight = 720) {
-  const usable = (representations ?? [])
-    .filter((representation) => isReference(representation?.url))
-    .map((representation) => ({
-      ...representation,
-      height: numberOrNull(representation.height ?? representation.videoHeight),
-    }));
-  if (!usable.length) return null;
-
-  return (
-    usable.find(({ height }) => height === preferredHeight) ??
-    highestAtOrBelow(usable, preferredHeight) ??
-    lowestAbove(usable, preferredHeight) ??
-    usable[0]
-  );
-}
-
 export function createKalturaProvider({ resolveEntry, download, remux }) {
   if (typeof resolveEntry !== "function") throw new Error("Kaltura provider needs resolveEntry.");
   if (typeof download !== "function") throw new Error("Kaltura provider needs download.");
@@ -99,10 +84,26 @@ export function createKalturaProvider({ resolveEntry, download, remux }) {
 
     async media(resolved) {
       const video = chooseRepresentation(resolved?.media?.video ?? []);
-      if (video) return acquire(video, "video", download, remux);
+      if (video) {
+        return acquireRepresentation({
+          representation: video,
+          kind: "video",
+          download,
+          remux,
+          provider: "Kaltura",
+        });
+      }
 
       const audio = chooseRepresentation(resolved?.media?.audio ?? [], 0);
-      if (audio) return acquire(audio, "audio", download, remux);
+      if (audio) {
+        return acquireRepresentation({
+          representation: audio,
+          kind: "audio",
+          download,
+          remux,
+          provider: "Kaltura",
+        });
+      }
 
       return {
         kind: "unavailable",
@@ -111,45 +112,6 @@ export function createKalturaProvider({ resolveEntry, download, remux }) {
       };
     },
   };
-}
-
-async function acquire(representation, kind, download, remux) {
-  const downloaded = await download(representation.url, { fresh: true });
-  const remuxed = await remux(downloaded, {
-    representation,
-    reencode: false,
-  });
-  const body = Buffer.isBuffer(remuxed) ? remuxed : remuxed?.body;
-  if (!Buffer.isBuffer(body)) throw new Error(`Kaltura ${kind} remux did not return bytes.`);
-
-  return {
-    kind,
-    body,
-    filename: remuxed.filename ?? representation.filename ?? `${representation.id ?? kind}.mp4`,
-    quality: representation.height,
-    audio: kind === "audio" || remuxed.audio !== false,
-  };
-}
-
-function highestAtOrBelow(representations, height) {
-  return representations
-    .filter(({ height: candidate }) => candidate !== null && candidate <= height)
-    .sort((left, right) => right.height - left.height)[0];
-}
-
-function lowestAbove(representations, height) {
-  return representations
-    .filter(({ height: candidate }) => candidate !== null && candidate > height)
-    .sort((left, right) => left.height - right.height)[0];
-}
-
-function numberOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function isReference(value) {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function safeEntryReference(value) {
@@ -167,4 +129,8 @@ function decodeURIComponentSafe(value) {
   } catch {
     return value;
   }
+}
+
+function isReference(value) {
+  return typeof value === "string" && value.trim().length > 0;
 }
