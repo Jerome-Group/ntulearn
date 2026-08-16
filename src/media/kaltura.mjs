@@ -74,15 +74,19 @@ export function createKalturaProvider({ resolveEntry, download, remux }) {
     // Resolution is deliberately per-job. Kaltura playback and caption addresses may carry a
     // session-bound `ks`, so neither the source URL nor the resolved player response belongs in a
     // recording appearance, state file, or artifact metadata.
-    resolve(appearance) {
-      return resolveEntry({ reference: appearance.providerReference, fresh: true });
+    resolve(appearance, { signal } = {}) {
+      return resolveEntry({
+        reference: appearance.providerReference,
+        fresh: true,
+        ...(signal ? { signal } : {}),
+      });
     },
 
     transcript(resolved) {
       return resolved?.transcript ?? null;
     },
 
-    async media(resolved) {
+    async media(resolved, { signal } = {}) {
       const video = chooseRepresentation(resolved?.media?.video ?? []);
       if (video) {
         return acquireRepresentation({
@@ -91,6 +95,7 @@ export function createKalturaProvider({ resolveEntry, download, remux }) {
           download,
           remux,
           provider: "Kaltura",
+          signal,
         });
       }
 
@@ -102,6 +107,7 @@ export function createKalturaProvider({ resolveEntry, download, remux }) {
           download,
           remux,
           provider: "Kaltura",
+          signal,
         });
       }
 

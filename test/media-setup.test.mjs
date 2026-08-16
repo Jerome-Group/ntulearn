@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import test from "node:test";
-import { setupMediaRuntime } from "../src/media/setup.mjs";
+import { setupMediaRuntime, verifyMediaRuntime } from "../src/media/setup.mjs";
 
 test("prepares all selected runtimes and models under the Media store", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-"));
@@ -80,6 +80,18 @@ test("prepares all selected runtimes and models under the Media store", async ()
     now: () => new Date("2026-08-16T00:00:00.000Z"),
   });
   assert.deepEqual(await readdir(result.runtime.temp), []);
+
+  let installed = false;
+  const verified = await verifyMediaRuntime(media, {
+    volumeRoot,
+    freeBytes: 200 * 1024 ** 3,
+    commandRunner: async () => {
+      installed = true;
+      return { code: 0 };
+    },
+  });
+  assert.equal(verified.manifestPath, result.manifestPath);
+  assert.equal(installed, false);
 });
 
 test("rejects a missing RAID0 Media store before creating runtime artifacts", async () => {

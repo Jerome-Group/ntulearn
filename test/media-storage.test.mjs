@@ -206,3 +206,31 @@ test("keeps Media Gallery media in the Media store and visible derivatives in th
   assert.equal(status.path, join(destination, appearance.placement.statusPath));
   assert.equal(await readFile(media.path, "utf8"), "video");
 });
+
+test("marks storage-capacity failures as global media safety errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  await mkdir(mediaRoot, { recursive: true });
+  const storage = createMediaStorage({
+    mediaRoot,
+    volumeRoot,
+    async write() {
+      const error = new Error("no space left on device");
+      error.code = "ENOSPC";
+      throw error;
+    },
+  });
+
+  await assert.rejects(
+    storage.write({
+      appearance: {
+        recordingId: "content-tree:item",
+        placement: { destination: join(root, "course"), formattedTranscriptPath: "lecture.md" },
+      },
+      kind: "formatted-transcript",
+      content: "# Lecture\n",
+    }),
+    (error) => error.globalSafety === true && error.code === "ENOSPC",
+  );
+});

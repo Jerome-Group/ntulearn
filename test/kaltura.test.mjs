@@ -69,3 +69,39 @@ test("resolves fresh playback data and remuxes without re-encoding", async () =>
     audio: true,
   });
 });
+
+test("aborts a hanging media download at the queue checkpoint", async () => {
+  const controller = new globalThis.AbortController();
+  let downloadOptions;
+  let remuxCalled = false;
+  const provider = createKalturaProvider({
+    async resolveEntry() {
+      return null;
+    },
+    async download(_url, options) {
+      downloadOptions = options;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        });
+      });
+    },
+    async remux() {
+      remuxCalled = true;
+      return { body: Buffer.from("unreachable") };
+    },
+  });
+  const pending = provider.media(
+    {
+      media: { video: [{ height: 720, url: "https://video.test/720" }] },
+    },
+    { signal: controller.signal },
+  );
+  const checkpoint = new Error("04:00 checkpoint");
+  checkpoint.code = "MEDIA_CHECKPOINT";
+  controller.abort(checkpoint);
+
+  await assert.rejects(pending, (error) => error === checkpoint);
+  assert.equal(downloadOptions.signal, controller.signal);
+  assert.equal(remuxCalled, false);
+});

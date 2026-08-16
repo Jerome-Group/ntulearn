@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   mediaQueuePath,
   readMediaQueue,
+  updateMediaQueueJob,
   withdrawQueuedRecording,
   writeMediaQueue,
 } from "../src/media/queue.mjs";
@@ -194,4 +195,56 @@ test("reads a durable queue for the explicit withdrawal command", async () => {
   const loaded = await readMediaQueue({ statePath, courseKey: COURSE.key });
   assert.equal(loaded.path, mediaQueuePath(statePath, COURSE.key));
   assert.deepEqual(loaded.record.queue, [{ recordingId: "gallery-1" }]);
+});
+
+test("updates one queued appearance without dropping the rest of the durable queue", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
+  const statePath = join(root, "state.json");
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: {
+      complete: true,
+      queue: [{ recordingId: "gallery-1" }, { recordingId: "gallery-2" }],
+    },
+  });
+
+  const saved = await updateMediaQueueJob({
+    statePath,
+    courseKey: COURSE.key,
+    recordingId: "gallery-1",
+    update: { stage: "checkpointed", complete: false, retryable: true },
+    now: () => new Date("2026-08-16T04:00:00.000Z"),
+  });
+
+  assert.equal(saved.job.stage, "checkpointed");
+  assert.deepEqual(saved.record.queue, [
+    { recordingId: "gallery-1", stage: "checkpointed", complete: false, retryable: true },
+    { recordingId: "gallery-2" },
+  ]);
+  assert.equal(saved.record.updatedAt, "2026-08-16T04:00:00.000Z");
+  assert.deepEqual(
+    (await readMediaQueue({ statePath, courseKey: COURSE.key })).record,
+    saved.record,
+  );
+});
+
+test("rejects execution-time URLs at the durable queue boundary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
+  const statePath = join(root, "state.json");
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [{ recordingId: "gallery-1" }] },
+  });
+
+  await assert.rejects(
+    updateMediaQueueJob({
+      statePath,
+      courseKey: COURSE.key,
+      recordingId: "gallery-1",
+      update: { resolvedUrl: "https://provider.example.test/expiring?token=secret" },
+    }),
+    /unsupported fields: resolvedUrl/,
+  );
 });

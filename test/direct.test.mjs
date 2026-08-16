@@ -65,3 +65,28 @@ test("resolves a fresh direct URL and remuxes without re-encoding", async () => 
     audio: true,
   });
 });
+
+test("does not hide a global media-store failure behind audio fallback", async () => {
+  const failure = Object.assign(new Error("media store is full"), { code: "ENOSPC" });
+  const provider = createDirectProvider({
+    async resolveMedia() {
+      return {
+        media: {
+          video: [{ height: 720, url: "https://cdn.example.test/video" }],
+          audio: [{ url: "https://cdn.example.test/audio" }],
+        },
+      };
+    },
+    async download() {
+      throw failure;
+    },
+    async remux() {
+      return { body: Buffer.from("unreachable") };
+    },
+  });
+
+  await assert.rejects(
+    provider.media(await provider.resolve({ providerReference: "direct:lecture" })),
+    (error) => error === failure,
+  );
+});
