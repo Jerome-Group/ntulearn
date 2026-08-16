@@ -60,7 +60,14 @@ function recordingKey(recordingId) {
 }
 
 function safeFilename(value, fallback) {
-  const name = basename(String(value ?? ""));
+  const raw = String(value ?? "");
+  let path;
+  try {
+    path = new URL(raw).pathname;
+  } catch {
+    path = raw.split(/[?#]/, 1)[0];
+  }
+  const name = basename(path);
   const extension = extname(name);
   const stem = name
     .slice(0, extension ? -extension.length : undefined)

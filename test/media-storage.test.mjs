@@ -31,6 +31,12 @@ test("keeps source artifacts in Media and visible content-tree derivatives besid
     kind: "raw-transcript",
     content: '{"language":"en"}\n',
   });
+  const provider = await storage.write({
+    appearance,
+    kind: "provider-transcript",
+    filename: "https://video.example.test/captions.json?ks=session-secret",
+    content: "captions",
+  });
   const formatted = await storage.write({
     appearance,
     kind: "formatted-transcript",
@@ -45,6 +51,8 @@ test("keeps source artifacts in Media and visible content-tree derivatives besid
   });
 
   assert.match(raw.path, /RAID0[\\/]Media[\\/]recordings[\\/]/);
+  assert.equal(provider.path.endsWith("/provider/captions.json"), true);
+  assert.doesNotMatch(provider.path, /session-secret|https?:/);
   assert.equal(formatted.path, join(destination, "01 Lectures/01 Lecture.transcript.md"));
   assert.equal(media.path, join(destination, "01 Lectures/01 Lecture.mp4"));
   assert.equal(await readFile(raw.path, "utf8"), '{"language":"en"}\n');
