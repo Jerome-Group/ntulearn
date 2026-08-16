@@ -8,6 +8,7 @@ import { walkCourses } from "./courses.mjs";
 import { discoverContentRecordings } from "./media/discovery.mjs";
 import { discoverCourseMedia } from "./media/workflow.mjs";
 import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
+import { writeMediaCourseStatus } from "./media/status.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
 import { openClient } from "./ntulearn/client.mjs";
@@ -113,6 +114,9 @@ async function mediaDiscover(config, key) {
         discovery,
       });
       discovery.queuePath = saved.path;
+    } else {
+      const status = await writeMediaCourseStatus({ course, discovery });
+      if (status) discovery.statusPath = status.path;
     }
     return discovery;
   });

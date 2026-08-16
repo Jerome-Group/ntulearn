@@ -4,6 +4,8 @@ import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 
+const REGENERATION_LIMITATION = "Formatted transcript needs explicit regeneration (agent-led).";
+
 // The worker has one public seam: providers and playback capture resolve fresh data, storage owns
 // placement, and the formatter stays local. No resolved provider object crosses into the result or
 // artifact metadata.
@@ -14,6 +16,7 @@ export async function runMediaJob({
   storage,
   formatter,
   transcriber,
+  regenerate = false,
   clock = () => new Date(),
   signal,
 }) {
@@ -33,7 +36,7 @@ export async function runMediaJob({
   const outcome = createMediaOutcome({ appearance, storage, clock });
   let existingMetadata = null;
   try {
-    const existing = await artifactsStore.read();
+    const existing = await artifactsStore.read({ regenerate });
     existingMetadata = existing?.metadata ?? null;
     throwIfInterrupted(signal);
     let acquiredMedia = existing?.retainedMedia ?? null;
@@ -48,6 +51,9 @@ export async function runMediaJob({
       limitations.push(
         ...(Array.isArray(existing.metadata?.limitations) ? existing.metadata.limitations : []),
       );
+      if (existing.formattedRegenerationRequired && !regenerate) {
+        limitations.push(REGENERATION_LIMITATION);
+      }
     }
 
     if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
@@ -222,6 +228,8 @@ export async function runMediaJob({
         limitations.push("Existing raw transcript is invalid and cannot be replaced routinely.");
       } else if (!formatterVersion && source.sourceKind !== "non-speech") {
         limitations.push("Local formatter/model version is not configured.");
+      } else if (existing?.formattedRegenerationRequired && !regenerate) {
+        limitations.push(REGENERATION_LIMITATION);
       } else {
         try {
           const formatted =
