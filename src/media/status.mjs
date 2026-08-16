@@ -1,6 +1,7 @@
 import { resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
+import { durationLabel, positiveDuration } from "./duration.mjs";
 import { publicMediaError } from "./errors.mjs";
 
 const STATUS_DIRECTORY = "Media Gallery";
@@ -99,6 +100,7 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
     retryable: withdrawn ? false : job.retryable !== false,
     transcript,
     media,
+    ...durationFields(job),
     limitations,
     attempts: Number.isSafeInteger(job.attempts) ? job.attempts : 0,
     lastError: job.lastError ? publicMediaError(job.lastError) : null,
@@ -224,6 +226,10 @@ function recordingFields(recording) {
     `- Verdict: ${recording.verdict}`,
     `- Video: ${mediaAvailability(recording.media.video)}`,
     `- Audio: ${mediaAvailability(recording.media.audio)}`,
+    `- Duration: ${durationLabel(recording.duration)}`,
+    ...(positiveDuration(recording.speechDuration)
+      ? [`- Speech duration: ${durationLabel(recording.speechDuration)}`]
+      : []),
     `- Transcript provenance: ${recording.transcript.provenance}`,
     `- Retryable: ${recording.retryable ? "yes" : "no"}`,
     `- Attempts: ${recording.attempts}`,
@@ -237,6 +243,13 @@ function mediaAvailability(value) {
   return value.available
     ? `available${value.quality ? ` (${value.quality}p)` : ""}`
     : "unavailable";
+}
+
+function durationFields(job) {
+  return {
+    ...(positiveDuration(job.duration) ? { duration: job.duration } : {}),
+    ...(positiveDuration(job.speechDuration) ? { speechDuration: job.speechDuration } : {}),
+  };
 }
 
 function displayName(value) {

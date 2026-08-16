@@ -3,6 +3,7 @@ import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
+import { positiveDuration } from "./duration.mjs";
 
 const REGENERATION_LIMITATION = "Formatted transcript needs explicit regeneration (agent-led).";
 
@@ -32,12 +33,16 @@ export async function runMediaJob({
   let nativeTranscript = null;
   let captureFailed = false;
   let sourceSha256 = null;
+  let duration = null;
+  let speechDuration = null;
   const artifactsStore = createMediaArtifacts({ appearance, storage });
   const outcome = createMediaOutcome({ appearance, storage, clock });
   let existingMetadata = null;
   try {
     const existing = await artifactsStore.read({ regenerate });
     existingMetadata = existing?.metadata ?? null;
+    duration = positiveDuration(existingMetadata?.duration);
+    speechDuration = positiveDuration(existingMetadata?.speechDuration);
     throwIfInterrupted(signal);
     let acquiredMedia = existing?.retainedMedia ?? null;
     let asrReleased = true;
@@ -59,6 +64,8 @@ export async function runMediaJob({
     if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
       try {
         resolved = await provider.resolve(appearance, { signal });
+        duration = positiveDuration(resolved?.duration) ?? duration;
+        speechDuration = positiveDuration(resolved?.speechDuration) ?? speechDuration;
         throwIfInterrupted(signal);
       } catch (error) {
         throwIfCheckpointed(signal);
@@ -99,8 +106,8 @@ export async function runMediaJob({
             try {
               const parsed = parseProviderTranscript(nativeTranscript);
               const checked = validateTranscript(parsed, {
-                duration: resolved?.duration,
-                speechDuration: resolved?.speechDuration,
+                duration,
+                speechDuration,
               });
               if (checked.valid) source = checked.transcript;
               else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
@@ -179,8 +186,8 @@ export async function runMediaJob({
         appearance,
         transcriber,
         media: acquiredMedia,
-        duration: resolved?.duration,
-        speechDuration: resolved?.speechDuration,
+        duration,
+        speechDuration,
         signal,
       });
       throwIfInterrupted(signal);
@@ -201,6 +208,8 @@ export async function runMediaJob({
           existingMetadata: existing.metadata,
           media,
           limitations,
+          duration,
+          speechDuration,
         });
       }
       return outcome.persist({
@@ -215,6 +224,8 @@ export async function runMediaJob({
         retryable: retryable || undefined,
         formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
         existingMetadata: existing.metadata,
+        duration,
+        speechDuration,
       });
     }
 
@@ -263,6 +274,8 @@ export async function runMediaJob({
             existingMetadata: existing?.metadata,
             media,
             limitations,
+            duration,
+            speechDuration,
           });
           return outcome.persist({
             providerName,
@@ -278,6 +291,8 @@ export async function runMediaJob({
               source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
             transcriber,
             existingMetadata: existing?.metadata,
+            duration,
+            speechDuration,
           });
         } catch (error) {
           throwIfCheckpointed(signal);
@@ -302,6 +317,8 @@ export async function runMediaJob({
       formatterVersion,
       transcriber,
       existingMetadata,
+      duration,
+      speechDuration,
     });
   } catch (error) {
     if (!isCheckpointError(error)) throw error;
@@ -321,6 +338,8 @@ export async function runMediaJob({
       formatterVersion,
       transcriber,
       existingMetadata,
+      duration,
+      speechDuration,
     });
   }
 }

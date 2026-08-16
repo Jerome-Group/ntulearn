@@ -300,6 +300,7 @@ test("runs the provider transcript and independent media paths through one pure 
   assert.equal(result.verdict, "green");
   assert.equal(result.stage, "complete");
   assert.equal(result.transcript.sourceKind, "provider");
+  assert.equal(result.duration, 10);
   assert.deepEqual(writes.map(({ kind }) => kind).sort(), [
     "formatted-transcript",
     "media",
@@ -326,6 +327,7 @@ test("runs the provider transcript and independent media paths through one pure 
     sourceSha256: metadata.sourceSha256,
     formattedSha256: metadata.formattedSha256,
     language: "en-SG",
+    duration: 10,
     formatterVersion: "local-test-formatter-1",
     media: {
       video: { available: true, path: "media/media", quality: 720, audio: true },
@@ -338,10 +340,12 @@ test("runs the provider transcript and independent media paths through one pure 
   assert.doesNotMatch(JSON.stringify(result), /https?:\/\/|ks=secret/);
   const state = JSON.parse(writes.find(({ kind }) => kind === "state").content);
   assert.equal(state.sourceKind, "provider");
+  assert.equal(state.duration, 10);
   assert.equal(state.sourceSha256, metadata.sourceSha256);
   assert.equal(state.artifacts.formattedTranscript, "media/formatted-transcript");
   const status = writes.find(({ kind }) => kind === "status").content;
   assert.match(status, /Video: available/);
+  assert.match(status, /Duration: 10\.0s/);
   assert.match(status, /Transcript provenance: en-SG provider source \+ formatted Markdown/);
 });
 

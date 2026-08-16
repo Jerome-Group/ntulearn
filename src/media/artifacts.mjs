@@ -5,6 +5,7 @@ import {
   transcriptDigest,
   validateTranscript,
 } from "./transcript.mjs";
+import { positiveDuration } from "./duration.mjs";
 
 export function createMediaArtifacts({ appearance, storage }) {
   return {
@@ -51,6 +52,8 @@ export function createMediaArtifacts({ appearance, storage }) {
       existingMetadata,
       media,
       limitations,
+      duration,
+      speechDuration,
     }) {
       const metadata = transcriptMetadata({
         appearance,
@@ -63,6 +66,8 @@ export function createMediaArtifacts({ appearance, storage }) {
         existingMetadata,
         media,
         limitations,
+        duration,
+        speechDuration,
       });
       return storage.write({
         appearance,
@@ -96,6 +101,8 @@ async function readExistingTranscript({ appearance, storage, regenerate }) {
           transcriberVersion: state.transcriberVersion,
           asr: state.asr,
           formattedSha256: state.formattedSha256,
+          duration: state.duration,
+          speechDuration: state.speechDuration,
         }
       : {}),
     ...(parsedMetadata ?? {}),
@@ -294,6 +301,8 @@ function transcriptMetadata({
   existingMetadata,
   media,
   limitations,
+  duration,
+  speechDuration,
 }) {
   return {
     recordingId: appearance.recordingId,
@@ -303,6 +312,8 @@ function transcriptMetadata({
     sourceSha256,
     formattedSha256,
     language: source.language,
+    ...(positiveDuration(duration) ? { duration } : {}),
+    ...(positiveDuration(speechDuration) ? { speechDuration } : {}),
     formatterVersion:
       formatterVersion ??
       (source.sourceKind === "non-speech" ? "not used for non-speech" : "unknown"),
