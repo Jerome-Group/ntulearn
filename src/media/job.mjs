@@ -18,7 +18,8 @@ export async function runMediaJob({
 }) {
   const limitations = [];
   const artifacts = {};
-  const providerName = provider.name ?? appearance.provider;
+  const providerName = provider?.name ?? appearance.provider;
+  const formatterVersion = nonEmpty(formatter?.version);
   const media = { video: unavailableMedia(), audio: unavailableMedia() };
   let source = null;
   let resolved = null;
@@ -32,7 +33,7 @@ export async function runMediaJob({
 
   if (resolved) {
     try {
-      nativeTranscript = await providerTranscript(provider, resolved);
+      nativeTranscript = await provider.transcript(resolved);
     } catch (error) {
       limitations.push(`Provider transcript retrieval failed: ${publicError(error)}`);
     }
@@ -61,7 +62,7 @@ export async function runMediaJob({
     }
 
     try {
-      const acquired = await providerMedia(provider, resolved);
+      const acquired = await provider.media(resolved);
       if (acquired?.kind === "video" || acquired?.kind === "audio") {
         const artifact = await storage.write({
           appearance,
@@ -98,107 +99,111 @@ export async function runMediaJob({
     });
     const sourceSha256 = transcriptDigest(rawJson);
 
-    try {
-      const formatted = await formatter.format({
-        appearance,
-        language: source.language,
-        segments: source.segments,
-      });
-      if (Array.isArray(formatted?.limitations)) limitations.push(...formatted.limitations);
-      const markdown = assertFormattedTranscript(
-        typeof formatted === "string" ? formatted : formatted?.markdown,
-        source.segments,
-      );
-      artifacts.formattedTranscript = await storage.write({
-        appearance,
-        kind: "formatted-transcript",
-        content: markdown,
-        filename: appearance.placement.formattedTranscriptPath,
-      });
+    if (!formatterVersion) {
+      limitations.push("Local formatter/model version is not configured.");
+    } else {
+      try {
+        const formatted = await formatter.format({
+          appearance,
+          language: source.language,
+          segments: source.segments,
+        });
+        if (Array.isArray(formatted?.limitations)) limitations.push(...formatted.limitations);
+        const markdown = assertFormattedTranscript(
+          typeof formatted === "string" ? formatted : formatted?.markdown,
+          source.segments,
+        );
+        artifacts.formattedTranscript = await storage.write({
+          appearance,
+          kind: "formatted-transcript",
+          content: markdown,
+          filename: appearance.placement.formattedTranscriptPath,
+        });
 
-      const metadata = {
-        recordingId: appearance.recordingId,
-        provider: providerName,
-        sourceKind: "provider",
-        recordingReference: appearance.providerReference,
-        sourceSha256,
-        language: source.language,
-        formatterVersion: formatter.version ?? "unknown",
-        limitations: unique(limitations),
-      };
-      artifacts.metadata = await storage.write({
-        appearance,
-        kind: "metadata",
-        content: `${JSON.stringify(metadata, null, 2)}\n`,
-        filename: "transcript.metadata.json",
-      });
-      return await finish({
-        appearance,
-        providerName,
-        media,
-        source,
-        artifacts,
-        limitations,
-        storage,
-        clock,
-        complete: true,
-        stage: "complete",
-        formatterVersion: formatter.version ?? "unknown",
-      });
-    } catch (error) {
-      limitations.push(`Formatted transcript rejected: ${publicError(error)}`);
+        const metadata = {
+          recordingId: appearance.recordingId,
+          provider: providerName,
+          sourceKind: "provider",
+          recordingReference: appearance.providerReference,
+          sourceSha256,
+          language: source.language,
+          formatterVersion,
+          limitations: unique(limitations),
+        };
+        artifacts.metadata = await storage.write({
+          appearance,
+          kind: "metadata",
+          content: `${JSON.stringify(metadata, null, 2)}\n`,
+          filename: "transcript.metadata.json",
+        });
+        const result = mediaResult({
+          appearance,
+          providerName,
+          media,
+          source,
+          artifacts,
+          limitations,
+          complete: true,
+          stage: "complete",
+        });
+        artifacts.status = await writeStatus({
+          appearance,
+          providerName,
+          media,
+          source,
+          stage: result.stage,
+          retryable: result.retryable,
+          formatterVersion,
+          limitations: result.limitations,
+          storage,
+          clock,
+        });
+        return result;
+      } catch (error) {
+        limitations.push(`Formatted transcript rejected: ${publicError(error)}`);
+      }
     }
   } else if (!limitations.some((limitation) => /local transcription/i.test(limitation))) {
     limitations.push("Local transcription is not configured for this job.");
   }
 
-  return finish({
+  const result = mediaResult({
     appearance,
     providerName,
     media,
     source,
     artifacts,
     limitations,
+    complete: false,
+    stage: failureStage(limitations),
+  });
+  artifacts.status = await writeStatus({
+    appearance,
+    providerName,
+    media,
+    source,
+    stage: result.stage,
+    retryable: result.retryable,
+    formatterVersion,
+    limitations: result.limitations,
     storage,
     clock,
-    complete: false,
-    stage: "red",
-    formatterVersion: formatter.version ?? "unknown",
   });
+  return result;
 }
 
-async function finish({
+function mediaResult({
   appearance,
   providerName,
   media,
   source,
   artifacts,
   limitations,
-  storage,
-  clock,
   complete,
   stage,
-  formatterVersion,
 }) {
   const finalLimitations = unique(limitations);
   const verdict = complete ? (finalLimitations.length ? "yellow" : "green") : "red";
-  const status = statusMarkdown({
-    appearance,
-    providerName,
-    media,
-    source,
-    limitations: finalLimitations,
-    stage,
-    retryable: !complete || finalLimitations.length > 0,
-    formatterVersion,
-    updatedAt: clock().toISOString(),
-  });
-  artifacts.status = await storage.write({
-    appearance,
-    kind: "status",
-    content: status,
-    filename: appearance.placement.statusPath,
-  });
 
   return {
     recordingId: appearance.recordingId,
@@ -220,16 +225,34 @@ async function finish({
   };
 }
 
-function providerTranscript(provider, resolved) {
-  return typeof provider.transcript === "function"
-    ? provider.transcript(resolved)
-    : provider.getTranscript(resolved);
-}
-
-function providerMedia(provider, resolved) {
-  return typeof provider.media === "function"
-    ? provider.media(resolved)
-    : provider.acquireMedia(resolved);
+async function writeStatus({
+  appearance,
+  providerName,
+  media,
+  source,
+  limitations,
+  stage,
+  retryable,
+  formatterVersion,
+  storage,
+  clock,
+}) {
+  return storage.write({
+    appearance,
+    kind: "status",
+    content: statusMarkdown({
+      appearance,
+      providerName,
+      media,
+      source,
+      limitations,
+      stage,
+      retryable,
+      formatterVersion: formatterVersion ?? "not configured",
+      updatedAt: clock().toISOString(),
+    }),
+    filename: appearance.placement.statusPath,
+  });
 }
 
 function nativeBody(value) {
@@ -290,4 +313,16 @@ function publicError(error) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function failureStage(limitations) {
+  return limitations.some((limitation) =>
+    /provider (?:resolution|transcript)|local transcription/i.test(limitation),
+  )
+    ? "pending"
+    : "red";
+}
+
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

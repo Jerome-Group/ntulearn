@@ -44,6 +44,10 @@ test("rejects empty, unordered, and implausibly short provider transcripts", () 
     ).reason,
     /covers 2\.0s of 100\.0s/,
   );
+  assert.match(
+    validateTranscript({ language: "en", segments: [{ start: 0, end: 2, text: "speech" }] }).reason,
+    /duration is unavailable/,
+  );
 });
 
 test("rejects formatting that keeps neither timestamps nor protected notation", () => {
@@ -56,6 +60,13 @@ test("rejects formatting that keeps neither timestamps nor protected notation", 
     () =>
       assertFormattedTranscript("The value is four.", [{ start: 0, end: 2, text: "2 + 2 = 4" }]),
     /protected notation/,
+  );
+  assert.throws(
+    () =>
+      assertFormattedTranscript("The value is 4 = 2 + 2.", [
+        { start: 0, end: 2, text: "2 + 2 = 4" },
+      ]),
+    /reorders protected notation/,
   );
   assert.throws(
     () =>

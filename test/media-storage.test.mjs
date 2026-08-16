@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,6 +58,8 @@ test("does not replace a video attachment that already supplies the content-tree
   const mediaRoot = join(volumeRoot, "Media");
   await mkdir(mediaRoot, { recursive: true });
   const target = join(root, "course/01 Lectures/01 Lecture.mp4");
+  await mkdir(join(root, "course/01 Lectures"), { recursive: true });
+  await writeFile(target, "student-owned video");
   const storage = createMediaStorage({ mediaRoot, volumeRoot });
   const result = await storage.write({
     appearance: {
@@ -74,4 +76,30 @@ test("does not replace a video attachment that already supplies the content-tree
   });
 
   assert.deepEqual(result, { path: target, status: "existing" });
+  assert.equal(await readFile(target, "utf8"), "student-owned video");
+});
+
+test("does not trust an attachment flag when the visible video is absent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  await mkdir(mediaRoot, { recursive: true });
+  const target = join(root, "course/01 Lectures/01 Lecture.mp4");
+  const storage = createMediaStorage({ mediaRoot, volumeRoot });
+  const result = await storage.write({
+    appearance: {
+      recordingId: "content-tree:item",
+      placement: {
+        destination: join(root, "course"),
+        videoPath: "01 Lectures/01 Lecture.mp4",
+        videoAlreadyPresent: true,
+      },
+    },
+    kind: "media",
+    mediaKind: "video",
+    content: Buffer.from("downloaded video"),
+  });
+
+  assert.deepEqual(result, { path: target, status: "written" });
+  assert.equal(await readFile(target, "utf8"), "downloaded video");
 });

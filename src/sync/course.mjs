@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
-import { discoverContentRecordings } from "../media/discovery.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
@@ -16,7 +15,7 @@ import { courseState, newIds } from "./state.mjs";
 const SYNC_STAMP = "Last synced.md";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
-export async function syncCourse({ client, course, state }) {
+export async function syncCourse({ client, course, state, recordingDiscovery = () => [] }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
   const unread = Object.entries(snapshot.unavailable ?? {})
@@ -53,7 +52,7 @@ export async function syncCourse({ client, course, state }) {
   // sync therefore returns safe appearance records and writes none of their media artifacts.
   const recordings =
     course.mediaMode && course.mediaMode !== "off"
-      ? discoverContentRecordings({ course, snapshot, attachmentsByItem })
+      ? recordingDiscovery({ course, snapshot, attachmentsByItem })
       : [];
   const numbering = numberingOf(
     course.destination,

@@ -158,7 +158,7 @@ test("rejects an invalid provider transcript after still attempting media acquis
   assert.equal(mediaAttempted, true);
   assert.equal(result.complete, false);
   assert.equal(result.verdict, "red");
-  assert.equal(result.stage, "red");
+  assert.equal(result.stage, "pending");
   assert.match(result.limitation, /provider transcript rejected/i);
   assert.deepEqual(
     writes.map(({ kind }) => kind),

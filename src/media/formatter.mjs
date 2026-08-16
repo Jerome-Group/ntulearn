@@ -10,6 +10,9 @@ export function createLocalFormatter({ model, version, maxSegments = 24 }) {
   if (!model || typeof model.generate !== "function") {
     throw new Error("Local formatter needs a model.generate adapter.");
   }
+  if (typeof version !== "string" || !version.trim()) {
+    throw new Error("Local formatter needs a formatter/model version.");
+  }
   if (!Number.isSafeInteger(maxSegments) || maxSegments <= 0) {
     throw new Error("Local formatter maxSegments must be a positive safe integer.");
   }

@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { mkdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { assertMediaRoot } from "./paths.mjs";
-import { writeAtomically } from "../sync/files.mjs";
 
 // eslint-disable-next-line no-control-regex -- control characters cannot be filenames
 const UNSAFE_FILENAME_CHARACTERS = /[\\/:*?"<>|\x00-\x1F]/g;
@@ -16,15 +15,17 @@ export function createMediaStorage({ mediaRoot, volumeRoot, write = writeAtomica
   return {
     async write({ appearance, kind, mediaKind, content, filename }) {
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
-      if (target.existing) return { path: target.path, status: "existing" };
-      await mkdir(resolve(target.path, ".."), { recursive: true });
+      if (kind === "media" && (await isFilePresent(target.path))) {
+        return { path: target.path, status: "existing" };
+      }
+      await mkdir(dirname(target.path), { recursive: true });
       await write(target.path, content);
       return { path: target.path, status: "written" };
     },
   };
 }
 
-function targetFor({ root, appearance, kind, mediaKind, filename }) {
+function targetFor({ root, appearance, kind, filename }) {
   const recordingRoot = join(root, "recordings", recordingKey(appearance.recordingId));
   if (kind === "provider-transcript") {
     return { path: join(recordingRoot, "provider", safeFilename(filename, "transcript.provider")) };
@@ -32,12 +33,6 @@ function targetFor({ root, appearance, kind, mediaKind, filename }) {
   if (kind === "raw-transcript") return { path: join(recordingRoot, "transcript.raw.json") };
   if (kind === "metadata") return { path: join(recordingRoot, "transcript.metadata.json") };
   if (kind === "media") {
-    if (appearance.placement.videoAlreadyPresent) {
-      return { path: visiblePath(appearance, appearance.placement.videoPath), existing: true };
-    }
-    if (appearance.storageSurface === "media-store") {
-      return { path: join(recordingRoot, "media", safeFilename(filename, `${mediaKind}.bin`)) };
-    }
     return { path: visiblePath(appearance, appearance.placement.videoPath) };
   }
   if (kind === "formatted-transcript") {
@@ -72,4 +67,26 @@ function safeFilename(value, fallback) {
     .replace(UNSAFE_FILENAME_CHARACTERS, "_")
     .trim();
   return `${stem || fallback}${extension.replace(UNSAFE_FILENAME_CHARACTERS, "_")}`;
+}
+
+async function isFilePresent(path) {
+  const info = await stat(path).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  return Boolean(info?.isFile());
+}
+
+// Media writes are atomic without depending on the sync layer. A partial file must never become a
+// visible course artifact if the process is interrupted between download and rename.
+async function writeAtomically(path, content) {
+  await mkdir(dirname(path), { recursive: true });
+  const partial = `${path}.part-${process.pid}`;
+  try {
+    await writeFile(partial, content);
+    await rename(partial, path);
+  } catch (error) {
+    await unlink(partial).catch(() => {});
+    throw error;
+  }
 }

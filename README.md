@@ -93,19 +93,13 @@ The selected runtime and model licences are documented in
 
 ### Content-tree recording tracer
 
-An `active` or `pilot` course walk classifies Kaltura players reached through attachments, embeds,
-external links and launch links. The sync only returns URL-free recording appearances; it does not
-download media or run a model. A separate media job consumes one appearance through provider,
-storage and local-formatter adapters.
-
-The Kaltura adapter resolves session-bound playback data afresh, prefers 720p, and asks FFmpeg to
-remux without re-encoding. It preserves a valid provider transcript unchanged, writes the canonical
-`transcript.raw.json`, and creates a timestamp-free formatted Markdown derivative. Source,
-provider-native and working artifacts stay in the Media store; content-tree video, formatted
-transcript and status stay beside the numbered item. Expiring URLs and session material are never
-written to state, metadata, status or logs. A transcript is complete only when both source and
-formatted artifacts exist; invalid provider text is red until the later local-ASR fallback is
-implemented.
+An `active` or `pilot` course may have recording appearances alongside its ordinary sync. Recording
+completeness is a separate concern: the sync remains additive and does not claim that media work is
+complete. Each appearance keeps its own placement and status, while source evidence and working
+artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
+Session material and expiring provider addresses are never persisted. A transcript is complete only
+when both a validated source and formatted Markdown derivative exist; unsupported fallback remains
+visible until its later workflow is available.
 
 ## Scheduling the watchdog
 

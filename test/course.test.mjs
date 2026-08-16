@@ -104,6 +104,55 @@ test("writes an attachment to the path its placement names", async () => {
   assert.equal(result.downloaded, 1);
 });
 
+test("hands enabled course appearances to discovery without running media work", async () => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-media-"));
+  const items = [
+    {
+      id: "folder",
+      parentId: null,
+      position: 0,
+      title: "Lectures",
+      contentHandler: "resource/x-bb-folder",
+    },
+    {
+      id: "lecture",
+      parentId: "folder",
+      position: 0,
+      title: "Week 1",
+      contentHandler: "resource/x-bb-document",
+      body: {
+        displayText: '<iframe src="https://video.example.test/entry_id/lecture-1"></iframe>',
+      },
+    },
+  ];
+  const seen = [];
+  const result = await syncCourse({
+    client: {
+      async readCourse() {
+        return { course: { displayName: "MH2100" }, announcements: [], conversations: [], items };
+      },
+      async readAttachments(courseId, item) {
+        seen.push([courseId, item.id]);
+        return [];
+      },
+      async download() {
+        throw new Error("media work must not run during sync");
+      },
+    },
+    course: { key: "MH2100", courseId: "_9_1", destination, mediaMode: "pilot" },
+    state: { version: 1, courses: {} },
+    recordingDiscovery({ attachmentsByItem }) {
+      assert.equal(attachmentsByItem.get("lecture").length, 0);
+      return [{ recordingId: "content-tree:_9_1:lecture:entry:lecture-1" }];
+    },
+  });
+
+  assert.deepEqual(seen, [["_9_1", "lecture"]]);
+  assert.deepEqual(result.recordings, [
+    { recordingId: "content-tree:_9_1:lecture:entry:lecture-1" },
+  ]);
+});
+
 // `item` used to be the whole of a failure's location, and it is `ultraDocumentBody` for every
 // embedded document in a course — so the field meant to find the file named nothing (#21).
 test("says where a failed download came from and where it would have gone", async () => {

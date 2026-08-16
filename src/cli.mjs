@@ -5,6 +5,7 @@ import { stderr, stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig, selectCourses } from "./config.mjs";
 import { walkCourses } from "./courses.mjs";
+import { discoverContentRecordings } from "./media/discovery.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
 import { openClient } from "./ntulearn/client.mjs";
@@ -58,7 +59,12 @@ async function discover(config) {
 async function sync(config, key) {
   const state = await readState(config.statePath);
   const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
-    const result = await syncCourse({ client, course, state });
+    const result = await syncCourse({
+      client,
+      course,
+      state,
+      recordingDiscovery: discoverContentRecordings,
+    });
     await writeState(config.statePath, state);
     return result;
   });

@@ -1,6 +1,4 @@
 import { attachmentName, externalLinkOf, isFolder } from "../ntulearn/content.mjs";
-import { attachmentPlacement, placedFile, placementsIn } from "../sync/placement.mjs";
-import { orderedName } from "../sync/paths.mjs";
 import { kalturaReferenceOf } from "./kaltura.mjs";
 
 const EMBED = /<(iframe|object|embed)\b([^>]*)>/gi;
@@ -9,6 +7,8 @@ const ATTRIBUTE = /\b(src|href|data)\s*=\s*(["'])(.*?)\2/gi;
 const JSON_ATTRIBUTE = /\bdata-bbfile\s*=\s*(["'])(.*?)\1/i;
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".m4a", ".mp3", ".ogg", ".wav"]);
+// eslint-disable-next-line no-control-regex -- control characters are what this strips
+const RESERVED_CHARACTERS = /[\\/:*?"<>|\x00-\x1F]/g;
 
 export function discoverContentRecordings({ course, snapshot, attachmentsByItem = new Map() }) {
   const placements = placementsIn(snapshot.items ?? []);
@@ -85,6 +85,47 @@ function mediaPlacement({ course, item, placement, attachment }) {
     statusPath: `${stem}.media-status.md`,
     directory,
   };
+}
+
+function placementsIn(items) {
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  return new Map(items.map((item) => [item.id, placementOf(item, itemsById)]));
+}
+
+function placementOf(item, itemsById) {
+  const folders = [];
+  for (let each = item; each; each = itemsById.get(each.parentId)) {
+    if (isFolder(each)) folders.unshift(each);
+  }
+  return {
+    trail: folders.map((folder) => folder.title).join(" › "),
+    segments: folders.map((folder) => orderedName(folder.position, folder.title)),
+  };
+}
+
+function attachmentPlacement(placement, item, attachment) {
+  const file = attachmentName(item, attachment);
+  return placedFile(placement, orderedName(item.position, file), file);
+}
+
+function placedFile(placement, name, file = name) {
+  const segments = [...placement.segments, name];
+  return { file, trail: placement.trail, segments, path: segments.join("/") };
+}
+
+function orderedName(position, name) {
+  return `${String((position ?? 0) + 1).padStart(2, "0")} ${safeSegment(name)}`;
+}
+
+function safeSegment(value) {
+  return (
+    String(value ?? "")
+      .normalize("NFKC")
+      .replace(RESERVED_CHARACTERS, "_")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/^\.+/, "") || "untitled"
+  );
 }
 
 function attachmentCandidates(attachments) {

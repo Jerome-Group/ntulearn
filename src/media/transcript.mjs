@@ -53,12 +53,11 @@ export function validateTranscript(
   }
 
   const expectedDuration = numberOrNull(speechDuration ?? duration);
+  if (expectedDuration === null || expectedDuration <= 0) {
+    return { valid: false, reason: "recording duration is unavailable for coverage validation" };
+  }
   const lastEnd = normalized.segments.at(-1).end;
-  if (
-    expectedDuration !== null &&
-    expectedDuration > 0 &&
-    lastEnd < expectedDuration * coverageRatio
-  ) {
+  if (lastEnd < expectedDuration * coverageRatio) {
     return {
       valid: false,
       reason: `it covers ${lastEnd.toFixed(1)}s of ${expectedDuration.toFixed(1)}s`,
@@ -98,12 +97,17 @@ export function assertFormattedTranscript(markdown, segments) {
     throw new Error("formatted transcript still contains timestamps");
   }
 
-  const expected = tokenCounts(segments.map(({ text }) => text).join(" "));
-  const actual = tokenCounts(markdown);
+  const expectedTokens = protectedTokens(segments.map(({ text }) => text).join(" "));
+  const actualTokens = protectedTokens(markdown);
+  const expected = tokenCounts(expectedTokens);
+  const actual = tokenCounts(actualTokens);
   for (const [token, count] of expected) {
     if ((actual.get(token) ?? 0) < count) {
       throw new Error(`formatted transcript loses protected notation: ${token}`);
     }
+  }
+  if (!isSubsequence(expectedTokens, actualTokens)) {
+    throw new Error("formatted transcript reorders protected notation");
   }
   for (const run of segments
     .map(({ text }) => text.match(NON_ASCII_RUN) ?? [])
@@ -112,6 +116,14 @@ export function assertFormattedTranscript(markdown, segments) {
     .filter(Boolean)) {
     if (!markdown.includes(run))
       throw new Error(`formatted transcript loses code-switched text: ${run}`);
+  }
+  const switchedWords = segments
+    .map(({ text }) => text)
+    // eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
+    .filter((text) => /[^\x00-\x7F]/.test(text) && /[A-Za-z]/.test(text))
+    .flatMap((text) => lexicalWords(text));
+  if (!isSubsequence(switchedWords, lexicalWords(markdown))) {
+    throw new Error("formatted transcript loses code-switched text");
   }
   return markdown.trimEnd() + "\n";
 }
@@ -179,10 +191,27 @@ function numberOrNull(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function tokenCounts(value) {
+function protectedTokens(value) {
+  return [...value.matchAll(PROTECTED_TOKEN)].map(([token]) => token);
+}
+
+function tokenCounts(tokens) {
   const counts = new Map();
-  for (const token of value.matchAll(PROTECTED_TOKEN)) {
-    counts.set(token[0], (counts.get(token[0]) ?? 0) + 1);
+  for (const token of tokens) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
   }
   return counts;
+}
+
+function lexicalWords(value) {
+  return [...value.matchAll(/[A-Za-z][A-Za-z0-9'-]*/g)].map(([word]) => word);
+}
+
+function isSubsequence(expected, actual) {
+  let index = 0;
+  for (const value of actual) {
+    if (value === expected[index]) index += 1;
+    if (index === expected.length) return true;
+  }
+  return index === expected.length;
 }
