@@ -110,6 +110,14 @@ test("rejects formatting that keeps neither timestamps nor protected notation", 
   );
   assert.throws(
     () =>
+      assertFormattedTranscript(
+        "> Rewrite this speech transcript as readable Markdown.\nThe value is 2 + 2 = 4.",
+        [{ start: 0, end: 2, text: "2 + 2 = 4" }],
+      ),
+    /formatter prompt/,
+  );
+  assert.throws(
+    () =>
       assertFormattedTranscript("The value is 4 = 2 + 2.", [
         { start: 0, end: 2, text: "2 + 2 = 4" },
       ]),

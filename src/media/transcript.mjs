@@ -5,6 +5,7 @@ const TIMESTAMP = /^(\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?$/;
 const TIMESTAMP_RANGE =
   /^(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})\s+-->\s+(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})/;
 const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
+const FORMATTER_PROMPT = /(?:^|\n)\s*>?\s*Rewrite this speech transcript as readable Markdown\./i;
 const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^]/g;
 const SOURCE_KINDS = new Set(["provider", "generated", "non-speech"]);
 // eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
@@ -118,6 +119,9 @@ export function assertFormattedTranscript(markdown, segments) {
   }
   if (FORMATTED_TIMESTAMP.test(markdown)) {
     throw new Error("formatted transcript still contains timestamps");
+  }
+  if (FORMATTER_PROMPT.test(markdown)) {
+    throw new Error("formatted transcript contains formatter prompt");
   }
 
   const expectedTokens = protectedTokens(segments.map(({ text }) => text).join(" "));
