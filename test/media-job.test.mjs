@@ -1372,7 +1372,11 @@ test("does not preserve provider transcript bytes that contain session material"
             body: JSON.stringify({
               language: "en",
               segments: [
-                { start: 0, end: 10, text: "Caption https://video.test/caption?ks=session-secret" },
+                {
+                  start: 0,
+                  end: 10,
+                  text: "Caption https://video.test/caption?ks=session-secret&access_token=secret&sig=secret",
+                },
               ],
             }),
             filename: "captions.json",
@@ -1401,7 +1405,7 @@ test("does not preserve provider transcript bytes that contain session material"
     writes.map(({ kind }) => kind),
     ["media", "state", "status"],
   );
-  assert.doesNotMatch(JSON.stringify(writes), /session-secret|ks=/);
+  assert.doesNotMatch(JSON.stringify(writes), /session-secret|ks=|access_token=|sig=/);
 });
 
 test("rejects formatted output that loses a number or timestamp", async () => {

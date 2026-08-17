@@ -116,8 +116,12 @@ completeness is a separate concern: the sync remains additive and does not claim
 complete. Each appearance keeps its own placement and status, while source evidence and working
 artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
 Kaltura, YouTube, and direct video/audio links are classified without retaining expiring query strings;
-opaque embedded or launch players are reported as unsupported rather than silently omitted. Session
-material and expiring provider addresses are never persisted. A transcript is complete only when both
+opaque embedded or launch players are reported as unsupported rather than silently omitted. Known
+FeedbackFruits, Cengage, Blackboard placement, Padlet, and Turnitin shapes keep their provider name,
+stable reference, retryability, and limitation in the status; provider-specific acquisition is an
+injected adapter seam. NTULearn file-shaped non-media references remain visible as retryable
+non-recordings. Session material and expiring provider addresses are never persisted. A transcript
+is complete only when both
 a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
 source provenance and status remain visible with the course artifacts. The routine job never

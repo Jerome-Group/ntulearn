@@ -1,5 +1,6 @@
 import { safeSegment } from "../paths.mjs";
 import { absoluteUrl } from "../ntulearn/urls.mjs";
+import { positiveDuration } from "./duration.mjs";
 import { kalturaReferenceOf } from "./kaltura.mjs";
 
 const HIDDEN_STATUSES = new Set(["hidden", "unpublished", "withdrawn"]);
@@ -132,7 +133,7 @@ function placeEntries(course, entries) {
       storageSurface: "media-gallery",
       createdAt: entry.createdAt,
       mediaType: entry.mediaType ?? null,
-      duration: Number.isFinite(Number(entry.duration)) ? Number(entry.duration) : null,
+      duration: positiveDuration(Number(entry.duration)),
       placement: {
         destination: course.destination,
         directorySegments: [directory],

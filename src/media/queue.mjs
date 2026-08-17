@@ -206,7 +206,7 @@ function preservedState(job) {
       job[field],
     ]),
   );
-  return sanitizeJobState(state);
+  return sanitizeJobState(state, { dropInvalidDurations: true });
 }
 
 function queueJson(record) {
@@ -219,7 +219,7 @@ function stripEphemeralFields(job) {
   );
 }
 
-function sanitizeJobState(update) {
+function sanitizeJobState(update, { dropInvalidDurations = false } = {}) {
   const unknown = Object.keys(update).filter((field) => !JOB_STATE_FIELDS.includes(field));
   if (unknown.length) {
     throw new Error(`Media queue job update contains unsupported fields: ${unknown.join(", ")}.`);
@@ -255,6 +255,7 @@ function sanitizeJobState(update) {
       safe[field] = value === null ? null : String(value).toLowerCase();
     } else if (["duration", "speechDuration"].includes(field)) {
       if (value !== null && !positiveDuration(value)) {
+        if (dropInvalidDurations) continue;
         throw new Error(`Media queue ${field} must be a positive number.`);
       }
       safe[field] = value;

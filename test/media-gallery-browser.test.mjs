@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import {
@@ -34,6 +35,28 @@ test("collects every gallery page through the visible load-more control", async 
 
   assert.equal(result.length, 2);
   assert.deepEqual(clicks, ["load-more"]);
+});
+
+test("stops cumulative Load More pagination when the displayed total is reached", async () => {
+  let clicks = 0;
+  const first = { id: "gallery-1" };
+  const second = { id: "gallery-2" };
+
+  const result = await collectMediaGalleryPages({
+    async readPage() {
+      return clicks === 0
+        ? { displayedCount: 2, entries: [first], hasMore: true }
+        : { displayedCount: 2, entries: [first, second], hasMore: true };
+    },
+    async clickLoadMore() {
+      clicks += 1;
+      return clicks === 1 ? { mode: "append" } : false;
+    },
+  });
+
+  assert.equal(clicks, 1);
+  assert.equal(result.at(-1).hasMore, false);
+  assert.equal(result.at(-1).entries.length, 2);
 });
 
 test("fails when a gallery advertises more pages but its control cannot advance", async () => {
@@ -319,6 +342,49 @@ test("advances a numbered Gallery page from the identified current page", async 
   assert.equal(result.complete, true);
   assert.equal(result.discoveredCount, 2);
   assert.equal(currentPage, 2);
+});
+
+test("waits for a Gallery page to advance before reading its next state", async () => {
+  let currentPage = 1;
+  let clicks = 0;
+  const pageOne = pageEntry("gallery-1", "entry:one", true);
+  const pageTwo = pageEntry("gallery-2", "entry:two", false);
+  const current = pageControl("Page 1", { "aria-current": "page" });
+  const next = pageControl("Go to page 2");
+  const child = {
+    locator: () => locator({ count: 1 }),
+    evaluate: async () =>
+      currentPage === 1
+        ? { displayedCount: 2, entries: [pageOne], hasMore: true }
+        : { displayedCount: 2, entries: [pageTwo], hasMore: false },
+    getByRole(role, { name }) {
+      if (role === "button" && name.test("Page 1")) {
+        return collectionLocator([current, next], () => {
+          clicks += 1;
+          setTimeout(1_000).then(() => {
+            currentPage = 2;
+          });
+        });
+      }
+      return locator({ count: 0 });
+    },
+    async waitForTimeout(delay) {
+      await setTimeout(delay);
+    },
+  };
+  const outer = { locator: () => locator({ count: 0 }) };
+  const page = {
+    async goto() {},
+    frames: () => [outer, child],
+    mainFrame: () => outer,
+    getByRole: () => locator({ count: 1, click: async () => {} }),
+    getByText: () => locator({ count: 1, click: async () => {} }),
+  };
+
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+
+  assert.equal(result.complete, true);
+  assert.equal(clicks, 1);
 });
 
 test("turns an identity-provider stall into an actionable session limitation", async () => {

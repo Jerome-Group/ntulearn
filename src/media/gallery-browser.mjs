@@ -34,7 +34,7 @@ export async function readKalturaMediaGallery({ page, course }) {
     if (!surface) return absentGallery();
     const pages = await collectMediaGalleryPages({
       readPage: () => readGalleryPage(surface),
-      clickLoadMore: () => clickGalleryMore(surface),
+      clickLoadMore: (page) => clickGalleryMore(surface, page),
     });
     const enrichedPages = await enrichGalleryDates({
       page,
@@ -61,6 +61,7 @@ export async function collectMediaGalleryPages({
 
   const pages = [];
   let nextPaginationMode = "append";
+  let previousPage = null;
   for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
     const read = await readPage();
     const page =
@@ -69,15 +70,30 @@ export async function collectMediaGalleryPages({
         : read;
     pages.push(page);
     if (page?.hasMore !== true) return pages;
+    if (previousPage && appendPageReachedDisplayedTotal(page)) {
+      pages[pages.length - 1] = { ...page, hasMore: false };
+      return pages;
+    }
     const advance = await clickLoadMore(page);
     if (!advance) {
       throw new Error(
         "Media Gallery pagination advertised another page but its control was unavailable.",
       );
     }
+    previousPage = page;
     nextPaginationMode = advance.mode ?? "append";
   }
   throw new Error(`Media Gallery pagination exceeded the ${maxPages}-page safety limit.`);
+}
+
+function appendPageReachedDisplayedTotal(page) {
+  return (
+    page?.paginationMode === "append" &&
+    Number.isSafeInteger(page.displayedCount) &&
+    page.displayedCount >= 0 &&
+    Array.isArray(page.entries) &&
+    page.entries.length >= page.displayedCount
+  );
 }
 
 async function openGallerySurface(page, courseId) {
@@ -268,13 +284,13 @@ function mediaHour(value, meridiem) {
   return String(hour).padStart(2, "0");
 }
 
-async function clickGalleryMore(surface) {
+async function clickGalleryMore(surface, previousPage) {
   for (const role of ["button", "link"]) {
     const control = await firstEnabledControl(surface.getByRole(role, { name: MORE_CONTROL }));
     if (control) {
       const label = await controlLabel(control);
       await control.click();
-      await waitForGalleryUpdate(surface);
+      if (!(await waitForGalleryUpdate(surface, previousPage))) return false;
       return { mode: paginationMode(label) };
     }
   }
@@ -296,7 +312,7 @@ async function clickGalleryMore(surface) {
       if ((await pageNumber(control)) !== currentPage + 1) continue;
       if (!(await isEnabledControl(control))) continue;
       await control.click();
-      await waitForGalleryUpdate(surface);
+      if (!(await waitForGalleryUpdate(surface, previousPage))) return false;
       return { mode: "replace" };
     }
   }
@@ -360,7 +376,18 @@ async function pageNumber(control) {
   return match ? Number(match[1]) : null;
 }
 
-async function waitForGalleryUpdate(surface) {
+async function waitForGalleryUpdate(surface, previousPage = null) {
+  if (previousPage && typeof surface.evaluate === "function") {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const current = await readGalleryPage(surface).catch(() => null);
+      if (galleryPageAdvanced(previousPage, current)) return true;
+      if (typeof surface.waitForTimeout !== "function") break;
+      await surface.waitForTimeout(250);
+    }
+    return false;
+  }
+
   let previous = null;
   if (typeof surface.locator === "function") {
     const body = surface.locator("body");
@@ -377,9 +404,25 @@ async function waitForGalleryUpdate(surface) {
         timeout: 5_000,
       })
       .catch(() => {});
-    return;
+    return true;
   }
   if (typeof surface.waitForTimeout === "function") await surface.waitForTimeout(250);
+  return true;
+}
+
+function galleryPageAdvanced(previous, current) {
+  if (!current || !Array.isArray(current.entries)) return false;
+  if (!Array.isArray(previous?.entries)) return false;
+  if (current.displayedCount !== previous.displayedCount) return true;
+  if (current.hasMore !== previous.hasMore) return true;
+  if (current.entries.length !== previous.entries?.length) return true;
+  return current.entries.some(
+    (entry, index) => galleryEntryIdentity(entry) !== galleryEntryIdentity(previous.entries[index]),
+  );
+}
+
+function galleryEntryIdentity(entry) {
+  return entry?.id ?? entry?.providerReference ?? entry?.href ?? null;
 }
 
 /* global document */

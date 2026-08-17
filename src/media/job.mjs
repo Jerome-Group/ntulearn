@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
+import { providerForRecording } from "./external.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 import { positiveDuration } from "./duration.mjs";
@@ -12,7 +13,8 @@ const REGENERATION_LIMITATION = "Formatted transcript needs explicit regeneratio
 // artifact metadata.
 export async function runMediaJob({
   appearance,
-  provider,
+  provider = null,
+  adapters,
   playbackCapture = null,
   storage,
   formatter,
@@ -23,9 +25,10 @@ export async function runMediaJob({
 }) {
   throwIfInterrupted(signal);
   const limitations = mediaLimitations(appearance);
+  const activeProvider = provider ?? providerForRecording({ appearance, adapters });
   let retryable = appearance.retryable === true;
   const artifacts = {};
-  let providerName = provider?.name ?? appearance.provider;
+  let providerName = appearance.providerName ?? activeProvider.name;
   const formatterVersion = nonEmpty(formatter?.version);
   let media = { video: unavailableMedia(), audio: unavailableMedia() };
   let source = null;
@@ -63,7 +66,7 @@ export async function runMediaJob({
 
     if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
       try {
-        resolved = await provider.resolve(appearance, { signal });
+        resolved = await activeProvider.resolve(appearance, { signal });
         duration = positiveDuration(resolved?.duration) ?? duration;
         speechDuration = positiveDuration(resolved?.speechDuration) ?? speechDuration;
         throwIfInterrupted(signal);
@@ -76,7 +79,7 @@ export async function runMediaJob({
 
       if (!source) {
         try {
-          nativeTranscript = await provider.transcript(resolved, { signal });
+          nativeTranscript = await activeProvider.transcript(resolved, { signal });
           throwIfInterrupted(signal);
         } catch (error) {
           throwIfCheckpointed(signal);
@@ -124,7 +127,7 @@ export async function runMediaJob({
 
       if (!acquiredMedia) {
         try {
-          const acquired = await provider.media(resolved, { signal });
+          const acquired = await activeProvider.media(resolved, { signal });
           throwIfInterrupted(signal);
           if (acquired?.kind === "video" || acquired?.kind === "audio") {
             retryable ||= acquired.retryable === true;
@@ -353,7 +356,11 @@ function nativeBody(value) {
 
 function assertSafeProviderTranscript(body) {
   const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
-  if (/\b(?:ks|token|session|signature)\s*=/i.test(text)) {
+  if (
+    /\b(?:ks|access_token|id_token|launch_token|launch|token|session|signature|cookie|state|sig)\s*=/i.test(
+      text,
+    )
+  ) {
     throw new Error("provider transcript contains a session-bound address");
   }
 }
