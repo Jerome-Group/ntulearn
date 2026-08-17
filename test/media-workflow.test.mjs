@@ -85,3 +85,51 @@ test("combines content-tree and Media Gallery appearances into one enabled-cours
     ["content-tree:_9_1:lecture-item:youtube:lecture123", "media-gallery:gallery-1"],
   );
 });
+
+test("passes injected content adapters through the discovery workflow", async () => {
+  let classified = 0;
+  const adapter = {
+    classify({ value, sourceKind }) {
+      if (value !== "https://fixture.example.test/player" || sourceKind !== "embedded-player") {
+        return null;
+      }
+      classified += 1;
+      return {
+        provider: "fixture-media",
+        providerReference: "fixture-media:id:lecture-1",
+      };
+    },
+  };
+  const result = await discoverCourseMedia({
+    client: {
+      async readCourse() {
+        return {
+          items: [
+            {
+              id: "fixture-item",
+              parentId: null,
+              position: 0,
+              title: "Fixture lecture",
+              contentHandler: "resource/x-bb-document",
+              body: { displayText: '<iframe src="https://fixture.example.test/player"></iframe>' },
+            },
+          ],
+        };
+      },
+      async readAttachments() {
+        return [];
+      },
+      async withBrowserPage(read) {
+        return read({ signedIn: true });
+      },
+    },
+    course: COURSE,
+    adapters: [adapter],
+    async readGallery() {
+      return { complete: true, recordings: [], queue: [], discoveredCount: 0 };
+    },
+  });
+
+  assert.equal(classified, 1);
+  assert.equal(result.contentRecordings[0].providerReference, "fixture-media:id:lecture-1");
+});

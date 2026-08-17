@@ -274,3 +274,113 @@ test("keeps repeated YouTube appearances as separate recordings", () => {
     ],
   );
 });
+
+test("keeps known external-tool shapes visible as retryable appearances", () => {
+  const course = { key: "ML0004-TUT", courseId: "_2711874_1", destination: "/courses/ML0004-TUT" };
+  const recordings = discoverContentRecordings({
+    course,
+    snapshot: {
+      items: [
+        {
+          id: "external-tools",
+          position: 0,
+          title: "External tools",
+          contentHandler: "resource/x-bb-document",
+          contentDetail: {
+            feedback: {
+              launchLink: "https://app.feedbackfruits.com/activity/feedback-1?token=secret",
+            },
+            turnitin: {
+              launchLink: "https://www.turnitin.com/assignment/turnitin-1?state=secret",
+            },
+            ordinary: { url: "https://www.turnitin.com/help/article-42" },
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    recordings.map(({ provider, providerName, providerShape, retryable, sourceKind }) => [
+      provider,
+      providerName,
+      providerShape,
+      retryable,
+      sourceKind,
+    ]),
+    [
+      ["unsupported", "FeedbackFruits", "feedbackfruits", true, "launch-link"],
+      ["unsupported", "Turnitin", "turnitin", true, "launch-link"],
+    ],
+  );
+  assert.doesNotMatch(JSON.stringify(recordings), /https?:\/\/|secret/);
+});
+
+test("keeps file-shaped attachments visible as retryable non-recordings", () => {
+  const recordings = discoverContentRecordings({
+    course: { key: "CC0015", courseId: "_9_1", destination: "/courses/CC0015" },
+    snapshot: {
+      items: [
+        {
+          id: "reading",
+          position: 0,
+          title: "Reading",
+          contentHandler: "resource/x-bb-document",
+        },
+      ],
+    },
+    attachmentsByItem: new Map([
+      [
+        "reading",
+        [
+          {
+            fileName: "week-1.pdf",
+            mimeType: "application/pdf",
+            resourceUrl: "/bbcswebdav/week-1.pdf?signature=secret",
+          },
+        ],
+      ],
+    ]),
+  });
+
+  assert.deepEqual(
+    recordings.map(({ provider, providerName, providerShape, retryable, sourceKind }) => [
+      provider,
+      providerName,
+      providerShape,
+      retryable,
+      sourceKind,
+    ]),
+    [["unsupported", "NTULearn file", "ntulearn-file", true, "attachment"]],
+  );
+  assert.doesNotMatch(JSON.stringify(recordings), /https?:\/\/|signature=secret/);
+});
+
+test("prefers a launch shape when detail fields repeat one provider address", () => {
+  const recordings = discoverContentRecordings({
+    course: { key: "CC0015", courseId: "_9_1", destination: "/courses/CC0015" },
+    snapshot: {
+      items: [
+        {
+          id: "repeated-link",
+          position: 0,
+          title: "Peer feedback",
+          contentHandler: "resource/x-bb-document",
+          contentDetail: {
+            ordinary: {
+              url: "https://app.feedbackfruits.com/activity/feedback-1?token=secret",
+            },
+            launch: {
+              launchLink: "https://app.feedbackfruits.com/activity/feedback-1?token=secret",
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    recordings.map(({ providerName, sourceKind }) => [providerName, sourceKind]),
+    [["FeedbackFruits", "launch-link"]],
+  );
+});

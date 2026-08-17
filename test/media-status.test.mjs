@@ -107,6 +107,26 @@ test("marks discovery and attempted incomplete work red while retaining retry ev
   assert.match(summary.recordings[0].lastError, /provider transcript/i);
 });
 
+test("keeps the known external provider name in unsupported status", () => {
+  const appearance = {
+    recordingId: "content-tree:_9_1:item-1:unsupported:feedbackfruits:activity-1",
+    title: "Peer feedback",
+    provider: "unsupported",
+    providerName: "FeedbackFruits",
+    providerShape: "feedbackfruits",
+    sourceKind: "launch-link",
+  };
+
+  const summary = mediaCourseStatus({
+    course: COURSE,
+    discovery: { complete: true, verdict: "green" },
+    queue: [appearance],
+  });
+
+  assert.equal(summary.recordings[0].provider, "FeedbackFruits");
+  assert.equal(summary.recordings[0].retryable, true);
+});
+
 test("writes a per-recording status with the complete media contract", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-recording-status-"));
   const appearance = {

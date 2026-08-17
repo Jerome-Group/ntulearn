@@ -1,0 +1,15 @@
+export const MEDIA_ADDRESS_KEYS = Object.freeze([
+  "resourceUrl",
+  "viewerUrl",
+  "url",
+  "href",
+  "src",
+  "launchUrl",
+  "launchLink",
+  "permanentUrl",
+  "mediaUrl",
+  "videoUrl",
+  "audioUrl",
+  "playbackUrl",
+  "downloadUrl",
+]);

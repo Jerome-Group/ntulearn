@@ -4,8 +4,9 @@ import {
   acquireWithAudioFallback,
   chooseRepresentation,
 } from "./acquisition.mjs";
+import { MEDIA_ADDRESS_KEYS } from "./addresses.mjs";
 
-const URL_KEYS = ["resourceUrl", "viewerUrl", "url", "href", "src", "launchUrl", "launchLink"];
+const URL_KEYS = MEDIA_ADDRESS_KEYS;
 const NAME_KEYS = ["fileName", "linkName", "displayName", "filename", "name"];
 const VIDEO_EXTENSIONS = new Set([
   ".avi",

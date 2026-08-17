@@ -1,4 +1,4 @@
-import { attachmentName, externalLinkOf, isFolder } from "../ntulearn/content.mjs";
+import { attachmentName, isFolder } from "../ntulearn/content.mjs";
 import { attachmentPlacement, placedFile, placementsIn } from "../placement.mjs";
 import { orderedName } from "../paths.mjs";
 import { classifyRecordingCandidate } from "./classification.mjs";
@@ -10,7 +10,12 @@ const JSON_ATTRIBUTE = /\bdata-bbfile\s*=\s*(["'])(.*?)\1/i;
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".m4a", ".mp3", ".ogg", ".wav"]);
 
-export function discoverContentRecordings({ course, snapshot, attachmentsByItem = new Map() }) {
+export function discoverContentRecordings({
+  course,
+  snapshot,
+  attachmentsByItem = new Map(),
+  adapters,
+}) {
   const placements = placementsIn(snapshot.items ?? []);
   const recordings = [];
 
@@ -21,12 +26,12 @@ export function discoverContentRecordings({ course, snapshot, attachmentsByItem 
     const candidates = [
       ...attachmentCandidates(attachmentsByItem.get(item.id) ?? []),
       ...bodyCandidates(item),
-      ...externalCandidate(item),
+      ...externalCandidates(item),
     ];
     const seen = new Set();
 
     for (const candidate of candidates) {
-      const classification = classifyRecordingCandidate(candidate);
+      const classification = classifyRecordingCandidate({ ...candidate, adapters });
       if (!classification) continue;
       const identity = `${classification.provider}:${classification.providerReference}`;
       if (seen.has(identity)) continue;
@@ -54,6 +59,8 @@ function appearance({
   provider,
   providerReference,
   mediaType,
+  providerName,
+  providerShape,
   retryable,
   limitation,
   sourceKind,
@@ -71,6 +78,8 @@ function appearance({
     provider,
     providerReference,
     mediaType: mediaType ?? null,
+    ...(providerName ? { providerName } : {}),
+    ...(providerShape ? { providerShape } : {}),
     ...(retryable !== undefined ? { retryable } : {}),
     ...(limitation ? { limitation } : {}),
     sourceKind,
@@ -139,15 +148,30 @@ function bodyCandidates(item) {
   return candidates;
 }
 
-function externalCandidate(item) {
-  const link = externalLinkOf(item);
-  if (!link) return [];
+function externalCandidates(item) {
+  const links = Object.values(item.contentDetail ?? {}).flatMap((detail) =>
+    detailLinks(detail).map(({ value, sourceKind }) => ({ value, sourceKind })),
+  );
+  const byValue = new Map();
+  for (const link of links) {
+    const previous = byValue.get(link.value);
+    if (
+      !previous ||
+      (link.sourceKind === "launch-link" && previous.sourceKind === "external-link")
+    ) {
+      byValue.set(link.value, link);
+    }
+  }
+  return [...byValue.values()];
+}
+
+function detailLinks(detail) {
   return [
-    {
-      value: link,
-      sourceKind: isLaunchLink(item) ? "launch-link" : "external-link",
-    },
-  ];
+    { value: detail?.url, sourceKind: "external-link" },
+    { value: detail?.launchUrl, sourceKind: "launch-link" },
+    { value: detail?.launchLink, sourceKind: "launch-link" },
+    { value: detail?.placement?.launchLink, sourceKind: "launch-link" },
+  ].filter(({ value }) => typeof value === "string" && value);
 }
 
 function attributeValues(attributes) {
@@ -162,12 +186,6 @@ function embeddedValue(attributes) {
   } catch {
     return null;
   }
-}
-
-function isLaunchLink(item) {
-  return Object.values(item.contentDetail ?? {}).some(
-    (detail) => detail?.launchUrl || detail?.launchLink || detail?.placement?.launchLink,
-  );
 }
 
 function isVideoOrAudio(attachment) {

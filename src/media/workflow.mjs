@@ -6,12 +6,13 @@ export async function discoverCourseMedia({
   client,
   course,
   readGallery = readKalturaMediaGallery,
+  adapters,
 }) {
   if (!isMediaCourseEnabled(course)) {
     return discoverMediaGallery({ course, pages: null });
   }
 
-  const contentRecordings = await discoverCourseContent({ client, course });
+  const contentRecordings = await discoverCourseContent({ client, course, adapters });
   const gallery = await discoverCourseMediaGallery({ client, course, readGallery });
   const galleryRecordings = gallery.complete === true ? gallery.recordings : [];
   const queue = [...contentRecordings, ...galleryRecordings];
@@ -46,7 +47,7 @@ export async function discoverCourseMediaGallery({
   return discovery;
 }
 
-async function discoverCourseContent({ client, course }) {
+async function discoverCourseContent({ client, course, adapters }) {
   if (typeof client?.readCourse !== "function") {
     throw new Error("Content recording discovery needs the signed-in NTULearn client.");
   }
@@ -57,5 +58,5 @@ async function discoverCourseContent({ client, course }) {
       attachmentsByItem.set(item.id, (await client.readAttachments(course.courseId, item)) ?? []);
     }
   }
-  return discoverContentRecordings({ course, snapshot, attachmentsByItem });
+  return discoverContentRecordings({ course, snapshot, attachmentsByItem, adapters });
 }
