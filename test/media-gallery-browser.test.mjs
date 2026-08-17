@@ -59,6 +59,27 @@ test("stops cumulative Load More pagination when the displayed total is reached"
   assert.equal(result.at(-1).entries.length, 2);
 });
 
+test("treats an initial cumulative Gallery page at its displayed total as exhausted", async () => {
+  let clicks = 0;
+
+  const result = await collectMediaGalleryPages({
+    async readPage() {
+      return {
+        displayedCount: 2,
+        entries: [{ id: "gallery-1" }, { id: "gallery-2" }],
+        hasMore: true,
+      };
+    },
+    async clickLoadMore() {
+      clicks += 1;
+      return false;
+    },
+  });
+
+  assert.equal(clicks, 0);
+  assert.equal(result.at(-1).hasMore, false);
+});
+
 test("fails when a gallery advertises more pages but its control cannot advance", async () => {
   await assert.rejects(
     collectMediaGalleryPages({
