@@ -155,6 +155,25 @@ test("keeps prior job state on red rediscovery and merges it on the next green r
   assert.equal(restored.queue[0].withdrawn, true);
 });
 
+test("drops invalid retained durations during green queue reconciliation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
+  const statePath = join(root, "state.json");
+  await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [{ recordingId: "gallery-1", duration: 0 }] },
+  });
+
+  const saved = await writeMediaQueue({
+    statePath,
+    course: COURSE,
+    discovery: { complete: true, queue: [{ recordingId: "gallery-1" }] },
+  });
+
+  const persisted = JSON.parse(await readFile(saved.path, "utf8"));
+  assert.equal(Object.hasOwn(persisted.queue[0], "duration"), false);
+});
+
 test("keeps a withdrawn tombstone when the next green discovery omits it", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-queue-"));
   const statePath = join(root, "state.json");

@@ -176,6 +176,21 @@ test("normalizes a raw gallery entry id without treating the appearance id as pr
   assert.equal(result.recordings[0].providerReference, "entry:entry-one");
 });
 
+test("does not persist a zero duration when the Gallery omits duration metadata", () => {
+  const result = discoverMediaGallery({
+    course: COURSE,
+    pages: [
+      {
+        displayedCount: 1,
+        entries: [galleryEntry("gallery-1", "entry:one", "Lecture", "2026-08-10T09:00:00+08:00")],
+        hasMore: false,
+      },
+    ],
+  });
+
+  assert.equal(result.recordings[0].duration, null);
+});
+
 test("does not queue a subset when the gallery count does not reconcile", () => {
   const result = discoverMediaGallery({
     course: COURSE,
