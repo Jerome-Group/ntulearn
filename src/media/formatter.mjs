@@ -1,3 +1,5 @@
+import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
+
 export const LOCAL_FORMATTING_RULES = Object.freeze([
   "Preserve the source language and all code-switching; never translate.",
   "Correct spelling, grammar, and obvious non-semantic noise only; never summarize.",
@@ -20,13 +22,9 @@ export function cleanLocalFormatterOutput(stdout, prompt = "") {
       removeRepeatedMarker(output, normalizedPrompt) ??
       output;
   }
-  const opening = output.match(/```(?:markdown|md)?[ \t]*(?:\r?\n|$)/i);
-  if (opening) {
-    const bodyStart = opening.index + opening[0].length;
-    const closing = output.indexOf("```", bodyStart);
-    if (closing > bodyStart) return output.slice(bodyStart, closing).trim();
-  }
-  return output.replace(/\n?\s*Exiting\.\.\.\s*$/i, "").trim();
+  const cleaned = output.replace(/\n?\s*Exiting\.\.\.\s*$/i, "").trim();
+  const fenced = cleaned.match(/^```(?:markdown|md)?[ \t]*\n([\s\S]*?)\n```[ \t]*$/i);
+  return (fenced ? fenced[1] : cleaned).trim();
 }
 
 function removeRepeatedMarker(output, marker) {
@@ -84,14 +82,14 @@ export function createLocalFormatter({ model, version, maxSegments = 24, maxDura
   };
 }
 
-export function localFormatterPrompt({ language, text, instructions = LOCAL_FORMATTING_RULES }) {
+function localFormatterPrompt({ language, text }) {
   return [
-    "Rewrite this speech transcript as readable Markdown.",
+    FORMATTER_PROMPT_OPENING,
     "Return only the Markdown transcript, with no preface, analysis, timestamps, or summary.",
     "Preserve every word, number, symbol, code-switched phrase, and their order. Correct only obvious spelling, grammar, and speech-recognition noise.",
     `Source language: ${language}`,
     "Rules:",
-    ...instructions.map((instruction) => `- ${instruction}`),
+    ...LOCAL_FORMATTING_RULES.map((instruction) => `- ${instruction}`),
     "Transcript:",
     text,
   ].join("\n");

@@ -78,6 +78,16 @@ test("cleans the local model prompt before returning formatted Markdown", async 
   assert.equal(result.markdown, "Readable transcript.");
 });
 
+test("unwraps a complete Markdown fence but preserves a code fence in later prose", () => {
+  assert.equal(
+    cleanLocalFormatterOutput("```markdown\nReadable transcript.\n```"),
+    "Readable transcript.",
+  );
+
+  const transcript = "```\nconst value = 2;\n```\nThe lecturer explains the code afterward.";
+  assert.equal(cleanLocalFormatterOutput(transcript), transcript);
+});
+
 test("starts a new chunk when timestamps exceed the duration bound", async () => {
   const calls = [];
   const formatter = createLocalFormatter({

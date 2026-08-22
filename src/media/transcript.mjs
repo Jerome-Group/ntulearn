@@ -1,11 +1,12 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
+import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
 
 const TIMESTAMP = /^(\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?$/;
 const TIMESTAMP_RANGE =
   /^(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})\s+-->\s+(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})/;
 const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
-const FORMATTER_PROMPT = /(?:^|\n)\s*>?\s*Rewrite this speech transcript as readable Markdown\./i;
+const FORMATTER_PROMPT = new RegExp(escapeRegExp(FORMATTER_PROMPT_OPENING), "gi");
 const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^]/g;
 const SOURCE_KINDS = new Set(["provider", "generated", "non-speech"]);
 // eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
@@ -120,11 +121,12 @@ export function assertFormattedTranscript(markdown, segments) {
   if (FORMATTED_TIMESTAMP.test(markdown)) {
     throw new Error("formatted transcript still contains timestamps");
   }
-  if (FORMATTER_PROMPT.test(markdown)) {
+  const sourceText = segments.map(({ text }) => text).join(" ");
+  if (promptOccurrences(markdown) > promptOccurrences(sourceText)) {
     throw new Error("formatted transcript contains formatter prompt");
   }
 
-  const expectedTokens = protectedTokens(segments.map(({ text }) => text).join(" "));
+  const expectedTokens = protectedTokens(sourceText);
   const actualTokens = protectedTokens(markdown);
   const expected = tokenCounts(expectedTokens);
   const actual = tokenCounts(actualTokens);
@@ -153,6 +155,14 @@ export function assertFormattedTranscript(markdown, segments) {
     throw new Error("formatted transcript loses code-switched text");
   }
   return markdown.trimEnd() + "\n";
+}
+
+function promptOccurrences(value) {
+  return String(value ?? "").match(FORMATTER_PROMPT)?.length ?? 0;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseBody(body) {

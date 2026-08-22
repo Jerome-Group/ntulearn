@@ -60,7 +60,7 @@ export async function collectMediaGalleryPages({
   }
 
   const pages = [];
-  let nextPaginationMode = "append";
+  let nextPaginationMode = "unknown";
   for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
     const read = await readPage();
     const page =
@@ -498,11 +498,13 @@ export function extractGallerySnapshot() {
     });
   }
 
-  const total = explicitTotals[0] ?? displayedCount(bodyText);
+  const hasExplicitTotal = explicitTotals.length > 0;
+  const total = hasExplicitTotal ? explicitTotals[0] : displayedCount(bodyText);
   return {
     displayedCount: total,
     entries,
     hasMore: hasMoreControl(),
+    paginationMode: hasExplicitTotal ? "append" : "unknown",
   };
   function galleryTitle(card, anchor) {
     const explicit = card.getAttribute?.("data-title")?.trim();
