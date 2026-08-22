@@ -59,6 +59,49 @@ test("stops cumulative Load More pagination when the displayed total is reached"
   assert.equal(result.at(-1).entries.length, 2);
 });
 
+test("treats an initial cumulative Gallery page at its displayed total as exhausted", async () => {
+  let clicks = 0;
+
+  const result = await collectMediaGalleryPages({
+    async readPage() {
+      return {
+        paginationMode: "append",
+        displayedCount: 2,
+        entries: [{ id: "gallery-1" }, { id: "gallery-2" }],
+        hasMore: true,
+      };
+    },
+    async clickLoadMore() {
+      clicks += 1;
+      return false;
+    },
+  });
+
+  assert.equal(clicks, 0);
+  assert.equal(result.at(-1).hasMore, false);
+});
+
+test("does not trust a page-sized count before cumulative pagination is confirmed", async () => {
+  let clicks = 0;
+  const first = { id: "gallery-1" };
+  const second = { id: "gallery-2" };
+
+  const result = await collectMediaGalleryPages({
+    async readPage() {
+      return clicks === 0
+        ? { displayedCount: 1, entries: [first], hasMore: true }
+        : { displayedCount: 2, entries: [first, second], hasMore: false };
+    },
+    async clickLoadMore() {
+      clicks += 1;
+      return { mode: "append" };
+    },
+  });
+
+  assert.equal(clicks, 1);
+  assert.equal(result.at(-1).entries.length, 2);
+});
+
 test("fails when a gallery advertises more pages but its control cannot advance", async () => {
   await assert.rejects(
     collectMediaGalleryPages({
@@ -90,6 +133,7 @@ test("evaluates the Gallery snapshot without Node-side helper closures", () => {
   const result = runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document });
 
   assert.equal(result.displayedCount, 2);
+  assert.equal(result.paginationMode, "append");
   assert.equal(result.hasMore, false);
   assert.deepEqual(
     JSON.parse(

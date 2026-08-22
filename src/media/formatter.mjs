@@ -1,3 +1,5 @@
+import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
+
 export const LOCAL_FORMATTING_RULES = Object.freeze([
   "Preserve the source language and all code-switching; never translate.",
   "Correct spelling, grammar, and obvious non-semantic noise only; never summarize.",
@@ -5,6 +7,34 @@ export const LOCAL_FORMATTING_RULES = Object.freeze([
   "Convert mathematical or symbolic notation only when unambiguous and keep the source wording nearby.",
   "Do not emit timestamps in the Markdown derivative.",
 ]);
+
+export function cleanLocalFormatterOutput(stdout, prompt = "") {
+  let output = String(stdout ?? "")
+    // eslint-disable-next-line no-control-regex -- strip terminal escape sequences from CLI output
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // eslint-disable-next-line no-control-regex -- strip terminal backspaces from CLI output
+    .replace(/\x08/g, "")
+    .replace(/\r\n?/g, "\n");
+  const normalizedPrompt = String(prompt).replace(/\r\n?/g, "\n").trimEnd();
+  if (normalizedPrompt) {
+    output =
+      removeRepeatedMarker(output, `> ${normalizedPrompt}`) ??
+      removeRepeatedMarker(output, normalizedPrompt) ??
+      output;
+  }
+  const cleaned = output.replace(/\n?\s*Exiting\.\.\.\s*$/i, "").trim();
+  const fenced = cleaned.match(/^```(?:markdown|md)?[ \t]*\n([\s\S]*?)\n```[ \t]*$/i);
+  return (fenced ? fenced[1] : cleaned).trim();
+}
+
+function removeRepeatedMarker(output, marker) {
+  const first = output.indexOf(marker);
+  if (first < 0) return null;
+  return output
+    .slice(first + marker.length)
+    .split(marker)
+    .join("");
+}
 
 export function createLocalFormatter({ model, version, maxSegments = 24, maxDuration = 120 }) {
   if (!model || typeof model.generate !== "function") {
@@ -30,20 +60,39 @@ export function createLocalFormatter({ model, version, maxSegments = 24, maxDura
       const outputs = [];
       const limitations = [];
       for (const segmentChunk of chunks) {
+        const text = segmentChunk.map(({ text: segmentText }) => segmentText).join(" ");
+        const prompt = localFormatterPrompt({ language, text });
         const result = await model.generate({
           appearance,
           language,
           segments: segmentChunk,
-          text: segmentChunk.map(({ text }) => text).join(" "),
+          text,
           instructions: LOCAL_FORMATTING_RULES,
+          prompt,
         });
-        const markdown = typeof result === "string" ? result : result?.markdown;
+        const markdown = cleanLocalFormatterOutput(
+          typeof result === "string" ? result : result?.markdown,
+          prompt,
+        );
         if (markdown) outputs.push(markdown.trim());
         if (Array.isArray(result?.limitations)) limitations.push(...result.limitations);
       }
       return { markdown: outputs.join("\n\n"), limitations };
     },
   };
+}
+
+function localFormatterPrompt({ language, text }) {
+  return [
+    FORMATTER_PROMPT_OPENING,
+    "Return only the Markdown transcript, with no preface, analysis, timestamps, or summary.",
+    "Preserve every word, number, symbol, code-switched phrase, and their order. Correct only obvious spelling, grammar, and speech-recognition noise.",
+    `Source language: ${language}`,
+    "Rules:",
+    ...LOCAL_FORMATTING_RULES.map((instruction) => `- ${instruction}`),
+    "Transcript:",
+    text,
+  ].join("\n");
 }
 
 function chunk(values, maxSegments, maxDuration) {

@@ -60,8 +60,7 @@ export async function collectMediaGalleryPages({
   }
 
   const pages = [];
-  let nextPaginationMode = "append";
-  let previousPage = null;
+  let nextPaginationMode = "unknown";
   for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
     const read = await readPage();
     const page =
@@ -70,7 +69,7 @@ export async function collectMediaGalleryPages({
         : read;
     pages.push(page);
     if (page?.hasMore !== true) return pages;
-    if (previousPage && appendPageReachedDisplayedTotal(page)) {
+    if (appendPageReachedDisplayedTotal(page)) {
       pages[pages.length - 1] = { ...page, hasMore: false };
       return pages;
     }
@@ -80,7 +79,6 @@ export async function collectMediaGalleryPages({
         "Media Gallery pagination advertised another page but its control was unavailable.",
       );
     }
-    previousPage = page;
     nextPaginationMode = advance.mode ?? "append";
   }
   throw new Error(`Media Gallery pagination exceeded the ${maxPages}-page safety limit.`);
@@ -500,11 +498,13 @@ export function extractGallerySnapshot() {
     });
   }
 
-  const total = explicitTotals[0] ?? displayedCount(bodyText);
+  const hasExplicitTotal = explicitTotals.length > 0;
+  const total = hasExplicitTotal ? explicitTotals[0] : displayedCount(bodyText);
   return {
     displayedCount: total,
     entries,
     hasMore: hasMoreControl(),
+    paginationMode: hasExplicitTotal ? "append" : "unknown",
   };
   function galleryTitle(card, anchor) {
     const explicit = card.getAttribute?.("data-title")?.trim();

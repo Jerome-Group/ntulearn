@@ -1,6 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLocalFormatter, LOCAL_FORMATTING_RULES } from "../src/media/formatter.mjs";
+import {
+  cleanLocalFormatterOutput,
+  createLocalFormatter,
+  LOCAL_FORMATTING_RULES,
+} from "../src/media/formatter.mjs";
+
+test("removes echoed prompts from every local formatter response", () => {
+  const prompt = "Rewrite this speech transcript as readable Markdown.\nTranscript:\nraw chunk";
+  const echoed = `> ${prompt}`;
+
+  assert.equal(
+    cleanLocalFormatterOutput(
+      `llama.cpp startup banner\n${echoed}\nReadable one.\n${echoed}\nReadable two.`,
+      prompt,
+    ),
+    "Readable one.\n\nReadable two.",
+  );
+});
 
 test("formats bounded timestamp-derived chunks sequentially through the local model adapter", async () => {
   const calls = [];
@@ -38,7 +55,37 @@ test("formats bounded timestamp-derived chunks sequentially through the local mo
     ["one two", "three"],
   );
   assert.deepEqual(calls[0].instructions, LOCAL_FORMATTING_RULES);
+  assert.match(calls[0].prompt, /^Rewrite this speech transcript as readable Markdown\./);
   assert.equal(result.markdown, "one two\n\nthree");
+});
+
+test("cleans the local model prompt before returning formatted Markdown", async () => {
+  const formatter = createLocalFormatter({
+    version: "local-model-1",
+    model: {
+      async generate({ prompt }) {
+        return `llama.cpp startup banner\n> ${prompt}\nReadable transcript.`;
+      },
+    },
+  });
+
+  const result = await formatter.format({
+    appearance: { recordingId: "recording-1" },
+    language: "en",
+    segments: [{ start: 0, end: 1, text: "raw transcript" }],
+  });
+
+  assert.equal(result.markdown, "Readable transcript.");
+});
+
+test("unwraps a complete Markdown fence but preserves a code fence in later prose", () => {
+  assert.equal(
+    cleanLocalFormatterOutput("```markdown\nReadable transcript.\n```"),
+    "Readable transcript.",
+  );
+
+  const transcript = "```\nconst value = 2;\n```\nThe lecturer explains the code afterward.";
+  assert.equal(cleanLocalFormatterOutput(transcript), transcript);
 });
 
 test("starts a new chunk when timestamps exceed the duration bound", async () => {
