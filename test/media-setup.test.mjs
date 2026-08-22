@@ -81,17 +81,61 @@ test("prepares all selected runtimes and models under the Media store", async ()
   });
   assert.deepEqual(await readdir(result.runtime.temp), []);
 
-  let installed = false;
+  const verifiedCommands = [];
   const verified = await verifyMediaRuntime(media, {
     volumeRoot,
     freeBytes: 200 * 1024 ** 3,
-    commandRunner: async () => {
-      installed = true;
+    commandRunner: async (command, args) => {
+      verifiedCommands.push([command, args]);
       return { code: 0 };
     },
   });
   assert.equal(verified.manifestPath, result.manifestPath);
-  assert.equal(installed, false);
+  assert.deepEqual(
+    verifiedCommands.map(([command]) => command),
+    [
+      join(result.runtime.bin, "ffmpeg"),
+      join(result.runtime.bin, "whisper-cli"),
+      join(result.runtime.bin, "llama-cli"),
+      "ffprobe",
+      "yt-dlp",
+    ],
+  );
+});
+
+test("rejects a manifest artifact whose checksum no longer matches", async () => {
+  const fixture = await preparedRuntime();
+  await writeFile(join(fixture.result.runtime.models, "whisper.bin"), "other\n");
+
+  await assert.rejects(
+    verifyMediaRuntime(fixture.media, fixture.verifyOptions),
+    /ASR model checksum does not match the runtime manifest.*npm run media:setup/,
+  );
+});
+
+test("rejects manifest identity and paths that do not match configured artifacts", async () => {
+  const fixture = await preparedRuntime();
+  const manifest = JSON.parse(await readFile(fixture.result.manifestPath, "utf8"));
+  manifest.artifacts[0].identity = "Not FFmpeg";
+  manifest.artifacts[1].path = "../outside";
+  await writeFile(fixture.result.manifestPath, `${JSON.stringify(manifest)}\n`);
+
+  await assert.rejects(
+    verifyMediaRuntime(fixture.media, fixture.verifyOptions),
+    /media tool identity does not match configured setup/,
+  );
+});
+
+test("rejects a required external executable that cannot run", async () => {
+  const fixture = await preparedRuntime();
+
+  await assert.rejects(
+    verifyMediaRuntime(fixture.media, {
+      ...fixture.verifyOptions,
+      commandRunner: async (command) => ({ code: command === "yt-dlp" ? 127 : 0 }),
+    }),
+    /yt-dlp did not pass --version verification/,
+  );
 });
 
 test("rejects a missing RAID0 Media store before creating runtime artifacts", async () => {
@@ -202,6 +246,45 @@ function minimalSetup() {
       model: model("Qwen3", "formatter.gguf"),
     },
   };
+}
+
+async function preparedRuntime() {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-verify-"));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  const sourceRoot = join(root, "sources");
+  await mkdir(mediaRoot, { recursive: true });
+  await mkdir(sourceRoot, { recursive: true });
+  const sources = {
+    ffmpeg: await source(sourceRoot, "ffmpeg", "ffmpeg\n", true),
+    whisper: await source(sourceRoot, "whisper-cli", "whisper\n", true),
+    whisperModel: await source(sourceRoot, "whisper.bin", "model\n"),
+    llama: await source(sourceRoot, "llama-cli", "llama\n", true),
+    formatterModel: await source(sourceRoot, "formatter.gguf", "formatter\n"),
+  };
+  const media = {
+    mediaRoot,
+    freeSpaceReserveBytes: 100,
+    tools: { ffprobe: "ffprobe", ytDlp: "yt-dlp" },
+    setup: {
+      mediaTool: artifact("FFmpeg", "ffmpeg", "runtime", sources.ffmpeg),
+      asr: {
+        runtime: artifact("whisper.cpp", "whisper-cli", "runtime", sources.whisper),
+        model: artifact("Whisper", "whisper.bin", "model", sources.whisperModel),
+      },
+      formatter: {
+        runtime: artifact("llama.cpp", "llama-cli", "runtime", sources.llama),
+        model: artifact("Formatter", "formatter.gguf", "model", sources.formatterModel),
+      },
+    },
+  };
+  const verifyOptions = {
+    volumeRoot,
+    freeBytes: 200,
+    commandRunner: async () => ({ code: 0 }),
+  };
+  const result = await setupMediaRuntime(media, verifyOptions);
+  return { media, result, verifyOptions };
 }
 
 function digest(body) {

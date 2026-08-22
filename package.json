@@ -17,6 +17,7 @@
     "discover": "node src/cli.mjs discover",
     "watchdog": "node src/cli.mjs watchdog",
     "media:setup": "node src/cli.mjs media-setup",
+    "media:worker": "node src/cli.mjs media-worker",
     "media:discover": "node src/cli.mjs media-discover",
     "media:withdraw": "node src/cli.mjs media-withdraw",
     "sync": "node src/cli.mjs sync",

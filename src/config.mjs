@@ -11,10 +11,10 @@ const REQUIRED_FIELDS = ["key", "courseId", "destination"];
 const ALL = "all";
 const OWN_FOLDER = "Give each NTULearn site its own folder.";
 
-export async function loadConfig(root) {
-  const raw = await readFile(resolve(root, CONFIG_PATH), "utf8").catch((error) => {
+export async function loadConfig(root, configPath = CONFIG_PATH) {
+  const raw = await readFile(resolve(root, configPath), "utf8").catch((error) => {
     if (error.code !== "ENOENT") throw error;
-    throw new Error(`No ${CONFIG_PATH}. Copy ${EXAMPLE_PATH} to it and edit it.`, {
+    throw new Error(`No ${configPath}. Copy ${EXAMPLE_PATH} to it and edit it.`, {
       cause: error,
     });
   });
@@ -23,7 +23,7 @@ export async function loadConfig(root) {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${CONFIG_PATH} is not valid JSON: ${error.message}`, { cause: error });
+    throw new Error(`${configPath} is not valid JSON: ${error.message}`, { cause: error });
   }
 
   const driveMountPath = readDriveMountPath(parsed.driveMountPath, root);

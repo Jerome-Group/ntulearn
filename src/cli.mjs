@@ -11,6 +11,8 @@ import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
 import { writeMediaCourseStatus } from "./media/status.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
+import { runProductionMedia } from "./media/production.mjs";
+import { MEDIA_RUN_MODES } from "./media/worker.mjs";
 import { openClient } from "./ntulearn/client.mjs";
 import { openLoginWindow } from "./ntulearn/session.mjs";
 import { syncCourse } from "./sync/course.mjs";
@@ -22,7 +24,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm";
 
 const commands = {
   login,
@@ -32,6 +34,7 @@ const commands = {
   renumber,
   watchdog,
   "media-setup": mediaSetup,
+  "media-worker": mediaWorker,
   "media-discover": mediaDiscover,
   "media-withdraw": mediaWithdraw,
   "watchdog-locked": watchdogLocked,
@@ -102,6 +105,15 @@ async function mediaSetup(config) {
     asJson({ manifestPath: result.manifestPath, artifacts: result.artifacts }),
   );
   return 0;
+}
+
+async function mediaWorker(config, mode = "scheduled") {
+  if (!MEDIA_RUN_MODES.includes(mode)) {
+    throw new Error("Usage: npm run media:worker -- <scheduled|manual>");
+  }
+  const result = await runProductionMedia({ config, mode, timeZone: "Asia/Singapore" });
+  await writeLine(stdout, asJson(result.digest));
+  return result.exitCode;
 }
 
 async function mediaDiscover(config, key) {
@@ -224,7 +236,7 @@ async function main([name, ...argumentsForCommand]) {
     await writeLine(stderr, USAGE);
     return 1;
   }
-  return command(await loadConfig(ROOT), ...argumentsForCommand);
+  return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
 }
 
 function asJson(value) {

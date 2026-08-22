@@ -5,7 +5,11 @@
   "watchdogTimeoutMs": 900000,
   "media": {
     "mediaRoot": "/Volumes/RAID0/Media",
-    "freeSpaceReserveBytes": 107374182400
+    "freeSpaceReserveBytes": 107374182400,
+    "tools": {
+      "ffprobe": "ffprobe",
+      "ytDlp": "yt-dlp"
+    }
   },
   "courses": [
     {

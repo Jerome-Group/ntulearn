@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { readMediaQueue, writeMediaQueue } from "../src/media/queue.mjs";
-import { isOvernightWindow, mediaDigestPaths, runMediaQueue } from "../src/media/worker.mjs";
+import {
+  isOvernightWindow,
+  mediaDigestPaths,
+  mediaWorkerExitCode,
+  runMediaQueue,
+} from "../src/media/worker.mjs";
 
 const COURSE = { key: "MH1101", courseId: "_9_1", mediaMode: "pilot" };
 
@@ -338,6 +343,64 @@ test("stops the current job at 04:00 and leaves a checkpoint that a later run re
   assert.equal(resumed.counts.completed, 2);
 });
 
+test("keeps untouched courses in the aggregate after an overnight checkpoint", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-worker-aggregate-stop-"));
+  const statePath = join(root, "state.json");
+  const secondCourse = { ...COURSE, key: "MH2100", courseId: "_9_2" };
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  await writeQueue(statePath, secondCourse, ["lecture-2"]);
+  let current = new Date("2026-08-16T03:59:00+08:00");
+
+  const digest = await runQueue({
+    statePath,
+    courses: [COURSE, secondCourse],
+    timeZone: "Asia/Singapore",
+    now: () => current,
+    schedule(callback) {
+      return callback;
+    },
+    cancelSchedule() {},
+    async runJob(_job, { requestCheckpoint }) {
+      current = new Date("2026-08-16T04:00:00+08:00");
+      requestCheckpoint();
+      return { complete: false };
+    },
+  });
+  const run = JSON.parse(await readFile(join(root, digest.runLog), "utf8"));
+
+  assert.equal(run.courses.length, 2);
+  assert.equal(run.counts.total, 2);
+  assert.equal(run.counts.checkpointed, 1);
+  assert.equal(run.counts.queued, 1);
+});
+
+test("keeps every enabled course in a failed preflight aggregate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-worker-preflight-aggregate-"));
+  const statePath = join(root, "state.json");
+  const secondCourse = { ...COURSE, key: "MH2100", courseId: "_9_2" };
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  await writeQueue(statePath, secondCourse, ["lecture-2"]);
+
+  const digest = await runMediaQueue({
+    statePath,
+    courses: [COURSE, secondCourse],
+    mode: "manual",
+    lock: null,
+    async preflight() {
+      throw new Error("Runtime verification failed. Run: npm run media:setup");
+    },
+    async runJob() {
+      throw new Error("preflight must stop jobs");
+    },
+  });
+  const run = JSON.parse(await readFile(join(root, digest.runLog), "utf8"));
+
+  assert.equal(run.courses.length, 2);
+  assert.equal(run.counts.total, 2);
+  assert.equal(run.counts.queued, 2);
+  assert.equal(digest.verdict, "red");
+});
+
 test("keeps recording failures retryable while continuing with later appearances", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-worker-"));
   const statePath = join(root, "state.json");
@@ -595,6 +658,38 @@ test("records an overlapping run without starting another provider job", async (
 
   assert.equal(digest.verdict, "yellow");
   assert.match(digest.message, /another run is active/i);
+});
+
+test("keeps an explicit terminal failure red without retrying it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-worker-terminal-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["unsupported-1"]);
+  let attempts = 0;
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    async runJob() {
+      attempts += 1;
+      return {
+        complete: false,
+        stage: "failed",
+        verdict: "red",
+        retryable: false,
+        limitations: ["Unsupported recording provider shape."],
+      };
+    },
+  };
+
+  assert.equal((await runQueue(options)).verdict, "red");
+  assert.equal((await runQueue(options)).verdict, "red");
+  assert.equal(attempts, 1);
+});
+
+test("maps every non-green aggregate verdict to a failing process exit", () => {
+  assert.equal(mediaWorkerExitCode({ verdict: "green" }), 0);
+  assert.equal(mediaWorkerExitCode({ verdict: "yellow" }), 1);
+  assert.equal(mediaWorkerExitCode({ verdict: "red" }), 1);
 });
 
 async function writeQueue(statePath, course, recordingIds) {

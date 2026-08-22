@@ -36,6 +36,7 @@ test("accepts explicit media modes and resolves the Media store", async () => {
     JSON.stringify({
       media: {
         mediaRoot: "/Volumes/RAID0/Media",
+        tools: { ffprobe: "/tools/ffprobe", ytDlp: "/tools/yt-dlp" },
         setup: mediaSetup(),
       },
       courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "pilot" }],
@@ -45,8 +46,26 @@ test("accepts explicit media modes and resolves the Media store", async () => {
   assert.equal(config.courses[0].mediaMode, "pilot");
   assert.equal(config.media.mediaRoot, "/Volumes/RAID0/Media");
   assert.equal(config.media.freeSpaceReserveBytes, 100 * 1024 ** 3);
+  assert.deepEqual(config.media.tools, {
+    ffprobe: "/tools/ffprobe",
+    ytDlp: "/tools/yt-dlp",
+  });
   assert.equal(config.media.setup.asr.model.source.kind, "file");
   assert.equal(config.media.setup.asr.model.source.value, join(root, "models/model.bin"));
+});
+
+test("defaults external media tools to portable command names", async () => {
+  const root = await repositoryWith(
+    JSON.stringify({
+      media: { mediaRoot: "/Volumes/RAID0/Media", setup: mediaSetup() },
+      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "active" }],
+    }),
+  );
+
+  assert.deepEqual((await loadConfig(root)).media.tools, {
+    ffprobe: "ffprobe",
+    ytDlp: "yt-dlp",
+  });
 });
 
 test("rejects a media mode outside the explicit set", async () => {

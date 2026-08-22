@@ -62,7 +62,12 @@ export function checkpointUpdate({ result, failure, finishedAt }) {
 }
 
 export function finishedJob(job) {
-  return job?.withdrawn === true || job?.stage === "withdrawn" || isMediaJobComplete(job);
+  return (
+    job?.withdrawn === true ||
+    job?.stage === "withdrawn" ||
+    (job?.stage === "failed" && job?.retryable === false) ||
+    isMediaJobComplete(job)
+  );
 }
 
 export function artifactPaths(artifacts) {

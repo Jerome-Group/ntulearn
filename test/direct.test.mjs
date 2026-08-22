@@ -13,6 +13,12 @@ test("classifies direct video and audio without retaining signed query strings",
   assert.equal(directMediaKindOf({ fileName: "week-1.m4a", mimeType: "audio/mp4" }), "audio");
   assert.equal(directMediaReferenceOf(video), "direct:cdn.example.test/lectures/week-1.mp4");
   assert.equal(
+    directMediaReferenceOf(
+      "https://cdn.example.test/Lecture%201%20%E6%95%B0%E5%AD%A6.mp4?signature=secret",
+    ),
+    "direct:cdn.example.test/Lecture%201%20%E6%95%B0%E5%AD%A6.mp4",
+  );
+  assert.equal(
     directMediaReferenceOf({
       resourceUrl: video,
       fileName: "week-1.mp4",
@@ -49,7 +55,12 @@ test("resolves a fresh direct URL and remuxes without re-encoding", async () => 
 
   assert.deepEqual(calls[0], [
     "resolve",
-    { reference: "direct:cdn.example.test/lecture.m4a", kind: "audio", fresh: true },
+    {
+      appearance,
+      reference: "direct:cdn.example.test/lecture.m4a",
+      kind: "audio",
+      fresh: true,
+    },
   ]);
   assert.deepEqual(calls[1], [
     "download",
