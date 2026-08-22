@@ -23,6 +23,10 @@ export const MEDIA_RUN_MODES = Object.freeze(["scheduled", "manual"]);
 export const OVERNIGHT_START_HOUR = 0;
 export const OVERNIGHT_END_HOUR = 4;
 
+export function mediaWorkerExitCode(digest) {
+  return digest?.verdict === "green" ? 0 : 1;
+}
+
 export async function runMediaQueue(options = {}) {
   const {
     statePath,
@@ -141,13 +145,17 @@ async function runMediaQueueUnlocked({
         }),
       ),
     );
+    const summaries = [];
+    for (const course of selectedCourses) {
+      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue }));
+    }
     return persistMediaDigest({
       statePath,
       runId,
       mode,
       startedAt,
       finishedAt: validDate(readNow(), "media queue finish"),
-      courses: [],
+      courses: summaries,
       globalStop: true,
       stoppedAtBoundary: false,
       verdict: "red",
@@ -162,22 +170,28 @@ async function runMediaQueueUnlocked({
   let stoppedAtBoundary = false;
 
   for (const course of selectedCourses) {
-    const outcome = await runCourse({
-      statePath,
-      course,
-      mode,
-      runJob,
-      now: readNow,
-      timeZone,
-      schedule: setSchedule,
-      cancelSchedule: clearSchedule,
-      readQueue,
-      updateJob,
-    });
+    const outcome =
+      globalStop || stoppedAtBoundary
+        ? {
+            globalStop: false,
+            stoppedAtBoundary: false,
+            summary: await summarizeUnprocessedCourse({ statePath, course, readQueue }),
+          }
+        : await runCourse({
+            statePath,
+            course,
+            mode,
+            runJob,
+            now: readNow,
+            timeZone,
+            schedule: setSchedule,
+            cancelSchedule: clearSchedule,
+            readQueue,
+            updateJob,
+          });
     summaries.push(outcome.summary);
     globalStop ||= outcome.globalStop;
     stoppedAtBoundary ||= outcome.stoppedAtBoundary;
-    if (globalStop || stoppedAtBoundary) break;
   }
 
   const finishedAt = validDate(readNow(), "media queue finish");
@@ -203,6 +217,24 @@ async function runMediaQueueUnlocked({
     summarizeCounts,
     write,
   });
+}
+
+async function summarizeUnprocessedCourse({ statePath, course, readQueue }) {
+  try {
+    const loaded = await readQueue({ statePath, courseKey: course.key });
+    const record = loaded?.record;
+    if (!record || !Array.isArray(record.queue)) return missingQueueSummary(course, loaded?.path);
+    if (record.complete !== true) return discoveryIncompleteSummary(course, loaded.path, record);
+    return courseSummary({
+      course,
+      queuePath: loaded.path,
+      queue: record.queue,
+      processed: 0,
+      discovery: record,
+    });
+  } catch (error) {
+    return queueReadFailureSummary(course, publicMediaError(error));
+  }
 }
 
 export function isOvernightWindow(value, timeZone = null) {

@@ -81,6 +81,7 @@ export function createDirectProvider({ resolveMedia, download, remux }) {
 
     resolve(appearance, { signal } = {}) {
       return resolveMedia({
+        appearance,
         reference: appearance.providerReference,
         ...(appearance.mediaType ? { kind: appearance.mediaType } : {}),
         fresh: true,
@@ -197,7 +198,7 @@ function kindFromMime(value) {
 function safeIdentity(value) {
   return String(value)
     .normalize("NFKC")
-    .replace(/[^A-Za-z0-9._/-]/g, "_")
+    .replace(/[^A-Za-z0-9._/%-]/g, "_")
     .replace(/\/+/g, "/")
     .replace(/^\/+|\/+$/g, "");
 }

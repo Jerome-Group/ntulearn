@@ -14,6 +14,7 @@ const DEFAULT_FILENAMES = {
   formatterRuntime: "llama-cli",
   formatterModel: "Qwen3-1.7B-Q4_K_M.gguf",
 };
+const DEFAULT_TOOLS = Object.freeze({ ffprobe: "ffprobe", ytDlp: "yt-dlp" });
 
 export function readMediaMode(value, courseKey) {
   const mode = value ?? "off";
@@ -39,12 +40,35 @@ export function readMediaConfig(raw, root, courses) {
 
   const mediaRoot = assertMediaRoot(raw.mediaRoot);
   const freeSpaceReserveBytes = readReserve(raw.freeSpaceReserveBytes);
+  const tools = readTools(raw.tools, root);
   const setup = raw.setup == null ? null : readSetup(raw.setup, root);
   if (enabled && !setup) {
     throw new Error("media.setup is required when a course has mediaMode active or pilot.");
   }
 
-  return { mediaRoot, freeSpaceReserveBytes, setup };
+  return { mediaRoot, freeSpaceReserveBytes, tools, setup };
+}
+
+function readTools(raw, root) {
+  if (raw == null) return { ...DEFAULT_TOOLS };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      "media.tools in config/courses.json must be an object. Copy its shape from config/courses.example.json.",
+    );
+  }
+  return {
+    ffprobe: readCommand(raw.ffprobe ?? DEFAULT_TOOLS.ffprobe, "media.tools.ffprobe", root),
+    ytDlp: readCommand(raw.ytDlp ?? DEFAULT_TOOLS.ytDlp, "media.tools.ytDlp", root),
+  };
+}
+
+function readCommand(value, label, root) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} must be a command name or path. Set it in config/courses.json.`);
+  }
+  const command = value;
+  if (command.includes("/") || command.includes("\\")) return resolve(root, command);
+  return command;
 }
 
 function readReserve(value) {

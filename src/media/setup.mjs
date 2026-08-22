@@ -7,6 +7,7 @@ import {
   lstat,
   mkdir,
   realpath,
+  readFile,
   rename,
   stat,
   statfs,
@@ -95,7 +96,103 @@ export async function verifyMediaRuntime(media, options = {}) {
       `Media runtime is not prepared at ${runtime.manifest}. Run: npm run media:setup`,
     );
   }
-  return { mediaRoot, runtime, manifestPath: runtime.manifest };
+  const artifacts = artifactSpecs(media.setup);
+  const records = await readRuntimeManifest(runtime.manifest, fileSystem);
+  await verifyManifestArtifacts({ artifacts, records, runtime, fileSystem, options });
+  await verifyExternalTools(media.tools, options);
+  return { mediaRoot, runtime, manifestPath: runtime.manifest, artifacts: records };
+}
+
+async function readRuntimeManifest(path, fileSystem) {
+  let manifest;
+  try {
+    manifest = JSON.parse(await fileSystem.readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error(`Media runtime manifest is unreadable at ${path}. Run: npm run media:setup`, {
+      cause: error,
+    });
+  }
+  if (manifest?.version !== 1 || !Array.isArray(manifest.artifacts)) {
+    throw new Error(`Media runtime manifest has an unsupported shape. Run: npm run media:setup`);
+  }
+  return manifest.artifacts;
+}
+
+async function verifyManifestArtifacts({ artifacts, records, runtime, fileSystem, options }) {
+  const actualRuntimeRoot = await fileSystem.realpath(runtime.root);
+  const byKey = new Map();
+  for (const record of records) {
+    if (!record?.key || byKey.has(record.key)) {
+      throw new Error(
+        "Media runtime manifest has missing or duplicate artifact keys. Run: npm run media:setup",
+      );
+    }
+    byKey.set(record.key, record);
+  }
+  if (byKey.size !== artifacts.length) {
+    throw new Error(
+      "Media runtime manifest does not cover every configured artifact. Run: npm run media:setup",
+    );
+  }
+
+  for (const artifact of artifacts) {
+    const record = byKey.get(artifact.key);
+    if (!record) {
+      throw new Error(
+        `${artifact.label} is absent from the runtime manifest. Run: npm run media:setup`,
+      );
+    }
+    for (const [field, expected] of [
+      ["identity", artifact.name],
+      ["revision", artifact.revision],
+      ["sha256", artifact.sha256],
+      ["license", artifact.license],
+    ]) {
+      if (record[field] !== expected) {
+        throw new Error(
+          `${artifact.label} ${field} does not match configured setup. Run: npm run media:setup`,
+        );
+      }
+    }
+    const target = artifactPath(runtime, artifact.kind, artifact.filename);
+    const expectedPath = relative(runtime.root, target);
+    if (record.path !== expectedPath) {
+      throw new Error(
+        `${artifact.label} path does not match configured setup. Run: npm run media:setup`,
+      );
+    }
+    const info = await fileSystem.lstat(target).catch(() => null);
+    if (!info?.isFile() || info.isSymbolicLink()) {
+      throw new Error(
+        `${artifact.label} is missing or unsafe at ${target}. Run: npm run media:setup`,
+      );
+    }
+    const actualPath = await fileSystem.realpath(target).catch(() => null);
+    if (!actualPath || !isInside(actualRuntimeRoot, actualPath)) {
+      throw new Error(`${artifact.label} path escapes the media runtime. Run: npm run media:setup`);
+    }
+    if (Number(record.bytes) !== Number(info.size)) {
+      throw new Error(
+        `${artifact.label} size does not match the runtime manifest. Run: npm run media:setup`,
+      );
+    }
+    if ((await digestFile(target)) !== record.sha256) {
+      throw new Error(
+        `${artifact.label} checksum does not match the runtime manifest. Run: npm run media:setup`,
+      );
+    }
+    if (artifact.kind === "runtime") await verifyRuntime(target, artifact, options);
+  }
+}
+
+async function verifyExternalTools(tools = {}, options) {
+  for (const [label, command, argumentsFor] of [
+    ["ffprobe", tools.ffprobe ?? "ffprobe", ["-version"]],
+    ["yt-dlp", tools.ytDlp ?? "yt-dlp", ["--version"]],
+  ]) {
+    const artifact = { label, verifyArgs: argumentsFor };
+    await verifyRuntime(command, artifact, options);
+  }
 }
 
 async function verifyMediaStore({ mediaRoot, runtime, volumeRoot, reserve, fileSystem, options }) {
@@ -277,6 +374,7 @@ function defaultFileSystem() {
     lstat,
     mkdir,
     realpath,
+    readFile,
     rename,
     stat,
     statfs,

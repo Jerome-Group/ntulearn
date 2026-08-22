@@ -27,6 +27,8 @@ npm run verify -- all         # check what is on disk against NTULearn, writing 
 npm run renumber -- MH2500    # rename what is on disk back into the course's order today
 npm run media:setup            # Owner-started: prepare and verify the local media runtime
 npm run media:discover -- all  # Owner-started: discover and queue recording appearances
+npm run media:worker -- manual # Owner-started: process every enabled queue now
+npm run media:worker            # Scheduled semantics: work only from 00:00 through 03:59
 npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # confirm one withdrawal
 ```
 
@@ -34,9 +36,10 @@ npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # con
 watchdog and future scheduled media runs never install anything. A successful media discovery
 writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
 
-The queue worker is `runMediaQueue` in `src/media/worker.mjs`. Its caller supplies the existing
-provider-backed media-job seam and an explicit media-runtime preflight (or `config.media`); the
-worker refuses to run without that safety check. `mode: "scheduled"` runs only from 00:00 through
+The production entrypoint is `npm run media:worker -- <scheduled|manual>`. One invocation covers
+every enabled course and provider in its aggregate digest. Unsupported appearances become terminal
+red failures. A red, queued, checkpointed, locked, or otherwise incomplete aggregate exits
+non-zero. `scheduled` is the default and runs only from 00:00 through
 03:59 local time, checkpoints the active appearance at 04:00, and writes the independent
 `.data/media-latest.json` digest plus `.data/media-logs/`. `mode: "manual"` ignores that time
 boundary. Queue entries are `queued`, `active`, `checkpointed`, `complete`, or `red`; successful
@@ -65,7 +68,11 @@ cp config/courses.example.json config/courses.json
   "watchdogTimeoutMs": 900000,
   "media": {
     "mediaRoot": "/Volumes/RAID0/Media",
-    "freeSpaceReserveBytes": 107374182400
+    "freeSpaceReserveBytes": 107374182400,
+    "tools": {
+      "ffprobe": "ffprobe",
+      "ytDlp": "yt-dlp"
+    }
   },
   "courses": [
     {
@@ -89,6 +96,8 @@ cp config/courses.example.json config/courses.json
 | `watchdogTimeoutMs` | no | The watchdog's initial timeout in milliseconds. The Owner pins the placeholder `900000` from the first week's logged durations. |
 | `media.mediaRoot` | required for `active`/`pilot` | The explicit Media store. It must be a directory below `/Volumes/RAID0`; there is no system-disk fallback. |
 | `media.freeSpaceReserveBytes` | no | Free space retained on the Media store before setup or acquisition. Defaults to 100 GiB. |
+| `media.tools.ffprobe` | no | Portable command name or explicit path for `ffprobe`; defaults to `ffprobe` on `PATH`. Worker preflight verifies it can execute. |
+| `media.tools.ytDlp` | no | Portable command name or explicit path for `yt-dlp`; defaults to `yt-dlp` on `PATH`. Worker preflight verifies it can execute. |
 | `courses[].mediaMode` | no | Exactly `active`, `pilot`, or `off`; omitted means `off` for legacy configurations. No semester is inferred. |
 
 ### Preparing the media runtime
@@ -104,7 +113,9 @@ the Media store is a real directory, the reserve is available, and existing runt
 symlinks before creating `Media/.runtime/{bin,models,cache,tmp,work,metadata}`. It copies or
 downloads the pinned artifacts, verifies their checksums and runtime commands, and writes only
 `Media/.runtime/metadata/runtime.json`. The manifest records identity, revision, checksum,
-licence, path and size; model weights, caches and working files remain outside this repository.
+licence, path and size. Every worker run refuses a missing, replaced or misconfigured runtime or
+tool and points back to `media:setup`; model weights, caches and working files remain outside this
+repository.
 
 The selected runtime and model licences are documented in
 `docs/research/media-runtime.md`. Setup is intentionally not run by CI or by an ordinary sync.
@@ -155,6 +166,14 @@ independent worker digest never changes `sync` or `verify`'s completeness verdic
 `media:withdraw` is the explicit confirmation route for one queued appearance. It writes a
 withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a
 completed appearance.
+
+## Scheduling the media worker
+
+The checked-in example is `config/com.jerome-group.ntulearn.media-worker.example.plist`. Copy it
+to `~/Library/LaunchAgents/`, replace its Node and repository placeholders, set explicit
+`media.tools` paths when launchd's `PATH` cannot find them, then bootstrap it. It starts at 00:00;
+the worker itself enforces the 04:00 checkpoint. Its process exit is non-zero for every red or
+incomplete aggregate, so launchd and the two log paths retain the unsuccessful run signal.
 
 ## Scheduling the watchdog
 
