@@ -15,11 +15,29 @@ export function watchdogVerdict({
     return { verdict: "yellow", message: "skipped: a run was already going" };
   }
 
+  const absentDestination = preChecks.destinations?.find((entry) => !entry.present);
+  if (absentDestination) {
+    return {
+      verdict: "red",
+      message: `Destination ${absentDestination.path} is unreachable — expected Drive root ${absentDestination.root}; set driveMountPath and the destination to the mounted Drive, then run: npm run watchdog`,
+    };
+  }
+
   if (preChecks.driveMount?.present === false) {
     return {
       verdict: "red",
       message:
         "Drive not mounted — no run attempted; mount Google Drive, then run: npm run watchdog",
+    };
+  }
+
+  const destinationPermission = [sync, verify].find(
+    (command) => command?.destinationPermission,
+  )?.destinationPermission;
+  if (destinationPermission) {
+    return {
+      verdict: "red",
+      message: `Destination ${destinationPermission.destination} is unreachable — permission denied at ${destinationPermission.path}; correct driveMountPath or destination permissions, then run: npm run watchdog`,
     };
   }
 

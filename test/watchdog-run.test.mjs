@@ -59,6 +59,40 @@ test("checks the Drive mount before acquiring the lock", async () => {
   );
 });
 
+test("refuses before writing when a destination's Drive root is absent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
+  const driveMountPath = join(root, "Google Drive");
+  const driveRoot = join(driveMountPath, "My Drive");
+  const destination = join(driveRoot, "Modules", "AB1234", "NTULearn");
+  await mkdir(driveMountPath);
+  const config = {
+    statePath: join(root, ".data", "state.json"),
+    driveMountPath,
+    watchdogTimeoutMs: 1_000,
+    courses: [{ key: "AB1234", destination }],
+  };
+  const runner = {
+    spawn() {
+      throw new Error("the destination pre-check should stop before spawning a command");
+    },
+  };
+
+  const digest = await runWatchdogLocked({ config, root, runner });
+
+  assert.equal(digest.verdict, "red");
+  assert.equal(
+    digest.message,
+    `Destination ${destination} is unreachable — expected Drive root ${driveRoot}; set driveMountPath and the destination to the mounted Drive, then run: npm run watchdog`,
+  );
+  await assert.rejects(stat(destination), { code: "ENOENT" });
+
+  const run = JSON.parse(await readFile(join(root, ".data", digest.runLog), "utf8"));
+  assert.equal(run.attempts, 0);
+  assert.deepEqual(run.preChecks.destinations, [
+    { path: destination, root: driveRoot, present: false },
+  ]);
+});
+
 test("kills each timed-out attempt as a process group and retries three times", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
   const driveMountPath = join(root, "Google Drive");
@@ -176,6 +210,49 @@ test("does not retry a lapsed session or a completed red run", async () => {
   assert.equal(completedRed.verdict, "red");
   assert.deepEqual(completedRedCommands, ["sync", "verify"]);
   assert.deepEqual(waits, []);
+});
+
+test("does not retry a destination permission failure", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
+  const driveMountPath = join(root, "Google Drive");
+  const driveRoot = join(driveMountPath, "My Drive");
+  const destination = join(driveRoot, "Modules", "AB1234", "NTULearn");
+  await mkdir(destination, { recursive: true });
+  const commands = [];
+  const waits = [];
+
+  const digest = await runWatchdogLocked({
+    config: {
+      statePath: join(root, ".data", "state.json"),
+      driveMountPath,
+      watchdogTimeoutMs: 1_000,
+      courses: [{ key: "AB1234", destination }],
+    },
+    root,
+    runner: {
+      node: process.execPath,
+      argumentsFor(command) {
+        return [command];
+      },
+      spawn(_command, argumentsFor) {
+        commands.push(argumentsFor[0]);
+        return completedChild({
+          code: 1,
+          stderr: `EACCES: permission denied, mkdir '${destination}'`,
+        });
+      },
+    },
+    wait: async (milliseconds) => waits.push(milliseconds),
+  });
+
+  assert.deepEqual(commands, ["sync"]);
+  assert.deepEqual(waits, []);
+  assert.equal(digest.verdict, "red");
+  assert.equal(
+    digest.message,
+    `Destination ${destination} is unreachable — permission denied at ${destination}; correct driveMountPath or destination permissions, then run: npm run watchdog`,
+  );
+  assert.doesNotMatch(digest.message, /crash|timeout/i);
 });
 
 function completedChild({ code, stdout = "", stderr = "" }) {
