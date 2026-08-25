@@ -92,7 +92,7 @@ cp config/courses.example.json config/courses.json
 | `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. No two courses may share one, or nest one inside another. |
 | `profilePath` | no | The saved browser session. Defaults to `.data/chrome-profile`. |
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
-| `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. The watchdog writes no destination when this directory is absent. |
+| `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. Before writing, the watchdog requires both this directory and each destination's first Drive root below it to be present. |
 | `watchdogTimeoutMs` | no | The watchdog's initial timeout in milliseconds. The Owner pins the placeholder `900000` from the first week's logged durations. |
 | `media.mediaRoot` | required for `active`/`pilot` | The explicit Media store. It must be a directory below `/Volumes/RAID0`; there is no system-disk fallback. |
 | `media.freeSpaceReserveBytes` | no | Free space retained on the Media store before setup or acquisition. Defaults to 100 GiB. |

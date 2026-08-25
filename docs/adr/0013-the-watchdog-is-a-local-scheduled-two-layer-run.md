@@ -38,9 +38,11 @@ a second course-reading authority.
 - **Retrying reds.** Only a crash or timeout with no usable report is retried, three attempts total.
   A completed red is evidence the run understood and must remain visible under `docs/adr/0012`;
   retrying it would hammer NTULearn while hiding the signal that needs a person.
-- **Pre-checks beyond the Drive mount.** The mount check prevents a 05:00 run from creating a
-  phantom local destination. More guards can misfire, block a healthy run, and become a second
-  interpretation of the run's evidence, so they are not added without a concrete failure to solve.
+- **Pre-checks beyond the configured Drive roots.** The watchdog requires the mount and each
+  destination's first root below it to exist, preventing a 05:00 run from creating a phantom local
+  destination when `My Drive` moves but its former parent remains. More guards can misfire, block a
+  healthy run, and become a second interpretation of the run's evidence, so they are not added
+  without a concrete failure to solve.
 
 ## Consequences
 

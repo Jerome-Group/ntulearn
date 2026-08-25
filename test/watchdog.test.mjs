@@ -219,6 +219,55 @@ test("refuses a run when the Drive mount is absent", () => {
   );
 });
 
+test("names an absent destination Drive root", () => {
+  assert.deepEqual(
+    watchdogVerdict({
+      sync: null,
+      verify: null,
+      preChecks: {
+        driveMount: { path: "/Volumes/Google Drive", present: true },
+        destinations: [
+          {
+            path: "/Volumes/Google Drive/My Drive/Modules/AB1234",
+            root: "/Volumes/Google Drive/My Drive",
+            present: false,
+          },
+        ],
+      },
+      attempts: 0,
+    }),
+    {
+      verdict: "red",
+      message:
+        "Destination /Volumes/Google Drive/My Drive/Modules/AB1234 is unreachable — expected Drive root /Volumes/Google Drive/My Drive; set driveMountPath and the destination to the mounted Drive, then run: npm run watchdog",
+    },
+  );
+});
+
+test("reports a destination permission refusal rather than a crash", () => {
+  assert.deepEqual(
+    watchdogVerdict({
+      sync: {
+        crashed: true,
+        report: null,
+        destinationPermission: {
+          code: "EACCES",
+          destination: "/Volumes/Google Drive/My Drive/Modules/AB1234",
+          path: "/Volumes/Google Drive/My Drive",
+        },
+      },
+      verify: null,
+      preChecks: {},
+      attempts: 1,
+    }),
+    {
+      verdict: "red",
+      message:
+        "Destination /Volumes/Google Drive/My Drive/Modules/AB1234 is unreachable — permission denied at /Volumes/Google Drive/My Drive; correct driveMountPath or destination permissions, then run: npm run watchdog",
+    },
+  );
+});
+
 test("reports an exhausted crash or timeout with its attempts and stderr tail", () => {
   assert.deepEqual(
     watchdogVerdict({

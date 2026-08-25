@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { clearTimeout, setTimeout as schedule } from "node:timers";
 import { setTimeout as sleep } from "node:timers/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { INITIAL_WATCHDOG_TIMEOUT_MS } from "../config.mjs";
 import { isDirectoryPresent, writeAtomically } from "../sync/files.mjs";
 import { isCrashOrTimeout, sessionLapsed, watchdogVerdict } from "./verdict.mjs";
@@ -15,15 +15,15 @@ export async function runWatchdog({ config, root, runner }) {
   const paths = watchdogPaths(config.statePath);
   await mkdir(paths.stateDirectory, { recursive: true });
 
-  const preCheck = await driveMountCheck(config);
-  if (!preCheck.present) {
+  const preCheck = await destinationReadinessCheck(config);
+  if (!preCheck.ready) {
     const timestamp = new Date();
     const run = buildRun({
       startedAt: timestamp,
       finishedAt: timestamp,
       attempts: 0,
       timeoutMs: timeoutFor(config),
-      preChecks: preChecksFor(preCheck, [{ attempt: 0, driveMount: preCheck }]),
+      preChecks: preChecksFor(preCheck, [{ attempt: 0, ...preCheck }]),
       attemptResults: [],
       sync: null,
       verify: null,
@@ -50,11 +50,11 @@ export async function runWatchdogLocked({ config, root, runner, wait = sleep }) 
   let lastAttempt = { sync: null, verify: null };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-    const driveMount = await driveMountCheck(config);
-    preCheckHistory.push({ attempt, driveMount });
-    if (!driveMount.present) break;
+    const destinationReadiness = await destinationReadinessCheck(config);
+    preCheckHistory.push({ attempt, ...destinationReadiness });
+    if (!destinationReadiness.ready) break;
 
-    const result = await runAttempt({ root, runner, timeoutMs: timeoutFor(config) });
+    const result = await runAttempt({ config, root, runner, timeoutMs: timeoutFor(config) });
     lastAttempt = result;
     attemptResults.push({ attempt, ...result });
 
@@ -63,7 +63,7 @@ export async function runWatchdogLocked({ config, root, runner, wait = sleep }) 
   }
 
   const finishedAt = new Date();
-  const latestPreCheck = preCheckHistory.at(-1)?.driveMount ?? null;
+  const latestPreCheck = preCheckHistory.at(-1) ?? null;
   const run = buildRun({
     startedAt,
     finishedAt,
@@ -87,24 +87,91 @@ function watchdogPaths(statePath) {
   };
 }
 
-async function runAttempt({ root, runner, timeoutMs }) {
+async function runAttempt({ config, root, runner, timeoutMs }) {
   const timeoutAt = Date.now() + timeoutMs;
-  const sync = await captureCommand({ root, runner, command: "sync", timeoutAt });
+  const sync = classifyDestinationPermission(
+    await captureCommand({ root, runner, command: "sync", timeoutAt }),
+    config.courses ?? [],
+  );
   if (isCrashOrTimeout(sync)) return { sync, verify: null };
 
-  const verify = await captureCommand({ root, runner, command: "verify", timeoutAt });
+  const verify = classifyDestinationPermission(
+    await captureCommand({ root, runner, command: "verify", timeoutAt }),
+    config.courses ?? [],
+  );
   return { sync, verify };
 }
 
-async function driveMountCheck(config) {
+function classifyDestinationPermission(command, courses) {
+  const match = command.stderr?.match(/\b(EACCES|EPERM)\b[^\n]*?['"]([^'"]+)['"]/i);
+  if (!match) return command;
+
+  const deniedPath = resolve(match[2]);
+  const course = courses.find(({ destination }) => pathsOverlap(destination, deniedPath));
+  if (!course) return command;
   return {
-    path: config.driveMountPath,
-    present: Boolean(config.driveMountPath && (await isDirectoryPresent(config.driveMountPath))),
+    ...command,
+    destinationPermission: {
+      code: match[1].toUpperCase(),
+      destination: course.destination,
+      path: deniedPath,
+    },
   };
 }
 
-function preChecksFor(driveMount, history) {
-  return { driveMount, history };
+function pathsOverlap(left, right) {
+  const comparableLeft = resolve(left).toLowerCase();
+  const comparableRight = resolve(right).toLowerCase();
+  return (
+    comparableLeft === comparableRight ||
+    comparableLeft.startsWith(`${comparableRight}${sep}`) ||
+    comparableRight.startsWith(`${comparableLeft}${sep}`)
+  );
+}
+
+async function destinationReadinessCheck(config) {
+  const mountPresent = Boolean(
+    config.driveMountPath && (await isDirectoryPresent(config.driveMountPath)),
+  );
+  const destinations = mountPresent
+    ? await Promise.all(
+        (config.courses ?? []).map(async (course) => {
+          const root = destinationDriveRoot(config.driveMountPath, course.destination);
+          return {
+            path: course.destination,
+            root,
+            present:
+              destinationRelation(config.driveMountPath, course.destination).inside &&
+              (await isDirectoryPresent(root)),
+          };
+        }),
+      )
+    : [];
+  return {
+    ready: mountPresent && destinations.every((destination) => destination.present),
+    driveMount: { path: config.driveMountPath, present: mountPresent },
+    destinations,
+  };
+}
+
+function destinationDriveRoot(driveMountPath, destination) {
+  const { inside, pathFromMount } = destinationRelation(driveMountPath, destination);
+  if (!inside) return driveMountPath;
+  if (!pathFromMount) return driveMountPath;
+  return join(driveMountPath, pathFromMount.split(sep)[0]);
+}
+
+function destinationRelation(driveMountPath, destination) {
+  const pathFromMount = relative(driveMountPath, destination);
+  const inside =
+    !isAbsolute(pathFromMount) && pathFromMount !== ".." && !pathFromMount.startsWith(`..${sep}`);
+  return { inside, pathFromMount };
+}
+
+function preChecksFor(destinationReadiness, history) {
+  if (!destinationReadiness) return { history };
+  const { driveMount, destinations } = destinationReadiness;
+  return { driveMount, destinations, history };
 }
 
 async function runWithLock({ root, runner, lockPath }) {
@@ -249,6 +316,7 @@ function timeoutFor(config) {
 }
 
 function shouldRetry({ sync, verify }) {
+  if ([sync, verify].some((command) => command?.destinationPermission)) return false;
   if ([sync, verify].some(sessionLapsed)) return false;
   return [sync, verify].some(isCrashOrTimeout);
 }
