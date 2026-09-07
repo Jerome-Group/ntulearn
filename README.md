@@ -242,9 +242,27 @@ and is where its children go, so a course that reorders keeps growing in the fol
 rather than starting a second one beside it; `docs/adr/0009` argues it, and `ls` keeps showing the
 order the files arrived in.
 
-A `Last synced.md` beside the overview records when the sync last ran. It is the only file in a
-destination rewritten on every run — everything else is written only when the course moved, so a
-run over a course with nothing new writes nothing at all; `docs/adr/0008` argues both halves.
+A `Last synced.md` beside the overview records when the sync last ran for a person reading the
+folder. A run over a course with nothing new writes no course document; the stamp still moves so
+the attempt remains visible. `docs/adr/0008` argues both halves.
+
+`Sync status.json` is the machine-readable receipt for that destination. A sync publishes
+`running` before it reads the course, then `complete`, `partial`, or `failed`; an interrupted process
+therefore leaves `running`. Only a complete attempt advances `lastSuccessfulAt`. Counts and unread
+optional categories are retained, while course identifiers, paths, URLs, source text, and raw errors
+stay out. The receipt excludes the media pipeline and proves neither exhaustive upstream visibility
+nor current file bytes. It cannot authorize withdrawal, overwrite, or skipping a full curation walk.
+Overlapping syncs remain possible, so it is a last-writer observation and should be read again when
+freshness matters. Each attempt preserves the success it saw at startup; a later write from an older
+overlapping attempt can therefore regress `lastSuccessfulAt` to an older value or `null`.
+Malformed, unsupported, future-dated, oversized, or unreadable prior evidence preserves no claimed
+success. The fresh `running` publication still has to succeed before NTULearn reads the course.
+
+Academic OS reads the receipt through its separate `imports status` command. Deploying either
+repository remains independent: an older destination simply has no receipt until its next sync, and
+an older Academic OS ignores the importer-owned file. The shared v1 interface and rollout boundary
+live in [Academic OS's import-status contract](https://github.com/Jerome-Group/academic-os/blob/main/docs/import-status-contract.md);
+`docs/adr/0015` records this repository's producer decision.
 
 An item a sync cannot copy — a quiz, a test, a submission point, anything holding no text, no link
 and no attachment — still gets a Markdown file at its own numbered place, naming it and saying

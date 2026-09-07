@@ -1,5 +1,10 @@
 # When the run happened is its own file
 
+> **Superseded in part by ADR-0015.** `Last synced.md` remains the human-readable attempt stamp and
+> keeps every counting rule below. Claims here that it is the destination's only operational file,
+> the only file rewritten by a sync, or the only durable run evidence no longer apply: `Sync
+> status.json` is the separate machine-readable health receipt.
+
 A destination holds one file recording when the sync last ran — `Last synced.md`, at the root of
 each course folder — and every other file in it is a pure function of what NTULearn returned. The
 course overview no longer stamps the time into itself.

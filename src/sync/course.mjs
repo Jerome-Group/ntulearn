@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
+import { withImportStatus } from "./import-status.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { safeResolve, safeSegment } from "./paths.mjs";
@@ -16,6 +17,13 @@ const SYNC_STAMP = "Last synced.md";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
 export async function syncCourse({ client, course, state, recordingDiscovery = () => [] }) {
+  return withImportStatus({
+    destination: course.destination,
+    attempt: () => syncCourseAttempt({ client, course, state, recordingDiscovery }),
+  });
+}
+
+async function syncCourseAttempt({ client, course, state, recordingDiscovery }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
   const unread = Object.entries(snapshot.unavailable ?? {})
@@ -93,10 +101,9 @@ export async function syncCourse({ client, course, state, recordingDiscovery = (
   }
 
   const syncedAt = new Date().toISOString();
-  // Outside the walk, counted in neither number, and written whatever the run found: a run whose
-  // downloads failed is still a run that happened, and this is the only place the destination says
-  // so. `state.syncedAt` records the same moment, but `.data/` is disposable and no part of the
-  // copy (ADR-0008).
+  // Outside the walk and counted in neither number: the stamp tells a person when the walk finished,
+  // while the import-status wrapper publishes its health for a machine. `state.syncedAt` records the
+  // same moment, but `.data/` is disposable and no part of the copy (ADR-0008, ADR-0015).
   await writeAtomically(safeResolve(course.destination, SYNC_STAMP), syncStamp(syncedAt));
 
   const current = {

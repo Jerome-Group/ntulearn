@@ -247,12 +247,18 @@ _Avoid_: database, index, manifest, cache — the last is what it behaves like, 
 already means the browser's
 
 **Stamp**:
-The one file in a *destination* that records when the sync last ran rather than anything about the
-course, and so the one file rewritten on every run — everything beside it is written only when the
-course moved. It is what makes an unwatched run's freshness readable from the folder itself, where
-*state* is disposable and no part of the copy (`docs/adr/0008`).
+The human-readable file in a *destination* that records when the sync last ran rather than anything
+about the course. It moves on every completed walk even when no course document moved, so an
+unwatched attempt remains readable from the folder itself (`docs/adr/0008`, `docs/adr/0015`).
 _Avoid_: document — a *document* is about the course, which is the whole distinction; also
 timestamp, log — it records one moment, not what happened
+
+**Receipt**:
+The machine-readable operational record one course sync publishes in its *destination*: running
+before the course read, then complete, partial or failed. It carries bounded counts and the latest
+successful time, not course contents or permission for a later curation decision (`docs/adr/0015`).
+_Avoid_: stamp — the stamp is for a person and says only when the walk completed; digest — a digest
+summarises the watchdog's whole scheduled run rather than one destination
 
 **Watchdog**:
 The layer that launches, bounds and reads a run, then keeps its evidence and writes the daily

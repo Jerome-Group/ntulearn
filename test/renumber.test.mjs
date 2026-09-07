@@ -65,6 +65,7 @@ test("puts a destination back into the order the course has today", async () => 
     "03 Hand01.pdf",
     "Course.md",
     "Last synced.md",
+    "Sync status.json",
   ]);
   assert.deepEqual(result.renamed.map(({ from, to }) => `${from} -> ${to}`).sort(), [
     "01 Hand00.pdf -> 02 Hand00.pdf",
@@ -162,6 +163,7 @@ test("holds a document against the text the walk produced rather than against a 
     "02 Knowledge Check.md",
     "Course.md",
     "Last synced.md",
+    "Sync status.json",
   ]);
   assert.equal(result.renamed.length, 1);
 });
@@ -191,6 +193,7 @@ test("renames a folder whose own number moved, and carries its files with it", a
     "02 Week 1",
     "Course.md",
     "Last synced.md",
+    "Sync status.json",
   ]);
   assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), ["01 Slides.pdf"]);
   assert.deepEqual(
@@ -228,6 +231,7 @@ test("leaves a course alone where an empty folder already holds the number it wa
     "02 Week 1",
     "Course.md",
     "Last synced.md",
+    "Sync status.json",
   ]);
   assert.deepEqual(await readdir(join(at.destination, "01 Week 1")), ["01 Slides.pdf"]);
   assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), []);

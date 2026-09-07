@@ -75,14 +75,14 @@ export function courseDocument(course) {
 }
 
 // Deliberately not a *document*: it records when the run happened rather than anything about the
-// course, which is why it is the one file in a destination that moves whether or not NTULearn did
-// (`CONTEXT.md`, *Stamp*; ADR-0008). Its body says what it is, because it is a file the student
-// did not ask for.
+// course, which is why it moves whether or not NTULearn did (`CONTEXT.md`, *Stamp*; ADR-0008).
+// Its body says what it is, because it is a file the student did not ask for. The machine-readable
+// receipt beside it moves independently and carries the attempt's health (ADR-0015).
 export function syncStamp(when) {
   return document("Last synced", [
     `- Synced: ${when}`,
-    "This file records when the sync last ran, and is rewritten on every run. Everything else in " +
-      "this folder is written only when the course moved.",
+    "This file records when the sync last ran, and is rewritten on every completed walk. Course " +
+      "documents and attachments are written only when the course moved.",
   ]);
 }
 
