@@ -1,5 +1,8 @@
 # Each destination publishes an import-status receipt
 
+Partially supersedes ADR-0008: the Markdown stamp retains its meaning and counts, while the
+destination gains separate durable health evidence.
+
 Every course sync atomically publishes `Sync status.json` in that course's destination. It writes
 `running` before reading the course, then `complete`, `partial`, or `failed` at the terminal boundary.
 Only a complete attempt advances the retained last-success time. A process interrupted between those
