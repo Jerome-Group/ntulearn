@@ -241,8 +241,8 @@ test("says what it wrote, not only what the copy holds", async () => {
   assert.equal(again.markdownWritten, 0);
 });
 
-// The time the run happened is the one thing in a destination that is not a fact about the course,
-// so it lives in a file of its own rather than in the overview it was making unstable (ADR-0008).
+// The human-readable time the run happened lives outside the overview it was making unstable. The
+// machine-readable receipt beside it carries the separate health question (ADR-0008, ADR-0015).
 test("records when the run happened in a file of its own, outside the document counts", async () => {
   const { destination, result } = await sync(downloads("ppt"), WEEK_1);
   const stamp = join(destination, "Last synced.md");
@@ -361,7 +361,7 @@ const REORDERED = WEEK_1.map((item) => ({ ...item, position: item.position + 1 }
 const WEEK_1_PPT = "/bbcswebdav/w1";
 // The whole of the destination's root once the course has been synced. Asserted rather than the
 // folder alone, because the failure this is watching for is a *second* `Week 1` beside the first.
-const ROOT = ["01 Week 1", "Course.md", "Last synced.md"];
+const ROOT = ["01 Week 1", "Course.md", "Last synced.md", "Sync status.json"];
 
 async function again(destination, state, items = WEEK_1) {
   return syncCourse({
