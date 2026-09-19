@@ -315,7 +315,9 @@ test("loads lazy course content before opening the Media Gallery link", async ()
     },
     frames: () => [outer, child],
     mainFrame: () => outer,
-    getByRole: () => trigger,
+    getByRole(role, { name }) {
+      return role === "link" && name.test("Media Gallery") ? trigger : locator({ count: 0 });
+    },
     getByText: () => trigger,
   };
 
@@ -323,6 +325,47 @@ test("loads lazy course content before opening the Media Gallery link", async ()
 
   assert.equal(contentLoaded, true);
   assert.equal(result.complete, true);
+});
+
+test("opens a gallery trigger labelled Lecture Recordings", async () => {
+  let clicked = false;
+  const trigger = locator({
+    count: 1,
+    click: async () => {
+      clicked = true;
+    },
+  });
+  const child = {
+    locator: () => locator({ count: 1 }),
+    evaluate: async () => ({
+      displayedCount: 1,
+      entries: [
+        {
+          id: "appearance-1",
+          providerReference: "entry:one",
+          title: "Lecture",
+          createdAt: "2026-08-10T09:00:00+08:00",
+          visible: true,
+          published: true,
+        },
+      ],
+      hasMore: false,
+    }),
+  };
+  const page = {
+    async goto() {},
+    frames: () => [child],
+    getByRole(role, { name }) {
+      return role === "link" && name.test("Lecture Recordings") ? trigger : locator({ count: 0 });
+    },
+    getByText: () => locator({ count: 0 }),
+  };
+
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+
+  assert.equal(result.complete, true);
+  assert.equal(clicked, true);
+  assert.equal(result.recordings.length, 1);
 });
 
 test("treats an exhausted course without a Media Gallery link as an empty gallery", async () => {
