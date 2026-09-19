@@ -146,6 +146,51 @@ test("evaluates the Gallery snapshot without Node-side helper closures", () => {
   );
 });
 
+test("skips a bare comment count when selecting a Gallery title", () => {
+  const card = galleryElement({}, "Lecture title\n64 plays\n0");
+  const anchor = galleryElement(
+    { href: "/media/t/entry-one/176282" },
+    "Lecture title 1 of 1 01:00 duration",
+  );
+  const fullTitleLink = galleryElement({ href: "/media/t/entry-one/176282" }, "Lecture title");
+  anchor.closest = () => card;
+  fullTitleLink.closest = () => card;
+  card.querySelectorAll = () => [anchor, fullTitleLink];
+  const document = {
+    body: { innerText: "1 recording" },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [];
+      return [anchor, fullTitleLink];
+    },
+  };
+
+  const result = runInNewContext("(" + extractGallerySnapshot.toString() + ")()", { document });
+
+  assert.equal(result.entries[0].title, "Lecture title");
+});
+
+test("keeps a numeric Gallery title from its recording link", () => {
+  const card = galleryElement({}, "64 plays\n0");
+  const anchor = galleryElement({ href: "/media/t/entry-one/176282" }, "");
+  const numericTitleLink = galleryElement({ href: "/media/t/entry-one/176282" }, "0");
+  anchor.closest = () => card;
+  numericTitleLink.closest = () => card;
+  card.querySelectorAll = () => [anchor, numericTitleLink];
+  const document = {
+    body: { innerText: "1 recording" },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [];
+      return [anchor, numericTitleLink];
+    },
+  };
+
+  const result = runInNewContext("(" + extractGallerySnapshot.toString() + ")()", { document });
+
+  assert.equal(result.entries[0].title, "0");
+});
+
 test("continues when an enabled Gallery control contradicts the displayed total", () => {
   const card = galleryElement({ "data-title": "Lecture" }, "Lecture");
   const anchor = galleryElement({ href: "/media/t/entry-one/176282" }, "Lecture");
