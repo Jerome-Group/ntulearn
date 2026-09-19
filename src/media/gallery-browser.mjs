@@ -5,6 +5,7 @@ import { publicMediaError } from "./errors.mjs";
 const MAX_GALLERY_PAGES = 100;
 const MAX_CONTENT_LOADS = 100;
 const MAX_GALLERY_FRAME_POLLS = 60;
+const MAX_GALLERY_SETTLE_POLLS = 20;
 const GALLERY_TRIGGER = /(?:media\s+gallery|lecture\s+recordings?)/i;
 const MORE_CONTROL =
   /load\s+more|show\s+more|\bnext(?:\s+page)?\b|\bmore\s+(?:recordings?|videos?|items?)\b/i;
@@ -32,6 +33,7 @@ export async function readKalturaMediaGallery({ page, course }) {
   try {
     const surface = await openGallerySurface(page, course.courseId);
     if (!surface) return absentGallery();
+    await waitForGalleryCatalogue(surface);
     const pages = await collectMediaGalleryPages({
       readPage: () => readGalleryPage(surface),
       clickLoadMore: (page) => clickGalleryMore(surface, page),
@@ -223,6 +225,42 @@ async function findGalleryFrame(surface) {
     if (typeof surface.waitForTimeout === "function") await surface.waitForTimeout(250);
   }
   throw new Error("Kaltura Media Gallery surface opened without a readable catalogue.");
+}
+
+async function waitForGalleryCatalogue(surface) {
+  if (typeof surface?.waitForTimeout !== "function") return;
+
+  let previous = null;
+  for (let attempt = 0; attempt < MAX_GALLERY_SETTLE_POLLS; attempt += 1) {
+    const current = await readGalleryPage(surface).catch(() => null);
+    if (gallerySnapshotIsReadable(current) && gallerySnapshotsMatch(previous, current)) return;
+    previous = current;
+    await surface.waitForTimeout(250);
+  }
+}
+
+function gallerySnapshotIsReadable(snapshot) {
+  return (
+    Array.isArray(snapshot?.entries) &&
+    snapshot.entries.length > 0 &&
+    snapshot.entries.every(
+      (entry) =>
+        typeof entry?.title === "string" && entry.title.trim() && !/^\d+$/.test(entry.title.trim()),
+    )
+  );
+}
+
+function gallerySnapshotsMatch(previous, current) {
+  if (!previous || previous.displayedCount !== current?.displayedCount) return false;
+  if (previous.hasMore !== current.hasMore) return false;
+  if (previous.entries?.length !== current.entries?.length) return false;
+  return current.entries.every((entry, index) => {
+    const earlier = previous.entries[index];
+    return (
+      galleryEntryIdentity(entry) === galleryEntryIdentity(earlier) &&
+      entry?.title === earlier?.title
+    );
+  });
 }
 
 async function readGalleryPage(surface) {
