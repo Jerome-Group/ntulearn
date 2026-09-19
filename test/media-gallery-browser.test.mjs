@@ -410,6 +410,47 @@ test("opens a gallery trigger labelled Lecture Recordings", async () => {
   assert.equal(result.recordings.length, 1);
 });
 
+test("waits for a transient first-card title before reading the catalogue", async () => {
+  let reads = 0;
+  const trigger = locator({ count: 1, click: async () => {} });
+  const child = {
+    locator: () => locator({ count: 1 }),
+    evaluate: async () => {
+      reads += 1;
+      const title = reads < 3 ? "0" : "Lecture";
+      return {
+        displayedCount: 1,
+        entries: [
+          {
+            id: "appearance-1",
+            providerReference: "entry:one",
+            title,
+            createdAt: "2026-08-10T09:00:00+08:00",
+            visible: true,
+            published: true,
+          },
+        ],
+        hasMore: false,
+      };
+    },
+    async waitForTimeout() {},
+  };
+  const page = {
+    async goto() {},
+    frames: () => [child],
+    getByRole(role, { name }) {
+      return role === "link" && name.test("Lecture Recordings") ? trigger : locator({ count: 0 });
+    },
+    getByText: () => locator({ count: 0 }),
+  };
+
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+
+  assert.equal(result.complete, true);
+  assert.equal(result.recordings[0].title, "Lecture");
+  assert.ok(reads >= 4);
+});
+
 test("treats an exhausted course without a Media Gallery link as an empty gallery", async () => {
   const page = {
     async goto() {},
