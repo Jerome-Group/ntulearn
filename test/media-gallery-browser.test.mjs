@@ -417,7 +417,7 @@ test("waits for a transient first-card title before reading the catalogue", asyn
     locator: () => locator({ count: 1 }),
     evaluate: async () => {
       reads += 1;
-      const title = reads < 3 ? "0" : "Lecture";
+      const title = reads <= 21 ? "0" : "Lecture";
       return {
         displayedCount: 1,
         entries: [
@@ -448,7 +448,7 @@ test("waits for a transient first-card title before reading the catalogue", asyn
 
   assert.equal(result.complete, true);
   assert.equal(result.recordings[0].title, "Lecture");
-  assert.ok(reads >= 4);
+  assert.ok(reads >= 24);
 });
 
 test("treats an exhausted course without a Media Gallery link as an empty gallery", async () => {

@@ -5,7 +5,7 @@ import { publicMediaError } from "./errors.mjs";
 const MAX_GALLERY_PAGES = 100;
 const MAX_CONTENT_LOADS = 100;
 const MAX_GALLERY_FRAME_POLLS = 60;
-const MAX_GALLERY_SETTLE_POLLS = 20;
+const MAX_GALLERY_SETTLE_POLLS = 40;
 const GALLERY_TRIGGER = /(?:media\s+gallery|lecture\s+recordings?)/i;
 const MORE_CONTROL =
   /load\s+more|show\s+more|\bnext(?:\s+page)?\b|\bmore\s+(?:recordings?|videos?|items?)\b/i;
