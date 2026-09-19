@@ -500,11 +500,16 @@ export function extractGallerySnapshot() {
 
   const hasExplicitTotal = explicitTotals.length > 0;
   const total = hasExplicitTotal ? explicitTotals[0] : displayedCount(bodyText);
+  const displayedTotalIsFullyLoaded =
+    Number.isSafeInteger(total) &&
+    total >= 0 &&
+    entries.length >= total &&
+    new RegExp(`\\b${total}\\s+of\\s+${total}\\b`, "i").test(bodyText);
   return {
     displayedCount: total,
     entries,
     hasMore: hasMoreControl(),
-    paginationMode: hasExplicitTotal ? "append" : "unknown",
+    paginationMode: hasExplicitTotal || displayedTotalIsFullyLoaded ? "append" : "unknown",
   };
   function galleryTitle(card, anchor) {
     const explicit = card.getAttribute?.("data-title")?.trim();

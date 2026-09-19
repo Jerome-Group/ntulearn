@@ -167,6 +167,48 @@ test("continues when an enabled Gallery control contradicts the displayed total"
   assert.equal(result.hasMore, true);
 });
 
+test("recognizes a fully loaded indexed catalogue beside a stale Load More control", async () => {
+  const anchors = Array.from({ length: 9 }, (_, index) => {
+    const title = `Lecture ${index + 1}`;
+    const card = galleryElement({ "data-title": title }, title);
+    const anchor = galleryElement({ href: `/media/t/entry-${index + 1}/176282` }, title);
+    anchor.closest = () => card;
+    return anchor;
+  });
+  const more = galleryElement({}, "Load More");
+  const document = {
+    body: {
+      innerText: ["9 Media", ...anchors.map((_, index) => `${index + 1} of 9`), "Load More"].join(
+        "\n",
+      ),
+    },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [more];
+      return anchors;
+    },
+  };
+
+  const snapshot = runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document });
+  let clicks = 0;
+  const pages = await collectMediaGalleryPages({
+    async readPage() {
+      return snapshot;
+    },
+    async clickLoadMore() {
+      clicks += 1;
+      return false;
+    },
+  });
+
+  assert.equal(snapshot.paginationMode, "append");
+  assert.equal(snapshot.hasMore, true);
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].entries.length, 9);
+  assert.equal(pages[0].hasMore, false);
+  assert.equal(clicks, 0);
+});
+
 test("reads live Kaltura channel links and the total media count", () => {
   const card = galleryElement(
     {
