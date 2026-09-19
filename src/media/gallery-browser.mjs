@@ -553,23 +553,40 @@ export function extractGallerySnapshot() {
     const explicit = card.getAttribute?.("data-title")?.trim();
     if (explicit) return explicit;
 
-    const lines = String(card.innerText ?? "")
-      .split(/\r?\n/)
-      .map((line) => line.replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-    const readable = [...lines]
-      .reverse()
-      .find(
-        (line) =>
-          !/\bduration\b/i.test(line) &&
-          !/^\d{1,2}:\d{2}(?::\d{2})?/.test(line) &&
-          !/\b\d+\s+of\s+\d+\s*$/i.test(line),
-      );
+    const lines = titleLines(card.innerText);
+    const recordingLinks = [anchor, ...(card.querySelectorAll?.('a[href*="/media/t/"]') ?? [])];
+    const linkTitle = recordingLinks
+      .map((link) =>
+        titleLines(link.innerText ?? link.textContent).filter((line) =>
+          isReadableTitleLine(line, { allowNumeric: true }),
+        ),
+      )
+      .flat()
+      .filter(Boolean)
+      .sort((left, right) => right.length - left.length)[0];
+    if (linkTitle) return linkTitle;
+
+    const readable = [...lines].reverse().find(isReadableTitleLine);
     return (
       readable ??
       card.querySelector?.("[data-title],h1,h2,h3,h4")?.textContent?.trim() ??
       anchor.textContent?.trim() ??
       ""
+    );
+  }
+  function titleLines(text) {
+    return String(text ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+  }
+  function isReadableTitleLine(line, { allowNumeric = false } = {}) {
+    return (
+      !/\bduration\b/i.test(line) &&
+      !/^\d{1,2}:\d{2}(?::\d{2})?/.test(line) &&
+      (allowNumeric || !/^\d+$/.test(line)) &&
+      !/^\d+\s+(?:plays?|comments?|likes?)\b/i.test(line) &&
+      !/\b\d+\s+of\s+\d+\s*$/i.test(line)
     );
   }
   function safeEntryReference(value) {
