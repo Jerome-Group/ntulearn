@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
-import { expectedFiles } from "./expected.mjs";
+import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
 import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
 import { withImportStatus } from "./import-status.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
-import { safeResolve, safeSegment } from "./paths.mjs";
+import { assertDestinationPath, safeResolve, safeSegment } from "./paths.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 // Alone here rather than beside the other destination filenames in `expected.mjs`, because that
@@ -67,8 +67,28 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     walked.map((expected) => expected.placement.segments),
   );
 
+  const ambiguous = ambiguousPaths(walked);
+  const placed = [];
   for (const expected of walked) {
     const place = await placeOf(numbering, course.destination, expected);
+    await assertDestinationPath(course.destination, place.target);
+    if (place.heldAt !== null) await assertDestinationPath(course.destination, place.heldAt);
+    placed.push({ expected, place });
+  }
+  await assertDestinationPath(course.destination, safeResolve(course.destination, SYNC_STAMP));
+
+  for (const { expected, place } of placed) {
+    if (expected.kind !== "folder" && ambiguous.has(comparablePath(expected.placement))) {
+      const { file, trail, path } = expected.placement;
+      tally.failures.push({
+        file,
+        trail,
+        path,
+        error:
+          "Distinct course files share this destination name. Existing files were retained. Report an ntulearn naming defect before retrying.",
+      });
+      continue;
+    }
     if (place.heldAt) tally.renumbered += 1;
 
     switch (expected.kind) {

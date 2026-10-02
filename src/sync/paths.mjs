@@ -1,4 +1,5 @@
-import { resolve, sep } from "node:path";
+import { lstat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { safeSegment } from "../paths.mjs";
 
 export { orderedName, safeSegment } from "../paths.mjs";
@@ -17,4 +18,27 @@ export function safeResolve(root, ...parts) {
     throw new Error(`Unsafe output path: ${target}`);
   }
   return target;
+}
+
+export async function assertDestinationPath(root, target) {
+  const within = relative(resolve(root), resolve(target));
+  if (isAbsolute(within) || within === ".." || within.startsWith(`..${sep}`)) {
+    throw new Error(
+      "Unsafe destination path. Use a path inside the course destination, then run the same command again.",
+    );
+  }
+  let path = resolve(root);
+  for (const segment of within.split(sep).filter(Boolean)) {
+    path = join(path, segment);
+    const info = await lstat(path).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (info?.isSymbolicLink()) {
+      throw new Error(
+        "A course destination contains a symlink below its root. Use a destination without linked descendants, then run the same command again.",
+      );
+    }
+    if (info === null) return;
+  }
 }

@@ -1,7 +1,7 @@
-import { expectedFiles } from "./expected.mjs";
+import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
 import { isFilePresent } from "./files.mjs";
 import { numberingOf } from "./numbering.mjs";
-import { safeResolve } from "./paths.mjs";
+import { assertDestinationPath, safeResolve } from "./paths.mjs";
 
 // Where the number stops. Completeness is only ever relative to the authority behind it — here, one
 // read of the course — so what that read does not reach is part of the answer rather than a caveat
@@ -36,11 +36,13 @@ export async function verifyCourse({ client, course }) {
   const snapshot = await client.readCourse(course.courseId);
   const counted = { attachments: 0, documents: 0 };
   const expected = [];
+  const walked = [];
   const countable = [];
   const missing = [];
   const renumbered = [];
 
   for await (const each of expectedFiles({ client, courseId: course.courseId, snapshot })) {
+    walked.push(each);
     const number = COUNTED_AS[each.kind];
     if (number) {
       counted[number] += 1;
@@ -53,8 +55,16 @@ export async function verifyCourse({ client, course }) {
   // names a folder expects rather than by either name alone.
   const numbering = numberingOf(course.destination, expected);
 
-  for (const { file, trail, path, segments } of countable) {
-    if (await isFilePresent(safeResolve(course.destination, ...segments))) continue;
+  const ambiguous = ambiguousPaths(walked);
+  for (const placement of countable) {
+    const { file, trail, path, segments } = placement;
+    if (ambiguous.has(comparablePath(placement))) {
+      missing.push({ file, trail, path, reason: "ambiguous destination name" });
+      continue;
+    }
+    const target = safeResolve(course.destination, ...segments);
+    await assertDestinationPath(course.destination, target);
+    if (await isFilePresent(target)) continue;
 
     const onDisk = await numbering.find(segments);
     if (onDisk) renumbered.push({ file, trail, path, onDisk });

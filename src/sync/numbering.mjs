@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { isDirectoryPresent, isFilePresent } from "./files.mjs";
-import { safeSegment, unnumbered } from "./paths.mjs";
+import { assertDestinationPath, safeSegment, unnumbered } from "./paths.mjs";
 
 // Where a destination holds an expected file when the number in its name has moved.
 //
@@ -20,7 +20,14 @@ export function numberingOf(destination, expected) {
   const tree = treeOf(expected);
   const listings = new Map();
   const walk = async (segments, atLeaf) => {
-    const found = await locate(destination, tree, segments.map(safeSegment), listings, atLeaf);
+    const found = await locate(
+      destination,
+      destination,
+      tree,
+      segments.map(safeSegment),
+      listings,
+      atLeaf,
+    );
     return found && relative(destination, found);
   };
 
@@ -35,11 +42,13 @@ export function numberingOf(destination, expected) {
   };
 }
 
-async function locate(directory, siblings, [segment, ...rest], listings, atLeaf) {
+async function locate(destination, directory, siblings, [segment, ...rest], listings, atLeaf) {
+  await assertDestinationPath(destination, directory);
   for (const name of await standIns(directory, siblings, segment, listings)) {
     const path = join(directory, name);
+    await assertDestinationPath(destination, path);
     const found = rest.length
-      ? await locate(path, siblings.get(segment), rest, listings, atLeaf)
+      ? await locate(destination, path, siblings.get(segment), rest, listings, atLeaf)
       : await atLeaf(path);
     if (found) return found;
   }

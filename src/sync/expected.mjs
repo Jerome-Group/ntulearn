@@ -102,3 +102,17 @@ function announcementPlacement(announcement) {
     `${announcement.title}.md`,
   );
 }
+
+export function ambiguousPaths(expected) {
+  const counts = new Map();
+  for (const each of expected) {
+    if (each.kind === "folder") continue;
+    const path = comparablePath(each.placement);
+    counts.set(path, (counts.get(path) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([path]) => path));
+}
+
+export function comparablePath(placement) {
+  return placement.segments.map((segment) => safeSegment(segment).toLowerCase()).join("/");
+}
