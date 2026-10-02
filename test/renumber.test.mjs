@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { attachmentsOf } from "../src/ntulearn/content.mjs";
 import { syncCourse } from "../src/sync/course.mjs";
 import { renumberCourse, renumberReport } from "../src/sync/renumber.mjs";
+import { fileDigest } from "../src/sync/files.mjs";
 
 // MH2500's shape, trimmed: handouts at the root of the course, and one tutorial inserted above them
 // a week later that moved every one of their numbers by one (#74).
@@ -256,4 +257,105 @@ test("says nothing about a destination already in the course's order", async () 
   assert.ok(!("kept" in result));
   assert.ok(!("blocked" in result));
   assert.equal(renumberReport([result]).renamed, 0);
+});
+
+async function reversibleFixture(t) {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-reversal-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const state = { version: 1, courses: {} };
+  const source = client(HANDOUTS, async (attachment) => ({
+    body: Buffer.from(`distinct attachment ${attachment.resourceUrl}`),
+    headers: {},
+  }));
+  await syncCourse({ client: source, course: course(destination), state });
+  await writeFile(join(destination, "Student notes.md"), "My own unchanged notes");
+  const before = await directoryDigests(destination);
+  const stateBefore = JSON.stringify(state);
+  const shifted = HANDOUTS.map((item) => ({ ...item, position: item.position + 1 }));
+  const forward = await renumber({ destination, state, items: shifted });
+  assert.deepEqual(
+    forward.renamed.map(({ from, to }) => ({ from, to })),
+    [
+      { from: "01 Hand00.pdf", to: "02 Hand00.pdf" },
+      { from: "02 Hand01.pdf", to: "03 Hand01.pdf" },
+    ],
+  );
+  assert.notEqual(before["01 Hand00.pdf"], before["02 Hand01.pdf"]);
+  for (const { from, to } of forward.renamed)
+    assert.equal(await fileDigest(join(destination, to)), before[from]);
+  return { destination, state, before, stateBefore };
+}
+
+async function directoryDigests(destination) {
+  return Object.fromEntries(
+    await Promise.all(
+      (await readdir(destination))
+        .sort()
+        .map(async (name) => [name, await fileDigest(join(destination, name))]),
+    ),
+  );
+}
+
+test("original snapshot reverses attachment numbering with distinct bytes, notes and state intact", async (t) => {
+  const at = await reversibleFixture(t);
+  const inverse = await renumber({ ...at, items: HANDOUTS });
+  assert.deepEqual(
+    inverse.renamed.map(({ from, to }) => ({ from, to })),
+    [
+      { from: "02 Hand00.pdf", to: "01 Hand00.pdf" },
+      { from: "03 Hand01.pdf", to: "02 Hand01.pdf" },
+    ],
+  );
+  assert.deepEqual(await directoryDigests(at.destination), at.before);
+  assert.equal(JSON.stringify(at.state), at.stateBefore);
+  assert.ok(!("blocked" in inverse));
+  assert.ok(!("kept" in inverse));
+});
+
+test("inverse numbering refuses an attachment edited after the forward operation", async (t) => {
+  const at = await reversibleFixture(t);
+  const edited = join(at.destination, "03 Hand01.pdf");
+  await writeFile(edited, "Student annotations made after renumbering");
+  const editedHash = await fileDigest(edited);
+  const inverse = await renumber({ ...at, items: HANDOUTS });
+  assert.equal(inverse.renamed.length, 1);
+  assert.equal(inverse.kept[0].onDisk, "03 Hand01.pdf");
+  assert.match(inverse.kept[0].why, /changed since the sync wrote/);
+  assert.equal(await fileDigest(edited), editedHash);
+  assert.equal(await fileDigest(join(at.destination, "02 Hand01.pdf")), null);
+  assert.equal(await fileDigest(join(at.destination, "01 Hand00.pdf")), at.before["01 Hand00.pdf"]);
+  assert.equal(
+    await fileDigest(join(at.destination, "Student notes.md")),
+    at.before["Student notes.md"],
+  );
+  assert.equal(JSON.stringify(at.state), at.stateBefore);
+});
+
+test("inverse numbering reports an occupied target and preserves its student contents", async (t) => {
+  const at = await reversibleFixture(t);
+  const occupied = join(at.destination, "01 Hand00.pdf");
+  await mkdir(occupied);
+  const studentFile = join(occupied, "Student file.md");
+  await writeFile(studentFile, "Student bytes at the original attachment name");
+  const studentHash = await fileDigest(studentFile);
+  const inverse = await renumber({ ...at, items: HANDOUTS });
+  assert.equal(inverse.renamed.length, 1);
+  assert.deepEqual(
+    inverse.blocked.map(({ from, to, why }) => ({ from, to, why })),
+    [
+      {
+        from: "02 Hand00.pdf",
+        to: "01 Hand00.pdf",
+        why: "the name it wants is held by something else",
+      },
+    ],
+  );
+  assert.equal(await fileDigest(join(at.destination, "02 Hand00.pdf")), at.before["01 Hand00.pdf"]);
+  assert.equal(await fileDigest(studentFile), studentHash);
+  assert.equal(await fileDigest(join(at.destination, "02 Hand01.pdf")), at.before["02 Hand01.pdf"]);
+  assert.equal(
+    await fileDigest(join(at.destination, "Student notes.md")),
+    at.before["Student notes.md"],
+  );
+  assert.equal(JSON.stringify(at.state), at.stateBefore);
 });
