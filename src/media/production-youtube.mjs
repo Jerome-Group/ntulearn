@@ -1,6 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { runMediaProcess } from "./process.mjs";
 import { remuxYoutube } from "./production-remux.mjs";
 import { createYoutubeProvider } from "./youtube.mjs";
 
@@ -14,14 +13,14 @@ export function createProductionYoutubeProvider(context) {
   });
 }
 
-async function resolveYoutube(reference, signal, { commands }) {
+async function resolveYoutube(reference, signal, { commands, runProcess }) {
   const videoId = String(reference ?? "").replace(/^youtube:/, "");
   if (!/^[A-Za-z0-9_-]{3,128}$/.test(videoId)) {
     throw new Error(
       "Unsupported YouTube reference shape. Run media discovery again before retrying the worker.",
     );
   }
-  const result = await runMediaProcess(
+  const result = await runProcess(
     commands.ytDlp,
     [
       "--no-playlist",
@@ -57,14 +56,15 @@ async function resolveYoutube(reference, signal, { commands }) {
   };
 }
 
-async function downloadYoutube(url, { signal } = {}, { paths, commands }) {
+async function downloadYoutube(url, { signal } = {}, { paths, commands, runProcess }) {
   const directory = await mkdtemp(join(paths.work, "youtube-download-"));
   try {
-    const result = await runMediaProcess(
+    const result = await runProcess(
       commands.ytDlp,
       [
         "--no-playlist",
         "--no-warnings",
+        "--no-progress",
         "--format",
         "bestvideo[height<=720][vcodec!=none]+bestaudio[acodec!=none]/best[height<=720][vcodec!=none][acodec!=none]",
         "--merge-output-format",
@@ -75,7 +75,12 @@ async function downloadYoutube(url, { signal } = {}, { paths, commands }) {
         "after_move:filepath",
         url,
       ],
-      { signal, timeoutMs: 4 * HOUR_MS, label: "YouTube media download" },
+      {
+        signal,
+        timeoutMs: 4 * HOUR_MS,
+        label: "YouTube media download",
+        stdoutMaxBytes: 64 * 1024,
+      },
     );
     const path = result.stdout.trim().split(/\r?\n/).at(-1);
     if (!path?.startsWith(`${directory}/`)) {
@@ -85,7 +90,8 @@ async function downloadYoutube(url, { signal } = {}, { paths, commands }) {
     }
     return { path, directory };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    if (error.code !== "MEDIA_PROCESS_CLEANUP")
+      await rm(directory, { recursive: true, force: true });
     throw error;
   }
 }

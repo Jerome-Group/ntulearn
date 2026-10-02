@@ -22,19 +22,24 @@ test("runs all enabled courses and providers under one aggregate digest", async 
   let preflights = 0;
   let closes = 0;
 
+  const signalProcessGroup = () => false;
   const options = {
+    signalProcessGroup,
     config: { statePath, courses, media: { mediaRoot } },
     mode: "manual",
     verifyRuntime: async () => {
       preflights += 1;
       return { runtime: {} };
     },
-    createJobRunner: async () => ({
-      run: async (appearance) => completeResult({ appearance, mediaRoot, volumeRoot: root }),
-      close: async () => {
-        closes += 1;
-      },
-    }),
+    createJobRunner: async (composition) => {
+      assert.equal(composition.signalProcessGroup, signalProcessGroup);
+      return {
+        run: async (appearance) => completeResult({ appearance, mediaRoot, volumeRoot: root }),
+        close: async () => {
+          closes += 1;
+        },
+      };
+    },
     lock: null,
   };
   const result = await runProductionMedia(options);

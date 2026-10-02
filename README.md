@@ -194,6 +194,20 @@ independent worker digest never changes `sync` or `verify`'s completeness verdic
 withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a
 completed appearance.
 
+Media runtime subprocesses stay in their original owned POSIX process group. Timeout,
+checkpoint and output overflow request `SIGTERM`, allow 250 ms grace, then request `SIGKILL`
+if the group remains; forced cleanup confirmation is bounded to a further 1,000 ms. The
+checkpoint reason survives only after that group is confirmed absent. Unconfirmed cleanup
+stops the worker globally and preserves scratch files for inspection. Output capture defaults
+to 8 MiB stdout and 256 KiB stderr, with smaller protocol-specific stdout bounds; overflow
+fails rather than returning truncated successful output.
+
+Runtime daemonization or descendants creating another session/process group (including
+`setsid` or independently detached children) are unsupported. Such descendants can outlive a
+successful parent and are outside the original-group evidence: successful cleanup does not
+prove exhaustive orphan recovery. Safely supervising those runtimes requires a separate
+execution design; broad process scans or unrelated-process kills are not a recovery mechanism.
+
 ## Scheduling the media worker
 
 The checked-in example is `config/com.jerome-group.ntulearn.media-worker.example.plist`. Copy it

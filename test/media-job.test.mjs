@@ -1558,3 +1558,31 @@ function recordingAppearance() {
     },
   };
 }
+
+test("uncertain subprocess cleanup overrides a concurrently requested checkpoint", async () => {
+  const controller = new globalThis.AbortController();
+  const checkpoint = new Error("checkpoint fixture");
+  checkpoint.code = "MEDIA_CHECKPOINT";
+  const cleanup = new Error("Inspect owned runtime processes before retrying");
+  cleanup.code = "MEDIA_PROCESS_CLEANUP";
+  cleanup.globalSafety = true;
+  await assert.rejects(
+    runMediaJob({
+      appearance: recordingAppearance(),
+      signal: controller.signal,
+      provider: {
+        name: "fixture",
+        async resolve() {
+          controller.abort(checkpoint);
+          throw cleanup;
+        },
+      },
+      storage: {
+        async write() {
+          throw new Error("must not persist a successful checkpoint");
+        },
+      },
+    }),
+    (error) => error === cleanup,
+  );
+});

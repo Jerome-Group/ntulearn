@@ -71,8 +71,8 @@ export async function runMediaJob({
         speechDuration = positiveDuration(resolved?.speechDuration) ?? speechDuration;
         throwIfInterrupted(signal);
       } catch (error) {
-        throwIfCheckpointed(signal);
         throwIfGlobalSafety(error);
+        throwIfCheckpointed(signal);
         retryable = true;
         limitations.push(`Provider resolution failed: ${publicMediaError(error)}`);
       }
@@ -82,8 +82,8 @@ export async function runMediaJob({
           nativeTranscript = await activeProvider.transcript(resolved, { signal });
           throwIfInterrupted(signal);
         } catch (error) {
-          throwIfCheckpointed(signal);
           throwIfGlobalSafety(error);
+          throwIfCheckpointed(signal);
           retryable = true;
           limitations.push(`Provider transcript retrieval failed: ${publicMediaError(error)}`);
         }
@@ -115,8 +115,8 @@ export async function runMediaJob({
               if (checked.valid) source = checked.transcript;
               else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
             } catch (error) {
-              throwIfCheckpointed(signal);
               throwIfGlobalSafety(error);
+              throwIfCheckpointed(signal);
               limitations.push(`Provider transcript rejected: ${publicMediaError(error)}.`);
             }
           }
@@ -144,8 +144,8 @@ export async function runMediaJob({
             limitations.push(...mediaLimitations(acquired, "Provider returned no usable media."));
           }
         } catch (error) {
-          throwIfCheckpointed(signal);
           throwIfGlobalSafety(error);
+          throwIfCheckpointed(signal);
           retryable = true;
           limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
         }
@@ -176,8 +176,8 @@ export async function runMediaJob({
           );
         }
       } catch (error) {
-        throwIfCheckpointed(signal);
         throwIfGlobalSafety(error);
+        throwIfCheckpointed(signal);
         captureFailed = true;
         retryable = true;
         limitations.push(captureErrorMessage(error));
@@ -298,8 +298,8 @@ export async function runMediaJob({
             speechDuration,
           });
         } catch (error) {
-          throwIfCheckpointed(signal);
           throwIfGlobalSafety(error);
+          throwIfCheckpointed(signal);
           limitations.push(`Formatted transcript rejected: ${publicMediaError(error)}`);
         }
       }
@@ -451,16 +451,16 @@ async function generateLocalTranscript({
     if (checked.valid) source = checked.transcript;
     else limitations.push(`Local transcription rejected: ${checked.reason}.`);
   } catch (error) {
-    throwIfCheckpointed(signal);
     throwIfGlobalSafety(error);
+    throwIfCheckpointed(signal);
     limitations.push(`Local transcription failed: ${publicMediaError(error)}`);
   } finally {
     if (typeof transcriber.release === "function") {
       try {
         await transcriber.release();
       } catch (error) {
-        throwIfCheckpointed(signal);
         throwIfGlobalSafety(error);
+        throwIfCheckpointed(signal);
         released = false;
         limitations.push(`Local transcription cleanup failed: ${publicMediaError(error)}`);
       }
