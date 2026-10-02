@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -291,4 +291,48 @@ test("a course NTULearn would not hand over does not make the destination incomp
 
 test("says nothing about refused courses when every course was read", () => {
   assert.ok(!("refused" in verifyReport([])));
+});
+
+test("does not credit an ambiguous announcement file more than once", async () => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-verify-collision-"));
+  const snapshot = {
+    course: { displayName: "Synthetic" },
+    items: [],
+    conversations: [],
+    announcements: [
+      { id: "a", title: "Reminder", createdDate: "2026-01-06T01:00:00Z" },
+      { id: "b", title: "Reminder", createdDate: "2026-01-06T02:00:00Z" },
+    ],
+  };
+  await mkdir(join(destination, "Announcements"));
+  await writeFile(join(destination, "Course.md"), "legacy");
+  await writeFile(join(destination, "Announcements", "2026-01-06 Reminder.md"), "legacy");
+  const result = await verifyCourse({
+    client: { readCourse: async () => snapshot },
+    course: { key: "SYNTHETIC", courseId: "synthetic", destination },
+  });
+  assert.equal(result.present, 1);
+  assert.equal(result.missing.length, 2);
+  assert.equal(verifyReport([result]).complete, false);
+});
+
+test("refuses exact and renumbered symlink descendants instead of crediting external files", async () => {
+  for (const folder of ["01 Lecture Notes", "04 Lecture Notes"]) {
+    const root = await mkdtemp(join(tmpdir(), "ntulearn-verify-linked-"));
+    const destination = join(root, "destination");
+    const outside = join(root, "outside");
+    await mkdir(destination);
+    await mkdir(outside);
+    await writeFile(join(outside, "01 Week 1.pdf"), "EXTERNAL");
+    await writeFile(join(destination, "Course.md"), "course");
+    await symlink(outside, join(destination, folder));
+    await assert.rejects(
+      verifyCourse({
+        client: clientReading(ITEMS.slice(0, 2)),
+        course: { key: "SYNTHETIC", courseId: "synthetic", destination },
+      }),
+      /symlink.*Run|symlink.*run/,
+    );
+    assert.equal(await readFile(join(outside, "01 Week 1.pdf"), "utf8"), "EXTERNAL");
+  }
 });

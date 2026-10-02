@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertDestinationPath } from "../src/sync/paths.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { orderedName, safeResolve, safeSegment } from "../src/sync/paths.mjs";
@@ -18,4 +22,22 @@ test("numbers a name from its zero-based position", () => {
 test("keeps resolved paths below the destination", () => {
   assert.equal(safeResolve("/tmp/course", "../escape"), "/tmp/course/_escape");
   assert.equal(safeResolve("/tmp/course", "Week 1", "Notes.md"), "/tmp/course/Week 1/Notes.md");
+});
+
+test("permits a configured symlink root but refuses exact and nested linked descendants", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-path-boundary-"));
+  const real = join(root, "real");
+  const configured = join(root, "configured");
+  const outside = join(root, "outside");
+  await mkdir(real);
+  await mkdir(outside);
+  await symlink(real, configured);
+  await assertDestinationPath(configured, join(configured, "new", "file.txt"));
+  await symlink(outside, join(real, "linked"));
+  await assert.rejects(
+    assertDestinationPath(configured, join(configured, "linked", "file.txt")),
+    /symlink/,
+  );
+  await assert.rejects(assertDestinationPath(configured, join(configured, "linked")), /symlink/);
+  await assert.rejects(assertDestinationPath(configured, join(outside, "file.txt")), /Unsafe/);
 });

@@ -2,7 +2,8 @@ import { chmod, mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium } from "playwright";
-import { COURSES_URL, isIdentityProviderUrl, SIGNED_IN_URL_PATTERN } from "./urls.mjs";
+import { COURSES_URL, SIGNED_IN_URL_PATTERN } from "./urls.mjs";
+import { signInStalled } from "./sign-in.mjs";
 
 const XSRF_HEADER = "x-blackboard-xsrf";
 const SIGN_IN_AGAIN = "Run: npm run login";
@@ -36,7 +37,7 @@ export async function openSignedInContext(profilePath) {
         () => true,
         () => false,
       );
-    if (!signedIn) throw new Error(signInStalled(page.url()));
+    if (!signedIn) throw new Error(signInStalled(page.url(), SIGN_IN_REDIRECT_TIMEOUT_MS));
 
     let token = await waitForToken(capturedToken);
     if (!token) {
@@ -50,17 +51,6 @@ export async function openSignedInContext(profilePath) {
     await context.close();
     throw error;
   }
-}
-
-// Where it stopped, rather than why it might have. Asserting an expired session for every sign-in
-// that has not arrived is what sends a reader to `npm run login` for a slow network, which spends
-// an SSO round trip to change nothing and leaves them where they were.
-function signInStalled(url) {
-  const seconds = SIGN_IN_REDIRECT_TIMEOUT_MS / 1000;
-  if (isIdentityProviderUrl(url)) {
-    return `NTULearn sign-in is still at the identity provider after ${seconds}s: ${url}. ${SIGN_IN_AGAIN}`;
-  }
-  return `NTULearn did not answer within ${seconds}s; sign-in stopped at ${url}. Run the command again, and if it keeps happening: ${SIGN_IN_AGAIN}`;
 }
 
 async function launchChrome(profilePath, { headless }) {

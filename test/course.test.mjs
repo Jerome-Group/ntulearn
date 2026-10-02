@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { attachmentsOf } from "../src/ntulearn/content.mjs";
 import { syncCourse } from "../src/sync/course.mjs";
@@ -533,4 +533,97 @@ test("does not download again a file whose record was written before the type mo
 
   assert.equal(again.downloaded, 0);
   assert.equal(again.skipped, 1);
+});
+
+test("refuses ambiguous announcements without changing a legacy or user file", async () => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-collision-"));
+  const course = { key: "SYNTHETIC", courseId: "synthetic", destination };
+  const announcements = [
+    {
+      id: "a",
+      title: "Reminder: today",
+      createdDate: "2026-01-06T01:00:00Z",
+      body: { rawText: "FIRST" },
+    },
+    {
+      id: "b",
+      title: "reminder? today",
+      createdDate: "2026-01-06T02:00:00Z",
+      body: { rawText: "SECOND" },
+    },
+  ];
+  const legacy = join(destination, "Announcements", "2026-01-06 Reminder_ today.md");
+  await mkdir(dirname(legacy), { recursive: true });
+  await writeFile(legacy, "USER EDIT");
+  const snapshot = {
+    course: { displayName: "Synthetic" },
+    items: [],
+    announcements,
+    conversations: [],
+  };
+  const reader = { readCourse: async () => snapshot };
+  for (const order of [announcements, [...announcements].reverse()]) {
+    snapshot.announcements = order;
+    const result = await syncCourse({ client: reader, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 2);
+    assert.equal(await readFile(legacy, "utf8"), "USER EDIT");
+    assert.equal(
+      JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
+      "partial",
+    );
+  }
+  snapshot.announcements = announcements.map((announcement, index) => ({
+    ...announcement,
+    title: `Distinct ${index}`,
+  }));
+  const recovered = await syncCourse({ client: reader, course, state: { courses: {} } });
+  assert.equal(recovered.failures.length, 0);
+  assert.equal(await readFile(legacy, "utf8"), "USER EDIT");
+  assert.equal(
+    JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
+    "complete",
+  );
+});
+
+test("rejects a renumbered symlink descendant before writing outside the destination", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-containment-"));
+  const destination = join(root, "destination");
+  const outside = join(root, "outside");
+  await mkdir(destination);
+  await mkdir(outside);
+  await symlink(outside, join(destination, "04 Week"));
+  const items = [
+    { id: "folder", title: "Week", position: 0, contentHandler: "resource/x-bb-folder" },
+    {
+      id: "file",
+      parentId: "folder",
+      title: "File",
+      position: 0,
+      contentHandler: "resource/x-bb-file",
+    },
+  ];
+  const reader = {
+    readCourse: async () => ({
+      course: { displayName: "Synthetic" },
+      items,
+      announcements: [],
+      conversations: [],
+    }),
+    readAttachments: async (_, item) =>
+      item.id === "file" ? [{ fileName: "synthetic.txt", resourceUrl: "/synthetic" }] : [],
+    download: async () => ({ body: Buffer.from("SYNTHETIC"), headers: {} }),
+  };
+  await assert.rejects(
+    syncCourse({
+      client: reader,
+      course: { key: "SYNTHETIC", courseId: "synthetic", destination },
+      state: { courses: {} },
+    }),
+    /symlink/i,
+  );
+  assert.deepEqual(await readdir(outside), []);
+  assert.equal(
+    JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
+    "failed",
+  );
 });

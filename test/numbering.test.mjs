@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -109,4 +109,13 @@ test("says nothing about a name that carries no number", async () => {
   const found = await numbering(destination, expected).find(segmentsOf(expected));
 
   assert.equal(found, null);
+});
+
+test("refuses a linked candidate before inspecting files beneath it", async () => {
+  const destination = await destinationHolding("Course.md");
+  const outside = await destinationHolding("01 File.pdf");
+  await symlink(outside, join(destination, "04 Week"));
+  const tree = numbering(destination, "01 Week/01 File.pdf");
+  await assert.rejects(tree.find(["01 Week", "01 File.pdf"]), /symlink/);
+  await assert.rejects(tree.directory(["01 Week"]), /symlink/);
 });
