@@ -117,12 +117,18 @@ const routes = {
       "src/media/lock.mjs",
       "src/media/process.mjs",
       "src/media/digest.mjs",
+      "src/media/capacity.mjs",
+      "src/media/capacity-monitor.mjs",
+      "src/media/capacity-deadline.mjs",
     ],
     [
       "test/media-worker.test.mjs",
       "test/media-production.test.mjs",
       "test/media-lock.test.mjs",
       "test/media-process.test.mjs",
+      "test/media-capacity.test.mjs",
+      "test/media-capacity-monitor.test.mjs",
+      "test/media-capacity-deadline.test.mjs",
     ],
   ],
   "media-runtime": [

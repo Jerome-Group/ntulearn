@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readFile, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { createMediaStorage } from "../src/media/storage.mjs";
 
@@ -314,4 +314,119 @@ test("rejects a symlinked course artifact directory and preserves user edits", a
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("refuses an oversized promotion before copying and retains the source", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-reserve-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mediaRoot = join(root, "Media");
+  await mkdir(mediaRoot);
+  const sourcePath = join(root, "scratch.mp4");
+  await writeFile(sourcePath, "synthetic media");
+  const appearance = {
+    recordingId: "reserve-fixture",
+    storageSurface: "media-gallery",
+    placement: {},
+  };
+  let copied = false;
+  const storage = createMediaStorage({
+    mediaRoot,
+    volumeRoot: root,
+    checkCapacity: async ({ bytes }) => {
+      assert.equal(bytes, 15);
+      const error = new Error("Insufficient reserve for promotion.");
+      error.globalSafety = true;
+      throw error;
+    },
+    write: async () => {
+      copied = true;
+    },
+  });
+  await assert.rejects(
+    storage.write({ appearance, kind: "media", sourcePath, filename: "fixture.mp4" }),
+    /reserve/,
+  );
+  assert.equal(copied, false);
+  assert.equal(await readFile(sourcePath, "utf8"), "synthetic media");
+  assert.equal(await storage.read({ appearance, kind: "media", filename: "fixture.mp4" }), null);
+});
+
+test("rechecks reserve at promotion and preserves the previous owned artifact", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-promotion-capacity-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mediaRoot = join(root, "Media");
+  await mkdir(mediaRoot);
+  const appearance = { recordingId: "promotion", storageSurface: "media-gallery", placement: {} };
+  const initial = createMediaStorage({ mediaRoot, volumeRoot: root });
+  const held = await initial.write({ appearance, kind: "metadata", content: "original" });
+  let writing = false;
+  const checked = [];
+  const storage = createMediaStorage({
+    mediaRoot,
+    volumeRoot: root,
+    checkCapacity: async ({ bytes = 0 }) => {
+      checked.push(bytes);
+      if (writing) {
+        const error = new Error("Reserve depleted during artifact write. Free space, then retry.");
+        error.globalSafety = true;
+        throw error;
+      }
+    },
+    write: async (path, content) => {
+      await writeFile(path, content);
+      writing = true;
+    },
+  });
+  await assert.rejects(
+    storage.write({ appearance, kind: "metadata", content: "updated" }),
+    /Reserve depleted/,
+  );
+  assert.deepEqual(checked, [7, 0]);
+  assert.equal(await readFile(held.path, "utf8"), "original");
+  assert.deepEqual(await readdir(dirname(held.path)), ["transcript.metadata.json"]);
+});
+
+test("bounds unresolved prewrite and promotion guards without replacing held artifacts", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-storage-deadline-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mediaRoot = join(root, "Media");
+  await mkdir(mediaRoot);
+  const appearance = { recordingId: "deadline", storageSurface: "media-gallery", placement: {} };
+  const held = await createMediaStorage({ mediaRoot, volumeRoot: root }).write({
+    appearance,
+    kind: "metadata",
+    content: "original",
+  });
+  let phase = "prewrite";
+  let releaseLate;
+  const storage = createMediaStorage({
+    mediaRoot,
+    volumeRoot: root,
+    capacityCheckTimeoutMs: 10,
+    checkCapacity: ({ bytes = 0 }) =>
+      phase === "prewrite" || (phase === "promotion" && bytes === 0)
+        ? new Promise((resolve) => {
+            releaseLate = resolve;
+          })
+        : Promise.resolve(),
+  });
+  for (const blocked of ["prewrite", "promotion"]) {
+    phase = blocked;
+    await assert.rejects(
+      Promise.race([
+        storage.write({ appearance, kind: "metadata", content: "updated" }),
+        new Promise((_, reject) =>
+          globalThis.setTimeout(() => reject(new Error("fixture exceeded bound")), 150),
+        ),
+      ]),
+      (error) => error.globalSafety === true && /timed out.*retry/.test(error.message),
+    );
+    releaseLate();
+    await new Promise((resolve) => globalThis.setImmediate(resolve));
+    assert.equal(await readFile(held.path, "utf8"), "original");
+    assert.deepEqual(await readdir(dirname(held.path)), ["transcript.metadata.json"]);
+  }
+  phase = "responsive";
+  await storage.write({ appearance, kind: "metadata", content: "recovered" });
+  assert.equal(await readFile(held.path, "utf8"), "recovered");
 });

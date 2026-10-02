@@ -21,6 +21,7 @@ test("runs all enabled courses and providers under one aggregate digest", async 
   await queue(statePath, courses[0], "kaltura", "entry-1");
   await queue(statePath, courses[1], "youtube", "video-1");
   let preflights = 0;
+  let capacityChecks = 0;
   let closes = 0;
 
   const signalProcessGroup = () => false;
@@ -28,6 +29,12 @@ test("runs all enabled courses and providers under one aggregate digest", async 
     signalProcessGroup,
     config: { statePath, courses, media: { mediaRoot } },
     mode: "manual",
+    createCapacity: async () => ({
+      check: async () => {},
+      checkJob: async () => {
+        capacityChecks += 1;
+      },
+    }),
     verifyRuntime: async (_media, composition) => {
       assert.equal(composition.signalProcessGroup, signalProcessGroup);
       preflights += 1;
@@ -51,6 +58,7 @@ test("runs all enabled courses and providers under one aggregate digest", async 
   assert.equal(result.digest.counts.total, 2);
   assert.equal(result.exitCode, 0);
   assert.equal(preflights, 1);
+  assert.ok(capacityChecks >= 2);
   assert.equal(closes, 1);
   const held = (await readMediaQueue({ statePath, courseKey: courses[0].key, course: courses[0] }))
     .record.queue[0];
@@ -78,6 +86,7 @@ test("turns unsupported appearances into terminal red failures", async () => {
   const options = {
     config: { statePath, courses: [selected], media: {} },
     mode: "manual",
+    createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
     verifyRuntime: async () => ({ runtime: {} }),
     createJobRunner: async () => {
       composed = true;
@@ -103,6 +112,7 @@ test("returns green without runtime or browser work when no media course is enab
   const result = await runProductionMedia({
     config: { statePath: "/tmp/state.json", courses: [course("AB1001", "off")], media: null },
     mode: "manual",
+    createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
     verifyRuntime: async () => {
       touchedRuntime = true;
     },
@@ -175,6 +185,7 @@ test("expired mandatory verification publishes global red and never composes acq
     config: { statePath, courses: [selected], media: {} },
     mode: "manual",
     lock: null,
+    createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
     verifyRuntime: async () => {
       const verification = createRuntimeVerification({}, { verificationTimeoutMs: 20 });
       await verification.read(() => (stalled ? new Promise(() => {}) : Promise.resolve()));
@@ -199,4 +210,35 @@ test("expired mandatory verification publishes global red and never composes acq
   stalled = false;
   await runProductionMedia(options);
   assert.equal(acquisitions, 1);
+});
+
+test("keeps full startup verification mandatory when capacity initialization stalls", async () => {
+  let runtimeVerifications = 0;
+  const result = await Promise.race([
+    runProductionMedia({
+      config: {
+        statePath: "/unused/synthetic-state.json",
+        courses: [course("SYNTHETIC")],
+        media: {},
+      },
+      mode: "manual",
+      lock: null,
+      write: async () => {},
+      readQueue: async () => null,
+      verifyRuntime: async () => {
+        runtimeVerifications += 1;
+        return { runtime: {} };
+      },
+      createCapacity: () => new Promise(() => {}),
+      capacityCheckTimeoutMs: 10,
+      createJobRunner: async () => assert.fail("capacity initialization must prevent acquisition"),
+    }),
+    new Promise((_, reject) =>
+      globalThis.setTimeout(() => reject(new Error("fixture exceeded bound")), 150),
+    ),
+  ]);
+  assert.equal(runtimeVerifications, 1);
+  assert.equal(result.digest.globalStop, true);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.digest.message, /timed out.*retry/);
 });

@@ -1,3 +1,6 @@
+import { withCapacityDeadline } from "./capacity-deadline.mjs";
+import { createMediaCapacity } from "./capacity.mjs";
+import { monitorMediaCapacity } from "./capacity-monitor.mjs";
 import { randomUUID } from "node:crypto";
 import { clearTimeout as cancelTimer, setTimeout as scheduleTimer } from "node:timers";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
@@ -83,6 +86,9 @@ async function runMediaQueueUnlocked({
   mode = "scheduled",
   runJob,
   preflight = null,
+  checkCapacity = null,
+  capacityMonitorIntervalMs = 1_000,
+  capacityCheckTimeoutMs = 5_000,
   media = null,
   now = null,
   schedule = null,
@@ -139,6 +145,13 @@ async function runMediaQueueUnlocked({
 
   try {
     await safetyCheck({ mode, now: readNow });
+    if (!checkCapacity && media) {
+      const capacity = await createMediaCapacity(media, {
+        courses,
+        timeoutMs: capacityCheckTimeoutMs,
+      });
+      checkCapacity = ({ course }) => capacity.checkJob(course);
+    }
   } catch (error) {
     const message = publicMediaError(error);
     await Promise.all(
@@ -188,6 +201,9 @@ async function runMediaQueueUnlocked({
             course,
             mode,
             runJob,
+            checkCapacity,
+            capacityMonitorIntervalMs,
+            capacityCheckTimeoutMs,
             now: readNow,
             timeZone,
             schedule: setSchedule,
@@ -269,6 +285,9 @@ async function runCourse({
   course,
   mode,
   runJob,
+  checkCapacity,
+  capacityMonitorIntervalMs,
+  capacityCheckTimeoutMs,
   now,
   schedule,
   cancelSchedule,
@@ -397,7 +416,26 @@ async function runCourse({
 
     let result;
     let failure = null;
+    let capacityFailure = null;
+    let stopMonitoring = null;
+    const probeCapacity = checkCapacity
+      ? () =>
+          withCapacityDeadline(() => checkCapacity({ job, course }), {
+            timeoutMs: capacityCheckTimeoutMs,
+          })
+      : null;
     try {
+      await probeCapacity?.();
+      if (checkCapacity) {
+        stopMonitoring = monitorMediaCapacity(probeCapacity, {
+          intervalMs: capacityMonitorIntervalMs,
+          timeoutMs: capacityCheckTimeoutMs,
+          onFailure: (error) => {
+            capacityFailure = error;
+            controller.abort(error);
+          },
+        });
+      }
       result = await runJob(job, {
         course,
         mode,
@@ -405,11 +443,14 @@ async function runCourse({
         now,
         requestCheckpoint,
       });
+      await probeCapacity?.();
     } catch (error) {
       failure = error;
     } finally {
       if (timer !== null && timer !== undefined) cancelSchedule(timer);
+      await stopMonitoring?.();
     }
+    failure = isGlobalMediaSafetyFailure(failure) ? failure : (capacityFailure ?? failure);
 
     const finishedAt = validDate(now(), "media job finish");
     if (failure && isGlobalMediaSafetyFailure(failure)) {

@@ -1,3 +1,5 @@
+import { withCapacityDeadline } from "./capacity-deadline.mjs";
+import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -16,8 +18,14 @@ export function createMediaStorage({
   volumeRoot,
   write = writeAtomically,
   read = readFile,
+  checkCapacity = null,
+  capacityCheckTimeoutMs = 5_000,
 }) {
   const root = assertMediaRoot(mediaRoot, volumeRoot);
+  const probe = (inspect) =>
+    checkCapacity
+      ? withCapacityDeadline(inspect, { timeoutMs: capacityCheckTimeoutMs })
+      : Promise.resolve().then(inspect);
 
   return {
     async write({
@@ -37,13 +45,15 @@ export function createMediaStorage({
         throw new Error("Media storage accepts content or sourcePath, not both.");
       }
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
-      await assertMediaArtifactPath(
-        target.path,
-        artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+      await probe(() =>
+        assertMediaArtifactPath(
+          target.path,
+          artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+        ),
       );
       if (replaceProof) {
         assertReplacementProof({ kind, target, replaceProof });
-        const current = await read(target.path).catch((error) => {
+        const current = await probe(() => read(target.path)).catch((error) => {
           if (error.code === "ENOENT") return null;
           throw markGlobalMediaSafety(error);
         });
@@ -53,7 +63,8 @@ export function createMediaStorage({
       }
       let alreadyPresent;
       try {
-        alreadyPresent = !replaceProof && writeOnce(kind) && (await isFilePresent(target.path));
+        alreadyPresent =
+          !replaceProof && writeOnce(kind) && (await probe(() => isFilePresent(target.path)));
       } catch (error) {
         throw markGlobalMediaSafety(error);
       }
@@ -61,9 +72,27 @@ export function createMediaStorage({
         return { path: target.path, status: "existing" };
       }
       try {
+        const boundary = artifactRoot({ root, appearance, kind });
+        await probe(async () => {
+          const bytes =
+            sourcePath === undefined ? Buffer.byteLength(content) : (await stat(sourcePath)).size;
+          await checkCapacity?.({ path: target.path, boundary, bytes });
+        });
         await mkdir(dirname(target.path), { recursive: true });
-        if (sourcePath !== undefined) await copyAtomically(sourcePath, target.path);
-        else await write(target.path, content);
+        if (sourcePath !== undefined || checkCapacity) {
+          await promoteAtomically({
+            sourcePath,
+            target: target.path,
+            content,
+            write,
+            beforePromotion: async () => {
+              await probe(async () => {
+                await assertMediaArtifactPath(target.path, boundary);
+                await checkCapacity?.({ path: target.path, boundary });
+              });
+            },
+          });
+        } else await write(target.path, content);
       } catch (error) {
         throw markGlobalMediaSafety(error);
       }
@@ -72,12 +101,14 @@ export function createMediaStorage({
 
     async read({ appearance, kind, mediaKind, filename }) {
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
-      await assertMediaArtifactPath(
-        target.path,
-        artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+      await probe(() =>
+        assertMediaArtifactPath(
+          target.path,
+          artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+        ),
       );
       try {
-        return { path: target.path, content: await read(target.path) };
+        return { path: target.path, content: await probe(() => read(target.path)) };
       } catch (error) {
         if (error.code === "ENOENT") return null;
         throw markGlobalMediaSafety(error);
@@ -86,10 +117,12 @@ export function createMediaStorage({
   };
 }
 
-async function copyAtomically(source, target) {
+async function promoteAtomically({ sourcePath, target, content, write, beforePromotion }) {
   const partial = `${target}.part-${randomUUID()}`;
   try {
-    await copyFile(source, partial);
+    if (sourcePath !== undefined) await copyFile(sourcePath, partial);
+    else await write(partial, content);
+    await beforePromotion();
     await rename(partial, target);
   } catch (error) {
     await unlink(partial).catch(() => {});
