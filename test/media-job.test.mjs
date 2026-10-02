@@ -8,6 +8,121 @@ import { runMediaJob } from "../src/media/job.mjs";
 import { createMediaStorage } from "../src/media/storage.mjs";
 import { transcriptDigest } from "../src/media/transcript.mjs";
 
+async function nativeAddressJob(body, { transcriber = null } = {}) {
+  const writes = [];
+  const result = await runMediaJob({
+    appearance: {
+      recordingId: "synthetic-address",
+      provider: "kaltura",
+      title: "Synthetic",
+      placement: {
+        destination: "/synthetic",
+        formattedTranscriptPath: "Synthetic.transcript.md",
+        statusPath: "Synthetic.media-status.md",
+      },
+    },
+    provider: {
+      name: "kaltura",
+      resolve: async () => ({ duration: 10 }),
+      transcript: async () => ({ body, filename: "captions.json" }),
+      media: async () => ({ kind: "audio", body: Buffer.from("synthetic audio") }),
+    },
+    formatter: {
+      version: "fixture",
+      format: async ({ segments }) => ({ markdown: segments.map(({ text }) => text).join(" ") }),
+    },
+    transcriber,
+    storage: {
+      write: async (value) => {
+        writes.push(value);
+        return { path: `synthetic/${value.kind}`, status: "written" };
+      },
+    },
+  });
+  return { writes, result };
+}
+
+test("native session addresses cannot enter provider, raw or formatted artifacts and a safe retry recovers", async () => {
+  const secret = "synthetic-private-credential";
+  for (const address of [
+    `https://video.test/caption?sig=${secret}`,
+    `https://video.test/caption?%73ig=${secret}`,
+    `https://video.test/api/ks/${secret}/captions`,
+    `https://video.test/api/%6bs%2f${secret}/captions`,
+    `https://video.test/caption?broken%=x&%73ig=${secret}`,
+    `https://video.test/caption?access%5ftoken=${secret}`,
+  ]) {
+    const text = `Caption ${address}`;
+    const native = JSON.stringify({ language: "en", segments: [{ start: 0, end: 10, text }] });
+    for (const body of [
+      native,
+      Buffer.from(native),
+      native.replaceAll("/", "\\/").replace("%73ig", "\\u002573ig"),
+    ]) {
+      const { writes, result } = await nativeAddressJob(body);
+      assert.equal(result.complete, false, address);
+      assert.match(result.limitation, /session-bound address/i);
+      assert.ok(writes.some(({ kind }) => kind === "media"));
+      assert.ok(
+        !writes.some(({ kind }) =>
+          ["provider-transcript", "raw-transcript", "formatted-transcript"].includes(kind),
+        ),
+      );
+      assert.ok(!JSON.stringify({ writes, result }).includes(secret));
+    }
+  }
+  for (const body of [
+    '{"language":"en","segments":[{"start":0,"end":10,"text":"Caption https:\\/\\/video.test/caption?\\u0073ig=synthetic-private-credential"}]}',
+    "WEBVTT\n\n00:00.000 --> 00:10.000\nCaption https://video.test/caption?&#115;ig=synthetic-private-credential",
+    "1\n00:00:00,000 --> 00:00:10,000\nCaption https://video.test/caption?chapter=1&amp;%73ig=synthetic-private-credential",
+    "<tt><p>https://video.test/api/&#107;s/synthetic-private-credential/captions</p></tt>",
+  ]) {
+    const { writes, result } = await nativeAddressJob(body);
+    assert.equal(result.complete, false);
+    assert.match(result.limitation, /session-bound address/i);
+    assert.ok(
+      !writes.some(({ kind }) =>
+        ["provider-transcript", "raw-transcript", "formatted-transcript"].includes(kind),
+      ),
+    );
+    assert.ok(!JSON.stringify({ writes, result }).includes(secret));
+  }
+  const safe = JSON.stringify({
+    language: "en",
+    segments: [
+      { start: 0, end: 10, text: "Safe caption 50% and x = 2. https://docs.test/chapter/2?part=3" },
+    ],
+  });
+  const recovered = await nativeAddressJob(Buffer.from(safe));
+  assert.equal(recovered.result.complete, true);
+  assert.deepEqual(
+    recovered.writes.find(({ kind }) => kind === "provider-transcript").content,
+    Buffer.from(safe),
+  );
+});
+
+test("unsafe native source leaves independent local transcription fallback available", async () => {
+  const body = {
+    language: "en",
+    segments: [
+      { start: 0, end: 10, text: "https://video.test/caption?%73ig=synthetic-private-credential" },
+    ],
+  };
+  const { writes, result } = await nativeAddressJob(body, {
+    transcriber: {
+      transcribe: async () => ({
+        language: "en",
+        segments: [{ start: 0, end: 10, text: "Safe generated caption." }],
+      }),
+    },
+  });
+  assert.equal(result.complete, true);
+  assert.match(result.limitation, /session-bound address/i);
+  assert.ok(!writes.some(({ kind }) => kind === "provider-transcript"));
+  assert.ok(writes.some(({ kind }) => kind === "raw-transcript"));
+  assert.ok(!JSON.stringify({ writes, result }).includes("synthetic-private-credential"));
+});
+
 test("runs a Gallery appearance through the existing media-job seam", async () => {
   const appearance = {
     recordingId: "media-gallery:_9_1:gallery-1",
