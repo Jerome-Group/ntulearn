@@ -10,7 +10,6 @@ const EMBED_ATTRIBUTE = "data-bbfile";
 const CARRIED_OBJECTS = new Set(["IFRAME", "OBJECT", "EMBED"]);
 
 const EVENT_HANDLER_ATTRIBUTE = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
-const JAVASCRIPT_URL_ATTRIBUTE = /(?:href|src)\s*=\s*(["'])\s*javascript:[\s\S]*?\1/gi;
 // A line of spaces is a blank line here; Turndown emits them where the source HTML had a <br>.
 const BLANK_LINE_RUN = /\n(?:[ \t]*\n){2,}/g;
 
@@ -26,9 +25,25 @@ const turndown = new TurndownService({
   blankReplacement: (content, node) => carriedObjectNote(node) ?? (node.isBlock ? "\n\n" : ""),
 });
 
+const destinationDecoder = new TurndownService();
+destinationDecoder.addRule("destination", {
+  filter: "a",
+  replacement: (_text, node) => node.getAttribute("href"),
+});
+
 // Three of the six this list used to hold have moved to a rule of their own. What is left carries
 // nothing a student wants, so removing it is not a loss and a note about each would be noise.
 turndown.remove(["script", "style", "form"]);
+
+// Attribute values must be checked after HTML parsing: quoting and entity encoding are source
+// syntax, and a dangerous destination stays dangerous in any of those forms.
+turndown.addRule("unsafeDestination", {
+  filter: (node) =>
+    (node.nodeName === "A" && executableAddress(node.getAttribute("href"))) ||
+    (node.nodeName === "IMG" && executableAddress(node.getAttribute("src"))),
+  replacement: (text, node) =>
+    node.nodeName === "A" ? `[${text}](#)` : (node.getAttribute("alt") ?? ""),
+});
 
 turndown.addRule("carriedObject", {
   filter: (node) => CARRIED_OBJECTS.has(node.nodeName),
@@ -43,7 +58,7 @@ turndown.addRule("bbEmbed", {
   filter: (node) => node.nodeName === "A" && node.hasAttribute(EMBED_ATTRIBUTE),
   replacement: (text, node) => {
     const embed = embedOf(node);
-    const target = firstSupplied(node.getAttribute("href"), embed.url);
+    const target = safeAddress(firstSupplied(node.getAttribute("href"), embed.url));
     const label = firstSupplied(
       text,
       embed.linkName,
@@ -57,9 +72,7 @@ turndown.addRule("bbEmbed", {
 });
 
 export function htmlToMarkdown(value) {
-  const html = String(value ?? "")
-    .replace(EVENT_HANDLER_ATTRIBUTE, "")
-    .replace(JAVASCRIPT_URL_ATTRIBUTE, 'href="#"');
+  const html = String(value ?? "").replace(EVENT_HANDLER_ATTRIBUTE, "");
   return turndown.turndown(html).replace(BLANK_LINE_RUN, "\n\n").trim();
 }
 
@@ -147,7 +160,7 @@ function document(title, sections) {
 
 function carriedObjectNote(node) {
   if (!CARRIED_OBJECTS.has(node.nodeName)) return null;
-  const address = firstSupplied(node.getAttribute("src"), node.getAttribute("data"));
+  const address = safeAddress(firstSupplied(node.getAttribute("src"), node.getAttribute("data")));
   const name = node.nodeName.toLowerCase();
   return notCopiedNote(
     address ? `an embedded \`${name}\` at ${address}` : `an embedded \`${name}\` with no address`,
@@ -175,4 +188,22 @@ function firstSupplied(...values) {
     if (isSupplied(text)) return text;
   }
   return null;
+}
+
+function safeAddress(value) {
+  return executableAddress(value) ? "#" : value;
+}
+
+function executableAddress(value) {
+  if (typeof value !== "string") return false;
+  // CommonMark decodes destination entities and punctuation escapes after HTML has already
+  // decoded the source attribute. Check that second layer without changing ordinary addresses.
+  const escaped = value.replace(/\\([!-/:-@[-`{-~])/g, "$1");
+  const rendered = destinationDecoder.turndown(
+    `<a href="${escaped.replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}">destination</a>`,
+  );
+  // URL parsing ignores these ASCII controls. Removing them for the scheme check prevents a
+  // split spelling of javascript from evading the same rule that rejects its plain spelling.
+  // eslint-disable-next-line no-control-regex -- intentional URL scheme normalization
+  return /^javascript:/i.test(rendered.replace(/[\u0000-\u0020\u007f]/g, ""));
 }

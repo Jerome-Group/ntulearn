@@ -26,6 +26,50 @@ test("strips the ways HTML can carry script into a note", () => {
   assert.equal(htmlToMarkdown('<a href="javascript:steal()">link</a>'), "[link](#)");
 });
 
+test("sanitizes executable destinations after parsing quoted, unquoted and encoded attributes", () => {
+  for (const address of [
+    "javascript:steal()",
+    "JaVaScRiPt:steal()",
+    "java&#x73;cript&colon;steal()",
+    "java&#9;script:steal()",
+    "java&amp;#x73;cript:steal()",
+    "javascript\\:steal()",
+  ]) {
+    for (const quote of ["", '"', "'"]) {
+      const markdown = htmlToMarkdown(`<a href=${quote}${address}${quote}>link</a>`);
+      assert.equal(markdown, "[link](#)");
+    }
+    assert.doesNotMatch(
+      htmlToMarkdown(`<img src="${address}" alt="Diagram">`),
+      /steal|javascript/i,
+    );
+    assert.doesNotMatch(htmlToMarkdown(`<iframe src="${address}"></iframe>`), /steal|javascript/i);
+    assert.doesNotMatch(htmlToMarkdown(`<object data="${address}"></object>`), /steal|javascript/i);
+  }
+});
+
+test("sanitizes data-bbfile fallback addresses without removing the supplied title", () => {
+  for (const url of ["javascript:steal()", "java&amp;#x73;cript:steal()", "javascript\\:steal()"])
+    assert.equal(
+      htmlToMarkdown(`<a data-bbfile='${JSON.stringify({ title: "Recording", url })}'></a>`),
+      "[Recording](#)",
+    );
+});
+
+test("preserves ordinary links and image alternatives across attribute forms", () => {
+  for (const address of [
+    "/week?unit=2#lecture",
+    "https://example.org/a?part=2",
+    "mailto:tutor@example.org",
+  ]) {
+    assert.equal(htmlToMarkdown(`<a href='${address}'>Read x_1</a>`), `[Read x\\_1](${address})`);
+  }
+  assert.equal(
+    htmlToMarkdown('<img src="/diagram.png" alt="x_1 diagram">'),
+    "![x\\_1 diagram](/diagram.png)",
+  );
+});
+
 const embed = (attachment) => `data-bbfile='${JSON.stringify(attachment)}'`;
 
 test("names an attachment link from the embed, NTULearn having left the text empty", () => {
