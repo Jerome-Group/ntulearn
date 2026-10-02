@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  symlink,
+  writeFile,
+  rm,
+  unlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -295,22 +304,26 @@ test("writes a SCORM topic down as its launch link rather than as nothing to cop
   assert.equal(result.uncopied, 0);
 });
 
-// The statement that there was nothing to copy is the sync's own writing rather than the student's,
-// so correcting it takes nothing from anybody — which is how a destination written before a fix
-// stops repeating what the fix removed (#53).
-test("supersedes its own statement that there was nothing to copy", async () => {
+// ADR-0016 supersedes the old correction allowance: a marker proves origin, not whether somebody
+// annotated the document after the run wrote it.
+test("retains an occupied marked stand-in instead of automatically correcting it", async () => {
   const { destination } = await sync(downloads("ppt"), WEEK_1);
   const written = join(destination, "01 Week 1", QUIZ);
   const current = await readFile(written, "utf8");
   await writeFile(written, current.replace("- Kind: Test", "- Kind: resource/x-bb-asmt-test-link"));
 
-  await syncCourse({
+  const result = await syncCourse({
     client: client(downloads("ppt"), WEEK_1),
     course: { key: "CC0006", courseId: "_9_1", destination },
     state: { version: 1, courses: {} },
   });
 
-  assert.equal(await readFile(written, "utf8"), current);
+  assert.equal(
+    await readFile(written, "utf8"),
+    current.replace("- Kind: Test", "- Kind: resource/x-bb-asmt-test-link"),
+  );
+  assert.equal(result.failures.length, 1);
+  assert.match(result.failures[0].error, /retained.*Compare/);
 });
 
 // A read the student may not make yields nothing, and nothing is not the same as "there are none".
@@ -401,25 +414,21 @@ test("keeps the file where it is when no record says it was ever downloaded", as
   assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
-// The bytes are what makes an older file the same file, and nothing else does: two items in a
-// folder may carry the same title, one of them left behind for something NTULearn has stopped
-// returning (ADR-0003). So a run that finds different bytes there leaves them exactly as they are
-// and writes at today's number, which is what a sync did with everything before this (#70).
-test("writes beside a file under an earlier number rather than over it", async () => {
+// ADR-0016 refuses a differing older placement too: a mismatch may be an annotation, and a new
+// number is not permission to create a second version beside it.
+test("reports a conflict at a differing earlier-number attachment without creating another copy", async () => {
   const { destination } = await sync(downloads("ppt"), WEEK_1);
-
   const second = await syncCourse({
     client: client(downloads("a different deck"), REORDERED),
     course: { key: "CC0006", courseId: "_9_1", destination },
     state: { version: 1, courses: {} },
   });
-
-  assert.equal(second.downloaded, 1);
+  assert.equal(second.downloaded, 0);
+  assert.equal(second.failures.length, 1);
   assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
-  assert.equal(
-    await readFile(join(destination, "01 Week 1", "06 Week 1 PPT.pptx"), "utf8"),
-    "a different deck",
-  );
+  await assert.rejects(readFile(join(destination, "01 Week 1", "06 Week 1 PPT.pptx")), {
+    code: "ENOENT",
+  });
   assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
@@ -626,4 +635,105 @@ test("rejects a renumbered symlink descendant before writing outside the destina
     JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
     "failed",
   );
+});
+
+test("retains occupied attachment and annotated documents, reports partial, and recovers at an empty path", async (t) => {
+  const { destination, state } = await sync(downloads("ppt"), WEEK_1);
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const overview = join(destination, "Course.md");
+  const placeholder = join(destination, "01 Week 1", QUIZ);
+  const attachment = join(destination, "01 Week 1", "05 Week 1 PPT.pptx");
+  const originalOverview = `${await readFile(overview, "utf8")}\nMy overview annotation\n`;
+  const originalPlaceholder = `${await readFile(placeholder, "utf8")}\nMy quiz annotation\n`;
+  await writeFile(overview, originalOverview);
+  await writeFile(placeholder, originalPlaceholder);
+  await writeFile(attachment, "annotated attachment");
+  const changed = WEEK_1.map((item) =>
+    item.id === "_3_1" ? { ...item, modifiedDate: "2026-10-02T00:00:00Z" } : item,
+  );
+  let calls = 0;
+  const updatedClient = client(async () => {
+    calls += 1;
+    return { body: Buffer.from("new upstream bytes"), headers: {} };
+  }, changed);
+  const course = { key: "CC0006", courseId: "_9_1", destination };
+  const result = await syncCourse({ client: updatedClient, course, state });
+  assert.equal(await readFile(overview, "utf8"), originalOverview);
+  assert.equal(await readFile(placeholder, "utf8"), originalPlaceholder);
+  assert.equal(await readFile(attachment, "utf8"), "annotated attachment");
+  assert.equal(result.failures.length, 3);
+  assert.ok(result.failures.every((failure) => /retained.*Compare/.test(failure.error)));
+  assert.equal(
+    JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
+    "partial",
+  );
+  await syncCourse({ client: updatedClient, course, state });
+  assert.equal(await readFile(attachment, "utf8"), "annotated attachment");
+  assert.equal(calls, 2);
+  await unlink(attachment);
+  const recovered = await syncCourse({ client: updatedClient, course, state });
+  assert.equal(recovered.downloaded, 1);
+  assert.equal(await readFile(attachment, "utf8"), "new upstream bytes");
+  assert.equal(await readFile(overview, "utf8"), originalOverview);
+});
+
+test("uses recorded bytes to skip inaccurate upstream sizes and preserves truncated occupied files", async (t) => {
+  const sized = ITEMS.map((item) =>
+    item.id === "_3_1"
+      ? {
+          ...item,
+          contentDetail: {
+            "resource/x-bb-file": {
+              file: { ...item.contentDetail["resource/x-bb-file"].file, fileSize: 100 },
+            },
+          },
+        }
+      : item,
+  );
+  let calls = 0;
+  const download = async () => {
+    calls += 1;
+    return { body: Buffer.from("pdf"), headers: {} };
+  };
+  const { destination, state } = await sync(download, sized);
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const course = { key: "CC0006", courseId: "_9_1", destination };
+  const reader = client(download, sized);
+  const repeat = await syncCourse({ client: reader, course, state });
+  assert.equal(calls, 1);
+  assert.equal(repeat.skipped, 1);
+  assert.equal(repeat.downloaded, 0);
+  assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
+  delete state.courses.CC0006.downloads[RESOURCE].bytes;
+  const legacy = await syncCourse({ client: reader, course, state });
+  assert.equal(calls, 2);
+  assert.equal(legacy.skipped, 1);
+  assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
+  const held = join(destination, AT);
+  await writeFile(held, "pd");
+  const damaged = await syncCourse({ client: reader, course, state });
+  assert.equal(calls, 3);
+  assert.equal(damaged.failures.length, 1);
+  assert.equal(await readFile(held, "utf8"), "pd");
+  await unlink(held);
+  const recovered = await syncCourse({ client: reader, course, state });
+  assert.equal(recovered.downloaded, 1);
+  assert.equal(await readFile(held, "utf8"), "pdf");
+  await syncCourse({ client: reader, course, state });
+  assert.equal(calls, 4);
+});
+
+test("retains annotations at an earlier-number marked stand-in without creating a rescue copy", async (t) => {
+  const { destination, state } = await sync(downloads("ppt"), WEEK_1);
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const folder = join(destination, "01 Week 1");
+  const held = join(folder, QUIZ);
+  const annotation = `${await readFile(held, "utf8")}\nAnnotation retained across ordering changes\n`;
+  const before = (await readdir(folder)).sort();
+  await writeFile(held, annotation);
+  const result = await again(destination, state, REORDERED);
+  assert.equal(await readFile(held, "utf8"), annotation);
+  assert.equal(result.failures.length, 1);
+  assert.deepEqual((await readdir(folder)).sort(), before);
+  assert.equal(result.skipped, 1);
 });

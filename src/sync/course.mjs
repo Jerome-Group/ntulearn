@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
-import { fileHolds, isFilePresent, readText, writeAtomically, writeIfChanged } from "./files.mjs";
+import { isFilePresent, readText, writeAtomically, writeWithoutReplacing } from "./files.mjs";
 import { withImportStatus } from "./import-status.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
@@ -96,11 +96,11 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
         await mkdir(place.target, { recursive: true });
         break;
       case "document":
-        await writeDocument(place, expected.content, tally);
+        await writeDocument(place, expected.content, tally, expected.placement);
         break;
       case "uncopied":
         tally.uncopied += 1;
-        await writeUncopied(place, expected.content, tally);
+        await writeUncopied(place, expected.content, tally, expected.placement);
         break;
       case "attachment": {
         const { item, attachment, placement } = expected;
@@ -166,8 +166,8 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
 // Where a run writes one thing the course expects, and where the destination already holds it. The
 // two are the same name until an item is inserted upstream: a name carries its item's position, so
 // every later name moves by one while nothing on disk moves with it (ADR-0003). `heldAt` is the
-// older file when there is one, and it is never written over — a run keeps it where it is, or
-// writes at today's number beside it (ADR-0009).
+// older file when there is one. A run keeps identical bytes there and reports differing occupied
+// bytes as a manual conflict (ADR-0016); it never uses a new number to rescue the write.
 //
 // The folder is resolved first and the name resolved inside it, so a file the destination does not
 // hold yet joins its siblings rather than opening a second folder beside them. Resolving only the
@@ -204,35 +204,36 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
   const fingerprint = attachmentFingerprint(item, attachment);
   // A record used to have to name the path this run would write, and the number in that path moves
   // under it — so an item pushed down the course read as changed and was fetched a second time
-  // beside itself, sixty-one of them in one course (#70, ADR-0009).
+  // beside itself, sixty-one of them in one course (#70, ADR-0009). Actual recorded bytes are the
+  // skip evidence: upstream fileSize can be wrong, and legacy records without bytes are compared.
   const known = record?.fingerprint === fingerprint;
 
-  if (known && (await isFilePresent(place.target, attachment.fileSize))) {
+  if (known && validByteCount(record?.bytes) && (await isFilePresent(place.target, record.bytes))) {
     tally.skipped += 1;
     return { ...record, relativePath: place.at };
   }
-  if (known && place.heldAt !== null && (await isFilePresent(place.heldAt, attachment.fileSize))) {
+  if (
+    known &&
+    validByteCount(record?.bytes) &&
+    place.heldAt !== null &&
+    (await isFilePresent(place.heldAt, record.bytes))
+  ) {
     tally.skipped += 1;
     return record;
   }
 
   try {
     const { body, headers } = await client.download(attachment);
-    // A run with no record of these bytes is what deleting `State` leaves, and asking the
-    // destination rather than the record is what lets that run keep the file where it is instead of
-    // writing a second copy of it. The bytes are compared rather than assumed, because nothing this
-    // run did not just fetch is ever written over (ADR-0003, ADR-0009).
-    const alreadyThere = place.heldAt !== null && (await fileHolds(place.heldAt, body));
-    if (alreadyThere) {
-      tally.skipped += 1;
-    } else {
-      await writeAtomically(place.target, body);
+    // An older placement is occupied too. Different bytes require a manual conflict rather than
+    // a second name for this recording's attachment (ADR-0016); identical bytes remain in place.
+    const written = await writeWithoutReplacing(place.heldAt ?? place.target, body);
+    if (written) {
       tally.downloaded += 1;
       tally.bytes += body.length;
-    }
+    } else tally.skipped += 1;
     return {
       fingerprint,
-      relativePath: alreadyThere ? place.at : placement.path,
+      relativePath: place.heldAt !== null ? place.at : placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       // Written, never read: what a run may consult `State` for is ADR-0005's, not this line's.
@@ -252,38 +253,35 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
   }
 }
 
-// An item hidden by a release rule reads exactly like one there was never anything to copy from, so
-// a page the student already has is never replaced by the statement that there is nothing to copy —
-// additive in the direction ADR-0003 argues for. That statement is the sync's own writing, though,
-// and correcting it costs the student nothing, so a destination written before a fix stops
-// repeating what the fix removed (#53).
-//
-// The page it must not write over is wherever the earlier run left it, which a reorder moves away
-// from the name today's numbering gives it (ADR-0009).
-async function writeUncopied(place, content, tally) {
-  const existing = await readText(place.heldAt ?? place.target);
-  if (existing !== null && !isUncopiedDocument(existing)) return;
-  await writeDocument(place, content, tally);
+// A release-rule read cannot replace an earlier page with a stand-in. Marked stand-ins still go
+// through the byte comparison: the mark identifies their origin, not the absence of user edits.
+async function writeUncopied(place, content, tally, placement) {
+  const occupied = place.heldAt ?? place.target;
+  if (await isFilePresent(occupied)) {
+    const existing = await readText(occupied);
+    if (existing !== null && !isUncopiedDocument(existing)) return;
+  }
+  await writeDocument(place, content, tally, placement);
 }
 
 function attachmentFingerprint(item, attachment) {
   return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
 }
 
-// Two numbers because they answer different questions: how big the copy is, and what this run did
-// to it. Only the second is worth a reader's attention on a run nobody watched, and a count that
-// reads the same whether everything or nothing was written cannot be it.
-//
-// A document under an earlier number holding these very words is this document, and writing it
-// again at today's number would put a second copy of the same text in the folder with nothing to
-// say which is current. Where the words differ the older file is left exactly as it is — it may be
-// the student's — and the run writes beside it (ADR-0003, ADR-0009).
-async function writeDocument(place, content, tally) {
+// Counts describe material accepted by this run; a conflicting occupied path is a failure rather
+// than a successful write. ADR-0016 keeps even marked stand-ins once somebody may have annotated them.
+async function writeDocument(place, content, tally, placement) {
   if (!content) return;
-  if (place.heldAt !== null && (await readText(place.heldAt)) === content) {
+  try {
+    if (await writeWithoutReplacing(place.heldAt ?? place.target, content))
+      tally.markdownWritten += 1;
     tally.markdown += 1;
-    return;
+  } catch (error) {
+    const { file, trail, path } = placement;
+    tally.failures.push({ file, trail, path, error: error.message });
   }
-  if (await writeIfChanged(place.target, content)) tally.markdownWritten += 1;
-  tally.markdown += 1;
+}
+
+function validByteCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }

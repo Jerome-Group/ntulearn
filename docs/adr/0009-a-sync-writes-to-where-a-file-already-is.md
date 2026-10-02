@@ -1,5 +1,10 @@
 # A sync writes to where a file already is, not to the number the course gives it today
 
+> Partially superseded by [ADR-0016](0016-occupied-course-files-require-manual-conflict-resolution.md):
+> the differing-byte fallback to today's number, including the **What this is not: a second identity**
+> paragraph and the `renumbered` writing consequence, now requires a manual conflict. Identical-byte
+> reuse, placement lookup and folder resolution remain unchanged.
+
 Before writing anything a course expects, a sync asks the destination whether it already holds that
 file under a name differing only by the number in front of it. Where it does, and the bytes there
 are the bytes the run would write, the run writes nothing: the file stays where it is and is counted

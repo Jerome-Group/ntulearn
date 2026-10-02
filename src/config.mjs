@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, relative, resolve, sep } from "node:path";
 import { readMediaConfig, readMediaMode } from "./media/config.mjs";
 
 const CONFIG_PATH = "config/courses.json";
@@ -27,7 +27,7 @@ export async function loadConfig(root, configPath = CONFIG_PATH) {
   }
 
   const driveMountPath = readDriveMountPath(parsed.driveMountPath, root);
-  const courses = readCourses(parsed.courses ?? [], root);
+  const courses = await readCourses(parsed.courses ?? [], root);
 
   return {
     profilePath: resolve(root, parsed.profilePath ?? DEFAULT_PROFILE_PATH),
@@ -46,11 +46,13 @@ export function selectCourses(courses, key) {
   return selected;
 }
 
-function readCourses(courses, root) {
+async function readCourses(courses, root) {
   const keys = new Set();
   const claimed = new Map();
+  const physical = new Map();
+  const configured = [];
 
-  return courses.map((course) => {
+  for (const course of courses) {
     const missing = REQUIRED_FIELDS.filter((field) => !course[field]);
     if (missing.length) throw new Error(`A course in ${CONFIG_PATH} has no ${missing.join(", ")}.`);
 
@@ -65,9 +67,41 @@ function readCourses(courses, root) {
     // would otherwise make one folder read as two.
     const destination = resolve(root, course.destination);
     claim(claimed, course.key, destination);
+    claim(physical, course.key, await physicalDestination(destination));
 
-    return { ...course, destination, mediaMode: readMediaMode(course.mediaMode, course.key) };
-  });
+    configured.push({
+      ...course,
+      destination,
+      mediaMode: readMediaMode(course.mediaMode, course.key),
+    });
+  }
+  return configured;
+}
+
+async function physicalDestination(destination) {
+  try {
+    let ancestor = destination;
+    while (true) {
+      const info = await lstat(ancestor).catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (info) {
+        const actual = await realpath(ancestor);
+        return resolve(actual, relative(ancestor, destination));
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw new Error("No accessible filesystem.");
+      ancestor = parent;
+    }
+  } catch (error) {
+    const failure = new Error(
+      "A course destination cannot be resolved. Restore its mounted folder or repair the configured directory or alias before syncing.",
+      { cause: error },
+    );
+    failure.code = error.code;
+    throw failure;
+  }
 }
 
 function readDriveMountPath(path, root) {

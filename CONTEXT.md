@@ -16,8 +16,9 @@ file's.
 
 **Sync**:
 Bringing the copy of a course up to date with NTULearn. It is one-way and **additive** — it
-writes and it skips, so a destination only grows. Reconciling the two sides is the thing it is
-not, and `docs/adr/0003` is why.
+writes and it skips, so a destination only grows. Differing occupied course files require manual
+conflict resolution rather than replacement (`docs/adr/0016`); machine receipts and stamps remain
+operational publications. Reconciling the two sides is the thing it is not, and `docs/adr/0003` is why.
 _Avoid_: import, download, mirror, scrape, backup — the first two were used interchangeably with
 this until they were retired, and the last three each promise something a sync does not do
 

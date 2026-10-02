@@ -25,6 +25,7 @@ const routes = {
   sync: [
     [
       "src/sync/course.mjs",
+      "src/config.mjs",
       "src/sync/expected.mjs",
       "src/sync/files.mjs",
       "src/sync/state.mjs",
@@ -33,6 +34,7 @@ const routes = {
     ],
     [
       "test/course.test.mjs",
+      "test/config.test.mjs",
       "test/expected.test.mjs",
       "test/files.test.mjs",
       "test/state.test.mjs",
