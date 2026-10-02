@@ -1,6 +1,7 @@
 import { courseUrl, isSignInUrl } from "../ntulearn/urls.mjs";
 import { discoverMediaGallery, isMediaCourseEnabled } from "./gallery.mjs";
-import { publicMediaError } from "./errors.mjs";
+import { setTimeout, clearTimeout } from "node:timers";
+import { galleryFailure, GALLERY_WAIT_LIMITS } from "./gallery-diagnostic.mjs";
 
 const MAX_GALLERY_PAGES = 100;
 const MAX_CONTENT_LOADS = 100;
@@ -30,14 +31,17 @@ const MONTHS = new Map([
 export async function readKalturaMediaGallery({ page, course }) {
   if (!isMediaCourseEnabled(course)) return discoverMediaGallery({ course, pages: null });
 
+  let stage = "opening";
   try {
     const surface = await openGallerySurface(page, course.courseId);
     if (!surface) return absentGallery();
+    stage = "catalogue";
     await waitForGalleryCatalogue(surface);
     const pages = await collectMediaGalleryPages({
       readPage: () => readGalleryPage(surface),
       clickLoadMore: (page) => clickGalleryMore(surface, page),
     });
+    stage = "date-enrichment";
     const enrichedPages = await enrichGalleryDates({
       page,
       pages,
@@ -45,7 +49,8 @@ export async function readKalturaMediaGallery({ page, course }) {
     });
     return discoverMediaGallery({ course, pages: enrichedPages });
   } catch (error) {
-    return inaccessibleGallery(publicError(error, page));
+    const failure = galleryFailure(publicErrorCode(error, page), { ...error?.diagnostic, stage });
+    return inaccessibleGallery(failure);
   }
 }
 
@@ -64,7 +69,16 @@ export async function collectMediaGalleryPages({
   const pages = [];
   let nextPaginationMode = "unknown";
   for (let pageNumber = 0; pageNumber < maxPages; pageNumber += 1) {
-    const read = await readPage();
+    let read;
+    try {
+      read = await readPage();
+    } catch {
+      throw galleryFailure("GALLERY_CATALOGUE_READ_FAILED", {
+        pagesRead: pages.length,
+        pageLimit: maxPages,
+        snapshot: pages.at(-1),
+      });
+    }
     const page =
       read && typeof read === "object"
         ? { ...read, paginationMode: read.paginationMode ?? nextPaginationMode }
@@ -75,15 +89,31 @@ export async function collectMediaGalleryPages({
       pages[pages.length - 1] = { ...page, hasMore: false };
       return pages;
     }
-    const advance = await clickLoadMore(page);
+    let advance;
+    try {
+      advance = await clickLoadMore(page);
+    } catch (error) {
+      throw galleryFailure(error?.code ?? "GALLERY_PAGINATION_CLICK_FAILED", {
+        ...error?.diagnostic,
+        pagesRead: pages.length,
+        pageLimit: maxPages,
+        snapshot: page,
+      });
+    }
     if (!advance) {
-      throw new Error(
-        "Media Gallery pagination advertised another page but its control was unavailable.",
-      );
+      throw galleryFailure("GALLERY_PAGINATION_CONTROL_UNAVAILABLE", {
+        pagesRead: pages.length,
+        pageLimit: maxPages,
+        snapshot: page,
+      });
     }
     nextPaginationMode = advance.mode ?? "append";
   }
-  throw new Error(`Media Gallery pagination exceeded the ${maxPages}-page safety limit.`);
+  throw galleryFailure("GALLERY_PAGINATION_LIMIT_REACHED", {
+    pagesRead: pages.length,
+    pageLimit: maxPages,
+    snapshot: pages.at(-1),
+  });
 }
 
 function appendPageReachedDisplayedTotal(page) {
@@ -114,7 +144,16 @@ async function openGallerySurface(page, courseId) {
     typeof page.waitForEvent === "function"
       ? page.waitForEvent("popup", { timeout: 5_000 }).catch(() => null)
       : null;
-  await trigger.click();
+  try {
+    await trigger.click({ timeout: GALLERY_WAIT_LIMITS.clickTimeoutMs });
+  } catch (error) {
+    throw galleryFailure(
+      /intercepts pointer events/i.test(String(error?.message ?? ""))
+        ? "GALLERY_TRIGGER_POINTER_INTERCEPTION"
+        : "GALLERY_TRIGGER_CLICK_FAILED",
+      { control: "trigger" },
+    );
+  }
   const opened = popup ? await popup : null;
   const surface = opened ?? page;
   if (typeof surface.waitForLoadState === "function") {
@@ -325,8 +364,7 @@ async function clickGalleryMore(surface, previousPage) {
     const control = await firstEnabledControl(surface.getByRole(role, { name: MORE_CONTROL }));
     if (control) {
       const label = await controlLabel(control);
-      await control.click();
-      if (!(await waitForGalleryUpdate(surface, previousPage))) return false;
+      await advanceGallery(surface, control, previousPage, "more");
       return { mode: paginationMode(label) };
     }
   }
@@ -347,8 +385,7 @@ async function clickGalleryMore(surface, previousPage) {
       const control = controls.nth(index);
       if ((await pageNumber(control)) !== currentPage + 1) continue;
       if (!(await isEnabledControl(control))) continue;
-      await control.click();
-      if (!(await waitForGalleryUpdate(surface, previousPage))) return false;
+      await advanceGallery(surface, control, previousPage, "numbered");
       return { mode: "replace" };
     }
   }
@@ -412,38 +449,43 @@ async function pageNumber(control) {
   return match ? Number(match[1]) : null;
 }
 
-async function waitForGalleryUpdate(surface, previousPage = null) {
-  if (previousPage && typeof surface.evaluate === "function") {
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline) {
+async function advanceGallery(surface, control, previousPage, kind) {
+  try {
+    await control.click({ timeout: GALLERY_WAIT_LIMITS.clickTimeoutMs });
+  } catch {
+    throw galleryFailure("GALLERY_PAGINATION_CLICK_FAILED", { control: kind });
+  }
+  if (!(await waitForGalleryUpdate(surface, previousPage))) {
+    throw galleryFailure("GALLERY_PAGINATION_UPDATE_UNCONFIRMED", { control: kind });
+  }
+}
+
+async function waitForGalleryUpdate(surface, previousPage) {
+  if (!previousPage || typeof surface.evaluate !== "function") return false;
+  let timer;
+  let stopped = false;
+  const deadline = Date.now() + GALLERY_WAIT_LIMITS.updateTimeoutMs;
+  const observe = async () => {
+    while (!stopped && Date.now() < deadline) {
       const current = await readGalleryPage(surface).catch(() => null);
+      if (stopped || Date.now() >= deadline) return false;
       if (galleryPageAdvanced(previousPage, current)) return true;
-      if (typeof surface.waitForTimeout !== "function") break;
-      await surface.waitForTimeout(250);
+      if (typeof surface.waitForTimeout !== "function") return false;
+      await surface.waitForTimeout(Math.min(250, Math.max(1, deadline - Date.now())));
     }
     return false;
+  };
+  try {
+    return await Promise.race([
+      observe().catch(() => false),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(false), GALLERY_WAIT_LIMITS.updateTimeoutMs);
+      }),
+    ]);
+  } finally {
+    stopped = true;
+    clearTimeout(timer);
   }
-
-  let previous = null;
-  if (typeof surface.locator === "function") {
-    const body = surface.locator("body");
-    if (typeof body?.innerText === "function") {
-      previous = await body.innerText().catch(() => null);
-    }
-  }
-  if (previous === null && typeof surface.evaluate === "function") {
-    previous = await surface.evaluate(() => document.body?.innerText ?? "").catch(() => null);
-  }
-  if (previous !== null && typeof surface.waitForFunction === "function") {
-    await surface
-      .waitForFunction((before) => (document.body?.innerText ?? "") !== before, previous, {
-        timeout: 5_000,
-      })
-      .catch(() => {});
-    return true;
-  }
-  if (typeof surface.waitForTimeout === "function") await surface.waitForTimeout(250);
-  return true;
 }
 
 function galleryPageAdvanced(previous, current) {
@@ -718,11 +760,12 @@ export function extractGallerySnapshot() {
   }
 }
 
-function inaccessibleGallery(message) {
-  const limitation = `Media Gallery discovery incomplete: ${message}.`;
+function inaccessibleGallery(error) {
+  const limitation = `Media Gallery discovery incomplete: ${error.message}`;
   return {
     complete: false,
     verdict: "red",
+    diagnostic: error.diagnostic,
     recordings: [],
     queue: [],
     displayedCount: null,
@@ -757,15 +800,15 @@ async function controlIsDisabled(control) {
   return (await control.getAttribute?.("aria-disabled")) === "true";
 }
 
-function publicError(error, page) {
+function publicErrorCode(error, page) {
   let currentUrl = "";
   try {
     currentUrl = typeof page?.url === "function" ? page.url() : "";
   } catch {
-    // A closed page has no reliable URL; the sanitized browser error remains useful.
+    // A closed page cannot establish session state.
   }
   if (isSignInUrl(currentUrl)) {
-    return "NTULearn session is not signed in; run npm run login, then retry Media Gallery discovery";
+    return "GALLERY_SESSION_UNAVAILABLE";
   }
-  return publicMediaError(error);
+  return error?.code ?? "GALLERY_DISCOVERY_FAILED";
 }

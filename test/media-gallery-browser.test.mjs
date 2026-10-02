@@ -709,3 +709,232 @@ function locator({ count, click = async () => {} }) {
     },
   };
 }
+
+test("trigger failures expose fixed actionable diagnostics without browser logs", async () => {
+  for (const [message, code] of [
+    [
+      "Timeout 30000ms exceeded: synthetic DOM title intercepts pointer events https://provider.test/ks/synthetic-private/player",
+      "GALLERY_TRIGGER_POINTER_INTERCEPTION",
+    ],
+    [
+      "synthetic-private browser failure https://provider.test/?sig=synthetic-private",
+      "GALLERY_TRIGGER_CLICK_FAILED",
+    ],
+  ]) {
+    const trigger = locator({
+      count: 1,
+      click: async () => {
+        throw new Error(message);
+      },
+    });
+    const page = {
+      goto: async () => {},
+      frames: () => [],
+      getByRole: () => trigger,
+      getByText: () => trigger,
+    };
+    const result = await readKalturaMediaGallery({ page, course: COURSE });
+    assert.equal(result.complete, false);
+    assert.equal(result.verdict, "red");
+    assert.equal(result.diagnostic.code, code);
+    assert.equal(result.diagnostic.stage, "trigger");
+    assert.match(result.limitation, /retry media discovery/i);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /synthetic-private|synthetic DOM|https?:|Timeout 30000/,
+    );
+  }
+});
+
+test("an unavailable pagination control has a different diagnostic from a clicked stalled catalogue", async () => {
+  await assert.rejects(
+    collectMediaGalleryPages({
+      readPage: async () => ({ displayedCount: 2, entries: [{}], hasMore: true }),
+      clickLoadMore: async () => false,
+    }),
+    (error) => {
+      assert.equal(error.code, "GALLERY_PAGINATION_CONTROL_UNAVAILABLE");
+      assert.equal(error.diagnostic.pagesRead, 1);
+      assert.equal(error.diagnostic.observedCount, 1);
+      assert.match(error.message, /retry media discovery/i);
+      return true;
+    },
+  );
+  let clicks = 0;
+  const result = await readKalturaMediaGallery({
+    page: diagnosticGalleryPage({
+      click: async () => {
+        clicks += 1;
+      },
+    }),
+    course: COURSE,
+  });
+  assert.equal(clicks, 1);
+  assert.equal(result.complete, false);
+  assert.equal(result.verdict, "red");
+  assert.equal(result.diagnostic.code, "GALLERY_PAGINATION_UPDATE_UNCONFIRMED");
+  assert.equal(result.diagnostic.pagesRead, 1);
+  assert.equal(result.diagnostic.displayedCount, 2);
+  assert.equal(result.diagnostic.observedCount, 1);
+  assert.equal(result.diagnostic.hasMore, true);
+  assert.doesNotMatch(result.limitation, /control was unavailable/i);
+  assert.doesNotMatch(JSON.stringify(result.diagnostic), /synthetic-private|https?:|title|entry:/);
+});
+
+test("pagination click failure remains red without retaining raw browser errors", async () => {
+  let options;
+  const result = await readKalturaMediaGallery({
+    page: diagnosticGalleryPage({
+      click: async (passed) => {
+        options = passed;
+        throw new Error("synthetic-private DOM https://provider.test/ks/synthetic-private/player");
+      },
+    }),
+    course: COURSE,
+  });
+  assert.equal(result.complete, false);
+  assert.equal(result.diagnostic.code, "GALLERY_PAGINATION_CLICK_FAILED");
+  assert.equal(result.diagnostic.control, "more");
+  assert.equal(options.timeout, result.diagnostic.clickTimeoutMs);
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-private|https?:|DOM/);
+});
+
+function diagnosticGalleryPage({ click }) {
+  const control = {
+    ...locator({ count: 1 }),
+    nth() {
+      return this;
+    },
+    textContent: async () => "Next page",
+    click,
+  };
+  const none = locator({ count: 0 });
+  const child = {
+    locator: () => locator({ count: 1 }),
+    evaluate: async () => ({
+      displayedCount: 2,
+      entries: [
+        {
+          id: "synthetic-private",
+          title: "Synthetic private title",
+          providerReference: "entry:synthetic-private",
+          visible: true,
+          published: true,
+          createdAt: "2026-10-03T00:00:00",
+        },
+      ],
+      hasMore: true,
+    }),
+    getByRole: (role, { name }) => (role === "button" && name.test("Next page") ? control : none),
+  };
+  const trigger = locator({ count: 1 });
+  return {
+    goto: async () => {},
+    frames: () => [child],
+    getByRole: () => trigger,
+    getByText: () => trigger,
+  };
+}
+
+test("an unresolved catalogue read ends at the logical update deadline without another click", async () => {
+  const page = diagnosticGalleryPage({
+    click: async () => {
+      clicks += 1;
+    },
+  });
+  let clicks = 0;
+  const child = page.frames()[0];
+  const read = child.evaluate;
+  let reads = 0;
+  let finishRead;
+  child.evaluate = async () =>
+    ++reads === 1
+      ? read()
+      : new Promise((resolve) => {
+          finishRead = resolve;
+        });
+  const started = Date.now();
+  const result = await readKalturaMediaGallery({ page, course: COURSE });
+  assert.equal(result.complete, false);
+  assert.equal(result.diagnostic.code, "GALLERY_PAGINATION_UPDATE_UNCONFIRMED");
+  assert.ok(Date.now() - started < result.diagnostic.updateTimeoutMs + 4000);
+  assert.equal(clicks, 1);
+  finishRead({ displayedCount: 2, entries: [], hasMore: false });
+  await setTimeout(10);
+  assert.equal(reads, 2);
+  assert.equal(clicks, 1);
+});
+
+test("Gallery diagnostics reach the course receipt while incomplete discovery retains the durable queue", async (t) => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { discoverCourseMedia } = await import("../src/media/workflow.mjs");
+  const { writeMediaQueue } = await import("../src/media/queue.mjs");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-gallery-diagnostic-retention-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const course = { ...COURSE, destination: join(root, "course") };
+  await mkdir(course.destination);
+  const source = join(course.destination, "source.json");
+  const edited = join(course.destination, "Lecture.transcript.md");
+  await writeFile(source, "Synthetic original source");
+  await writeFile(edited, "Student edited derivative");
+  const statePath = join(root, "state.json");
+  const appearance = {
+    recordingId: "synthetic-recording",
+    courseId: course.courseId,
+    provider: "kaltura",
+    title: "Lecture",
+    sourceKind: "media-gallery",
+    attempts: 3,
+    checkpoint: { at: "2026-10-03", reason: "Fixture" },
+    artifacts: { rawTranscript: source, formattedTranscript: edited },
+    placement: {
+      destination: course.destination,
+      formattedTranscriptPath: "Lecture.transcript.md",
+      statusPath: "Lecture.media-status.md",
+    },
+  };
+  const saved = await writeMediaQueue({
+    statePath,
+    course,
+    discovery: { complete: true, verdict: "green", queue: [appearance] },
+  });
+  const before = await readFile(saved.path, "utf8");
+  const page = diagnosticGalleryPage({ click: async () => {} });
+  const discovery = await discoverCourseMedia({
+    course,
+    client: {
+      readCourse: async () => ({ items: [] }),
+      withBrowserPage: async (read) => read(page),
+    },
+  });
+  assert.equal(discovery.complete, false);
+  assert.equal(discovery.verdict, "red");
+  assert.equal(discovery.diagnostic.code, "GALLERY_PAGINATION_UPDATE_UNCONFIRMED");
+  const published = await writeMediaQueue({ statePath, course, discovery });
+  assert.equal(published.status, "unchanged");
+  assert.equal(await readFile(saved.path, "utf8"), before);
+  assert.equal(await readFile(source, "utf8"), "Synthetic original source");
+  assert.equal(await readFile(edited, "utf8"), "Student edited derivative");
+  assert.match(await readFile(published.statusPath, "utf8"), /Verdict: red/);
+  assert.match(await readFile(published.statusPath, "utf8"), /retry media discovery/);
+});
+
+test("the pagination safety limit retains bounded page provenance and remains incomplete", async () => {
+  await assert.rejects(
+    collectMediaGalleryPages({
+      maxPages: 2,
+      readPage: async () => ({ displayedCount: 100, entries: [{}], hasMore: true }),
+      clickLoadMore: async () => ({ mode: "replace" }),
+    }),
+    (error) => {
+      assert.equal(error.code, "GALLERY_PAGINATION_LIMIT_REACHED");
+      assert.equal(error.diagnostic.pageLimit, 2);
+      assert.equal(error.diagnostic.pagesRead, 2);
+      assert.equal(error.diagnostic.hasMore, true);
+      assert.match(error.message, /retry media discovery/);
+      return true;
+    },
+  );
+});

@@ -62,6 +62,7 @@ const routes = {
       "src/media/disposition.mjs",
       "src/media/gallery.mjs",
       "src/media/gallery-browser.mjs",
+      "src/media/gallery-diagnostic.mjs",
       "src/media/workflow.mjs",
     ],
     [
@@ -74,6 +75,7 @@ const routes = {
       "test/media-disposition.test.mjs",
       "test/media-gallery.test.mjs",
       "test/media-gallery-browser.test.mjs",
+      "test/media-gallery-diagnostic.test.mjs",
       "test/media-workflow.test.mjs",
     ],
   ],
