@@ -1,13 +1,54 @@
-import { createHash } from "node:crypto";
-import { link, readFile, rename, stat, unlink } from "node:fs/promises";
+import { Buffer } from "node:buffer";
+import { createHash, randomUUID } from "node:crypto";
+import { link, lstat, readFile, rename, stat, unlink } from "node:fs/promises";
 import { writeAtomically } from "../atomic.mjs";
 
 export { writeAtomically };
 
-export async function writeIfChanged(path, content) {
-  if ((await readText(path)) === content) return false;
-  await writeAtomically(path, content);
+export async function writeWithoutReplacing(path, content) {
+  const body = Buffer.from(content);
+  try {
+    if (await identicalOrAbsent(path, body)) return false;
+    const partial = `${path}.part-${randomUUID()}`;
+    try {
+      await writeAtomically(partial, body);
+      try {
+        await link(partial, path);
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (await identicalOrAbsent(path, body)) return false;
+        throw destinationConflict();
+      }
+      return true;
+    } finally {
+      await unlink(partial).catch(missingAsNull);
+    }
+  } catch (error) {
+    if (error.code === "SYNC_FILE_CONFLICT") throw error;
+    const failure = new Error(
+      "Course file could not be safely inspected or published. Restore or repair the destination directory and permissions, or choose a filesystem supporting exclusive hard-link publication before retrying; sync will not replace existing files.",
+      { cause: error },
+    );
+    failure.code = error.code;
+    throw failure;
+  }
+}
+
+async function identicalOrAbsent(path, body) {
+  const info = await lstat(path).catch(missingAsNull);
+  if (!info) return false;
+  if (!info.isFile()) throw destinationConflict();
+  const existing = await readFile(path);
+  if (!existing.equals(body)) throw destinationConflict();
   return true;
+}
+
+function destinationConflict() {
+  const error = new Error(
+    "This destination already holds different bytes. Existing file was retained. Compare it with NTULearn and choose an empty destination before retrying; sync will not replace or rename it.",
+  );
+  error.code = "SYNC_FILE_CONFLICT";
+  return error;
 }
 
 export async function isFilePresent(path, expectedBytes) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import {
   moveDirectory,
   relinkFile,
   writeAtomically,
-  writeIfChanged,
+  writeWithoutReplacing,
 } from "../src/sync/files.mjs";
 
 function workspace() {
@@ -28,13 +28,13 @@ test("leaves no partial file behind", async () => {
   assert.deepEqual(await readdir(root), ["a.md"]);
 });
 
-test("rewrites only when the content differs", async () => {
+test("claims absent files and refuses different occupied bytes", async () => {
   const root = await workspace();
   const path = join(root, "a.md");
-  assert.equal(await writeIfChanged(path, "one"), true);
-  assert.equal(await writeIfChanged(path, "one"), false);
-  assert.equal(await writeIfChanged(path, "two"), true);
-  assert.equal(await readFile(path, "utf8"), "two");
+  assert.equal(await writeWithoutReplacing(path, "one"), true);
+  assert.equal(await writeWithoutReplacing(path, "one"), false);
+  await assert.rejects(writeWithoutReplacing(path, "two"), { code: "SYNC_FILE_CONFLICT" });
+  assert.equal(await readFile(path, "utf8"), "one");
 });
 
 test("matches an existing file by size, and reports a missing one as no match", async () => {
@@ -86,4 +86,56 @@ test("refuses to move a directory onto a name that holds anything", async () => 
   assert.equal(took, false);
   assert.deepEqual(await readdir(join(at, "01 Week 1")), ["01 Slides.pdf"]);
   assert.deepEqual(await readdir(join(at, "02 Week 1")), []);
+});
+
+test("racing empty-path claims never replace the winning bytes and clean their own partials", async () => {
+  const root = await workspace();
+  const path = join(root, "race.bin");
+  const outcomes = await Promise.allSettled([
+    writeWithoutReplacing(path, "first"),
+    writeWithoutReplacing(path, "second"),
+  ]);
+  assert.equal(
+    outcomes.filter((result) => result.status === "fulfilled" && result.value === true).length,
+    1,
+  );
+  assert.equal(
+    outcomes.filter(
+      (result) => result.status === "rejected" && result.reason.code === "SYNC_FILE_CONFLICT",
+    ).length,
+    1,
+  );
+  assert.ok(["first", "second"].includes(await readFile(path, "utf8")));
+  assert.deepEqual(await readdir(root), ["race.bin"]);
+});
+
+test("preserves an occupied directory rather than treating it as an empty filename", async () => {
+  const root = await workspace();
+  const path = join(root, "Notes.md");
+  await mkdir(path);
+  await writeFile(join(path, "owned.txt"), "retained");
+  await assert.rejects(writeWithoutReplacing(path, "new note"), { code: "SYNC_FILE_CONFLICT" });
+  assert.equal(await readFile(join(path, "owned.txt"), "utf8"), "retained");
+  assert.deepEqual(await readdir(root), ["Notes.md"]);
+});
+
+test("explains blocked exclusive publication and retries after directory repair", async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const parent = join(root, "occupied");
+  const path = join(parent, "Notes.md");
+  await writeFile(parent, "retained original");
+  await assert.rejects(
+    writeWithoutReplacing(path, "note"),
+    (error) =>
+      error.code === "ENOTDIR" &&
+      error.cause?.code === "ENOTDIR" &&
+      /repair.*directory.*exclusive/i.test(error.message),
+  );
+  assert.equal(await readFile(parent, "utf8"), "retained original");
+  await rm(parent);
+  await mkdir(parent);
+  assert.equal(await writeWithoutReplacing(path, "note"), true);
+  assert.equal(await writeWithoutReplacing(path, "note"), false);
+  assert.deepEqual(await readdir(parent), ["Notes.md"]);
 });

@@ -116,7 +116,7 @@ cp config/courses.example.json config/courses.json
 |-------|----------|------------|
 | `courses[].key` | yes | What you type at `npm run sync -- <key>`. Matched case-insensitively, and must be unique across the file under that same matching. The course code is the obvious choice. |
 | `courses[].courseId` | yes | NTULearn's own identifier for the course, of the form `_1234567_1`. Run `npm run discover` to list the ones you can see. |
-| `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. No two courses may share one, or nest one inside another. |
+| `courses[].destination` | yes | Where the files land. Absolute, or relative to the repository root. No two courses may share one, or nest one inside another, including physical aliases. A standalone root alias is allowed. |
 | `profilePath` | no | The saved browser session. Defaults to `.data/chrome-profile`. |
 | `statePath` | no | What has already been downloaded. Defaults to `.data/state.json`. |
 | `driveMountPath` | no (watchdog yes) | The Google Drive mount that contains the destinations. Before writing, the watchdog requires both this directory and each destination's first Drive root below it to be present. |
@@ -267,11 +267,19 @@ afterwards is hand work.
 ## What a sync does
 
 Incremental and **additive**: unchanged downloads are skipped, and nothing is ever deleted, so a
-run that sees less than the last one leaves the earlier files where they are. Your own files in a
-destination are safe for the same reason — `docs/adr/0003` argues it. Page text and
+run that sees less than the last one leaves the earlier files where they are. Occupied course files
+are retained: differing downloaded bytes or generated text produce an actionable failure and a partial
+receipt, including annotated stand-ins and earlier-number placements. Sync does not overwrite them,
+create rescue copies or rename anything. Compare the retained file with NTULearn and choose an empty
+destination before retrying — [ADR-0016](docs/adr/0016-occupied-course-files-require-manual-conflict-resolution.md).
+Identical bytes are accepted without a write. Recorded actual byte counts avoid repeated downloads
+when upstream sizes are inaccurate; these cached size checks do not prove content freshness or
+integrity. Legacy records without byte counts are fetched and compared again. Page text and
 announcements become Markdown; attachments keep their original file type. Each course gets a
 `Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
-numbered folders in NTULearn's own order.
+numbered folders in NTULearn's own order. `Sync status.json`, `Last synced.md` and separate media
+status publications remain machine-owned operational records and are rewritten; keep annotations
+in course artifacts instead.
 
 A file already in the destination under an earlier number is left where it is rather than written a
 second time. A name carries its item's position in the course, so one item inserted upstream moves

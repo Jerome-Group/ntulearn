@@ -11,10 +11,10 @@ offline operational observations: `npm run health`, `npm run status`.
 |------|------------------|-------------|
 | Commands | The CLI — `login`, `discover`, `watchdog`, `sync`, `verify`, `renumber`, `media:discover`, `media:worker`, and `media:withdraw` — the `npm run` scripts that reach it, what one course refusing does to the rest of a run, and how a line gets out before the process exits | `src/cli.mjs`, `src/watchdog/`, `src/courses.mjs`, `src/output.mjs`, `package.json` |
 | Capabilities | Machine command/feature index, shared CI/agent checks and bounded offline health/status evidence | `src/capabilities/`, `npm run capabilities`, `npm run check` |
-| Configuration | Reading `config/courses.json` — which courses sync, and where each one goes. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
+| Configuration | Reading `config/courses.json` — which courses sync, where each one goes and physical course-tree overlap checks. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | NTULearn | Everything that speaks to NTULearn: the saved session, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Media workflow | Explicit media modes, RAID0 runtime/setup, Kaltura/YouTube/direct content-tree and Media Gallery discovery, durable queue handoff, production provider composition, pure media job, and artifact storage | `src/media/`, `npm run media:setup`, `npm run media:discover`, `npm run media:worker` |
-| Sync | Everything that has a destination in hand: the course walk and its portable receipt, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |
+| Sync | Everything that has a destination in hand: the course walk and its portable receipt, occupied-file conflict protection, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
 | Scratch destinations | Destinations this repository owns, for trying something against a course without writing into a real one. Ignored, never committed | `.scratch/` (untracked) |
 | Tests | One file per module under test, plus the two that spawn the CLI to check what only a process shows | `test/` |

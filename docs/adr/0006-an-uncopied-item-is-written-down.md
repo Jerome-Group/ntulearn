@@ -1,5 +1,10 @@
 # An uncopied item is written down
 
+> Partially superseded by [ADR-0016](0016-occupied-course-files-require-manual-conflict-resolution.md):
+> **A document is never written over a page** and the replacement/marker consequences no longer
+> permit correcting or replacing an occupied stand-in. Stand-ins, their marker and retaining an
+> earlier page remain unchanged.
+
 A content item that carries no text, no link and no attachment gets a Markdown document of its own
 anyway — named and numbered exactly as any other item would be — saying what it is and that there
 was nothing to copy. Nothing NTULearn returns leaves the destination without a trace of having

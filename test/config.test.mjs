@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, lstat, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -279,3 +279,55 @@ function mediaSetup() {
     },
   };
 }
+
+test("rejects physical aliases and missing nested destinations without creating them", async (t) => {
+  const root = await repositoryWith(JSON.stringify({ courses: [] }));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "actual"));
+  await symlink(join(root, "actual"), join(root, "alias"));
+  for (const [first, second] of [
+    ["actual", "alias"],
+    ["actual", "alias/missing/child"],
+    ["actual/missing", "alias/missing/child"],
+  ]) {
+    await writeFile(
+      join(root, "config/courses.json"),
+      JSON.stringify({
+        courses: [
+          { key: "ONE", courseId: "one", destination: first },
+          { key: "TWO", courseId: "two", destination: second },
+        ],
+      }),
+    );
+    await assert.rejects(loadConfig(root), /share a destination|inside course/);
+    await assert.rejects(lstat(join(root, "actual/missing")), { code: "ENOENT" });
+  }
+  await writeFile(
+    join(root, "config/courses.json"),
+    JSON.stringify({ courses: [{ key: "ONE", courseId: "one", destination: "alias" }] }),
+  );
+  assert.equal((await loadConfig(root)).courses[0].destination, join(root, "alias"));
+});
+
+test("explains an occupied destination ancestor and retries after folder repair", async (t) => {
+  const root = await repositoryWith(
+    JSON.stringify({
+      courses: [{ key: "ONE", courseId: "one", destination: "occupied/child" }],
+    }),
+  );
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const parent = join(root, "occupied");
+  await writeFile(parent, "retained original");
+  await assert.rejects(
+    loadConfig(root),
+    (error) =>
+      error.code === "ENOTDIR" &&
+      error.cause?.code === "ENOTDIR" &&
+      /restore.*repair.*configured.*directory/i.test(error.message),
+  );
+  assert.equal(await readFile(parent, "utf8"), "retained original");
+  await rm(parent);
+  await mkdir(parent);
+  assert.equal((await loadConfig(root)).courses[0].destination, join(parent, "child"));
+  await assert.rejects(lstat(join(parent, "child")), { code: "ENOENT" });
+});
