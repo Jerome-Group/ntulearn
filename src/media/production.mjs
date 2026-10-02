@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { openClient } from "../ntulearn/client.mjs";
+import { runMediaProcess } from "./process.mjs";
 import { runMediaJob } from "./job.mjs";
 import { createProductionLocalModels } from "./production-local.mjs";
 import { createProductionProviders } from "./production-providers.mjs";
@@ -9,6 +10,7 @@ import { mediaWorkerExitCode, runMediaQueue } from "./worker.mjs";
 
 export async function runProductionMedia({
   config,
+  signalProcessGroup,
   mode = "scheduled",
   verifyRuntime = verifyMediaRuntime,
   createJobRunner = createProductionJobRunner,
@@ -27,7 +29,7 @@ export async function runProductionMedia({
   };
   const runJob = async (appearance, context) => {
     if (appearance.provider === "unsupported") return unsupportedResult(appearance);
-    runner ??= await createJobRunner({ config, runtime });
+    runner ??= await createJobRunner({ config, runtime, signalProcessGroup });
     return runner.run(appearance, context);
   };
 
@@ -53,13 +55,18 @@ export async function runProductionMedia({
   }
 }
 
-export async function createProductionJobRunner({ config, runtime, open = openClient }) {
+export async function createProductionJobRunner({
+  config,
+  runtime,
+  signalProcessGroup,
+  open = openClient,
+}) {
   if (!runtime?.runtime) {
     throw new Error(
       "Production media composition needs a verified runtime. Run: npm run media:setup",
     );
   }
-  const context = productionContext(config, runtime.runtime);
+  const context = productionContext(config, runtime.runtime, signalProcessGroup);
   const providers = createProductionProviders(context);
   const local = createProductionLocalModels(context);
   const storage = createMediaStorage({ mediaRoot: config.media.mediaRoot });
@@ -87,11 +94,13 @@ export async function createProductionJobRunner({ config, runtime, open = openCl
   };
 }
 
-function productionContext(config, paths) {
+function productionContext(config, paths, signalProcessGroup) {
   const setup = config.media.setup;
   return {
     setup,
     paths,
+    runProcess: (command, argumentsFor, options) =>
+      runMediaProcess(command, argumentsFor, { ...options, signalProcessGroup }),
     commands: {
       ffmpeg: join(paths.bin, setup.mediaTool.filename),
       ffprobe: config.media.tools.ffprobe,

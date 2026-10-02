@@ -1,8 +1,8 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isGlobalMediaSafetyFailure } from "./errors.mjs";
 import { createLocalTranscriber } from "./asr.mjs";
 import { cleanLocalFormatterOutput, createLocalFormatter } from "./formatter.mjs";
-import { runMediaProcess } from "./process.mjs";
 import { assertFormattedTranscript } from "./transcript.mjs";
 import { transcriptSegmentTime } from "./production-values.mjs";
 
@@ -25,24 +25,41 @@ export function createProductionLocalModels(context) {
   };
 }
 
-async function transcribe({ media, signal }, { paths, commands, models }) {
+async function transcribe({ media, signal }, { paths, commands, models, runProcess }) {
   const directory = await mkdtemp(join(paths.work, "asr-"));
   const audio = join(directory, "audio.flac");
   const output = join(directory, "transcript");
+  let cleanupConfirmed = true;
   try {
-    await runMediaProcess(
+    await runProcess(
       commands.ffmpeg,
-      ["-y", "-i", media.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "flac", audio],
+      [
+        "-nostats",
+        "-y",
+        "-i",
+        media.path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "flac",
+        audio,
+      ],
       { signal, timeoutMs: 4 * HOUR_MS, label: "ASR audio extraction" },
     );
-    await runMediaProcess(
+    await runProcess(
       commands.whisper,
       ["-m", models.asr, "-f", audio, "-oj", "-of", output, "-np", "-l", "auto"],
       { signal, timeoutMs: 8 * HOUR_MS, label: "Whisper transcription" },
     );
     return normalizeWhisper(JSON.parse(await readFile(`${output}.json`, "utf8")));
+  } catch (error) {
+    cleanupConfirmed = error.code !== "MEDIA_PROCESS_CLEANUP";
+    throw error;
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (cleanupConfirmed) await rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -72,12 +89,13 @@ function normalizeWhisper(result) {
   };
 }
 
-async function format({ prompt, text, segments, signal }, { paths, commands, models }) {
+async function format({ prompt, text, segments, signal }, { paths, commands, models, runProcess }) {
   const directory = await mkdtemp(join(paths.work, "format-"));
   const promptFile = join(directory, "prompt.txt");
   await writeFile(promptFile, prompt, "utf8");
+  let cleanupConfirmed = true;
   try {
-    const result = await runMediaProcess(
+    const result = await runProcess(
       commands.llama,
       [
         "-m",
@@ -96,7 +114,12 @@ async function format({ prompt, text, segments, signal }, { paths, commands, mod
         "off",
         "--single-turn",
       ],
-      { signal, timeoutMs: 20 * 60 * 1_000, label: "Local transcript formatting" },
+      {
+        signal,
+        timeoutMs: 20 * 60 * 1_000,
+        label: "Local transcript formatting",
+        stdoutMaxBytes: 1024 * 1024,
+      },
     );
     const markdown = cleanLocalFormatterOutput(result.stdout, prompt)
       .replace(/<think>[\s\S]*?<\/think>/gi, "")
@@ -107,10 +130,12 @@ async function format({ prompt, text, segments, signal }, { paths, commands, mod
       return fallback(text, "Local formatter output failed lexical preservation checks");
     }
   } catch (error) {
-    if (signal?.aborted) throw error;
+    cleanupConfirmed = error.code !== "MEDIA_PROCESS_CLEANUP";
+    if (signal?.aborted || isGlobalMediaSafetyFailure(error) || error.code === "MEDIA_OUTPUT_LIMIT")
+      throw error;
     return fallback(text, "Local formatter failed");
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (cleanupConfirmed) await rm(directory, { recursive: true, force: true });
   }
 }
 
