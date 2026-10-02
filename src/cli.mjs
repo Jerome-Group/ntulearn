@@ -15,6 +15,7 @@ import { walkCourses } from "./courses.mjs";
 import { discoverContentRecordings } from "./media/discovery.mjs";
 import { discoverCourseMedia } from "./media/workflow.mjs";
 import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
+import { withMediaQueueLock } from "./media/lock.mjs";
 import { writeMediaCourseStatus } from "./media/status.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
@@ -130,23 +131,28 @@ async function mediaWorker(config, mode = "scheduled") {
 }
 
 async function mediaDiscover(config, key) {
-  const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
-    const discovery = await discoverCourseMedia({ client, course });
-    if (!discovery.skipped) {
-      const saved = await writeMediaQueue({
-        statePath: config.statePath,
-        course,
-        discovery,
+  return withMediaQueueLock({
+    statePath: config.statePath,
+    run: async () => {
+      const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
+        const discovery = await discoverCourseMedia({ client, course });
+        if (!discovery.skipped) {
+          const saved = await writeMediaQueue({
+            statePath: config.statePath,
+            course,
+            discovery,
+          });
+          discovery.queuePath = saved.path;
+        } else {
+          const status = await writeMediaCourseStatus({ course, discovery });
+          if (status) discovery.statusPath = status.path;
+        }
+        return discovery;
       });
-      discovery.queuePath = saved.path;
-    } else {
-      const status = await writeMediaCourseStatus({ course, discovery });
-      if (status) discovery.statusPath = status.path;
-    }
-    return discovery;
+      await writeLine(stdout, asJson({ courses, ...(refused.length ? { refused } : {}) }));
+      return courses.some((course) => course.complete === false) ? 1 : 0;
+    },
   });
-  await writeLine(stdout, asJson({ courses, ...(refused.length ? { refused } : {}) }));
-  return courses.some((course) => course.complete === false) ? 1 : 0;
 }
 
 async function mediaWithdraw(config, key, recordingId, confirmation) {
@@ -154,27 +160,32 @@ async function mediaWithdraw(config, key, recordingId, confirmation) {
     throw new Error("Usage: npm run media:withdraw -- <course> <recordingId> confirm");
   }
   const course = selectCourses(config.courses, key)[0];
-  const loaded = await readMediaQueue({
+  return withMediaQueueLock({
     statePath: config.statePath,
-    courseKey: course.key,
-    course,
+    run: async () => {
+      const loaded = await readMediaQueue({
+        statePath: config.statePath,
+        courseKey: course.key,
+        course,
+      });
+      if (!loaded.record || !Array.isArray(loaded.record.queue)) {
+        throw new Error(
+          `No durable media queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
+        );
+      }
+      const saved = await writeMediaQueue({
+        statePath: config.statePath,
+        course,
+        discovery: loaded.record,
+        withdrawal: { recordingId, confirmed: true },
+      });
+      await writeLine(
+        stdout,
+        asJson({ courseKey: course.key, recordingId, status: saved.status, queuePath: saved.path }),
+      );
+      return saved.status === "not-found" ? 1 : 0;
+    },
   });
-  if (!loaded.record || !Array.isArray(loaded.record.queue)) {
-    throw new Error(
-      `No durable media queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
-    );
-  }
-  const saved = await writeMediaQueue({
-    statePath: config.statePath,
-    course,
-    discovery: loaded.record,
-    withdrawal: { recordingId, confirmed: true },
-  });
-  await writeLine(
-    stdout,
-    asJson({ courseKey: course.key, recordingId, status: saved.status, queuePath: saved.path }),
-  );
-  return saved.status === "not-found" ? 1 : 0;
 }
 
 async function watchdogLocked(config) {

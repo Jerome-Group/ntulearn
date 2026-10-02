@@ -53,6 +53,8 @@ const routes = {
   ],
   "media-discovery": [
     [
+      "src/cli.mjs",
+      "src/media/lock.mjs",
       "src/media/discovery.mjs",
       "src/media/classification.mjs",
       "src/media/external.mjs",
@@ -62,6 +64,8 @@ const routes = {
       "src/media/workflow.mjs",
     ],
     [
+      "test/cli.test.mjs",
+      "test/media-lock.test.mjs",
       "test/media-discovery.test.mjs",
       "test/media-classification.test.mjs",
       "test/media-external.test.mjs",
@@ -134,12 +138,20 @@ const routes = {
   ],
   "media-storage": [
     [
+      "src/cli.mjs",
+      "src/media/lock.mjs",
       "src/media/storage.mjs",
       "src/media/status.mjs",
       "src/media/queue.mjs",
       "src/media/completeness.mjs",
     ],
-    ["test/media-storage.test.mjs", "test/media-status.test.mjs", "test/media-queue.test.mjs"],
+    [
+      "test/media-storage.test.mjs",
+      "test/media-status.test.mjs",
+      "test/media-queue.test.mjs",
+      "test/cli.test.mjs",
+      "test/media-lock.test.mjs",
+    ],
   ],
   "media-worker": [
     [
@@ -305,7 +317,7 @@ const commands = [
     "media-discover",
     "media:discover",
     "media-discovery",
-    livePrerequisites,
+    [...livePrerequisites, "media-queue-lock"],
     { ...live, writes: ["media-queues", "course-media-status"] },
     { arguments: courseArgument, risk: "live-session" },
   ),
@@ -363,7 +375,12 @@ const commands = [
     "media-withdraw",
     "media:withdraw",
     "media-storage",
-    ["configured-courses", "durable-media-queue", "Owner-withdrawal-confirmation"],
+    [
+      "configured-courses",
+      "durable-media-queue",
+      "media-queue-lock",
+      "Owner-withdrawal-confirmation",
+    ],
     { reads: ["media-queue"], writes: ["media-queue", "course-media-status"], ownerOnly: true },
     {
       arguments: ["<course>", "<recordingId>", "confirm"],
