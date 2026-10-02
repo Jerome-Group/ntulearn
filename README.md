@@ -314,11 +314,14 @@ independent worker digest never changes `sync` or `verify`'s completeness verdic
 withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a
 completed appearance.
 
-Media runtime subprocesses stay in their original owned POSIX process group. Timeout,
+The media runner owns the original POSIX process group. Supported runtimes keep descendants
+in that group. Timeout,
 checkpoint and output overflow request `SIGTERM`, allow 250 ms grace, then request `SIGKILL`
 if the group remains; forced cleanup confirmation is bounded to a further 1,000 ms. The
-checkpoint reason survives only after that group is confirmed absent. Unconfirmed cleanup
-stops the worker globally and preserves scratch files for inspection. Output capture defaults
+checkpoint reason remains the primary error only after that group is confirmed absent. Unconfirmed
+cleanup stops the worker globally and preserves scratch files for inspection; its error retains the
+exact initiating failure as non-enumerable `originalReason`, separately from the cleanup `cause`.
+That diagnostic property does not permit checkpoint recovery after unsafe cleanup. Output capture defaults
 to 8 MiB stdout and 256 KiB stderr, with smaller protocol-specific stdout bounds; overflow
 fails rather than returning truncated successful output.
 
@@ -327,6 +330,12 @@ Runtime daemonization or descendants creating another session/process group (inc
 successful parent and are outside the original-group evidence: successful cleanup does not
 prove exhaustive orphan recovery. Safely supervising those runtimes requires a separate
 execution design; broad process scans or unrelated-process kills are not a recovery mechanism.
+The [platform boundary](docs/research/detached-process-containment.md) records why ancestry polling
+and stock macOS process notifications cannot establish arbitrary-descendant ownership.
+`node --test test/media-process-boundary.test.mjs` reproduces timeout/checkpoint escapes with closed
+and inherited pipes, while checking original-group cancellation and an unrelated sentinel. Its
+explicit `independentlyDetached: failed/unsupported` evidence keeps that limitation visible; a
+passing boundary test is not a passing universal termination criterion.
 
 ## Scheduling the media worker
 

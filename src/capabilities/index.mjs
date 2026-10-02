@@ -198,6 +198,7 @@ const routes = {
       "test/media-production.test.mjs",
       "test/media-lock.test.mjs",
       "test/media-process.test.mjs",
+      "test/media-process-boundary.test.mjs",
       "test/media-capacity.test.mjs",
       "test/media-capacity-monitor.test.mjs",
       "test/media-capacity-deadline.test.mjs",

@@ -153,6 +153,7 @@ export function runMediaProcess(command, argumentsFor, options) {
       );
       error.code = "MEDIA_PROCESS_CLEANUP";
       error.globalSafety = true;
+      Object.defineProperty(error, "originalReason", { value: failure, configurable: true });
       return error;
     }
 
@@ -164,12 +165,14 @@ export function runMediaProcess(command, argumentsFor, options) {
       child.stdout.destroy();
       child.stderr.destroy();
       if (error?.code === "MEDIA_PROCESS_CLEANUP") child.unref();
-      if (error) reject(error);
+      if (error !== undefined) reject(error);
       else resolve(result);
     }
   });
 }
 
 function interruptionFor(signal, label) {
-  return signal.reason ?? new Error(`${label} interrupted. Retry in the next media worker window.`);
+  return signal.reason !== undefined
+    ? signal.reason
+    : new Error(`${label} interrupted. Retry in the next media worker window.`);
 }

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import test from "node:test";
 import { runMediaProcess } from "../src/media/process.mjs";
@@ -33,6 +36,82 @@ test("does not start a provider subprocess after its checkpoint signal already f
       signalProcessGroup,
     }),
     (error) => error === checkpoint,
+  );
+});
+
+for (const reason of [0, false, "", null]) {
+  test(`preserves aborted reason ${JSON.stringify(reason)} before spawning`, async () => {
+    const controller = new globalThis.AbortController();
+    controller.abort(reason);
+    await assert.rejects(
+      runMediaProcess("command-that-must-not-start", [], {
+        signal: controller.signal,
+        timeoutMs: 1000,
+        label: "fixture provider",
+        signalProcessGroup,
+      }),
+      (error) => {
+        assert.equal(error, reason);
+        return true;
+      },
+    );
+  });
+
+  test(`preserves aborted reason ${JSON.stringify(reason)} after spawning`, async () => {
+    const controller = new globalThis.AbortController();
+    const running = run("setTimeout(()=>process.exit(),150)", {
+      signal: controller.signal,
+      timeoutMs: 1000,
+    });
+    controller.abort(reason);
+    await assert.rejects(running, (error) => {
+      assert.equal(error, reason);
+      return true;
+    });
+  });
+
+  test(`unsafe cleanup retains aborted reason ${JSON.stringify(reason)}`, async () => {
+    const controller = new globalThis.AbortController();
+    const running = run("setTimeout(()=>process.exit(),150)", {
+      signal: controller.signal,
+      timeoutMs: 1000,
+      cleanupMs: 50,
+      signalProcessGroup(pid, signal) {
+        if (signal === 0) return true;
+        return signalProcessGroup(pid, signal);
+      },
+    });
+    controller.abort(reason);
+    await assert.rejects(running, (error) => {
+      assert.equal(error.code, "MEDIA_PROCESS_CLEANUP");
+      assert.equal(error.globalSafety, true);
+      assert.equal(error.originalReason, reason);
+      return true;
+    });
+  });
+}
+
+test("default native abort reasons remain exact before and after spawning", async () => {
+  for (const alreadyAborted of [true, false]) {
+    const controller = new globalThis.AbortController();
+    if (alreadyAborted) controller.abort(undefined);
+    const running = run("setTimeout(()=>process.exit(),150)", {
+      signal: controller.signal,
+      timeoutMs: 1000,
+    });
+    if (!alreadyAborted) controller.abort(undefined);
+    assert.equal(controller.signal.reason.name, "AbortError");
+    await assert.rejects(running, (error) => error === controller.signal.reason);
+  }
+});
+
+test("missing abort reason uses the actionable interruption fallback", async () => {
+  await assert.rejects(
+    runMediaProcess("command-that-must-not-start", [], {
+      signal: { aborted: true },
+      label: "fixture provider",
+    }),
+    /fixture provider interrupted.*Retry in the next media worker window/,
   );
 });
 
@@ -116,9 +195,9 @@ for (const stream of ["stdout", "stderr"]) {
   });
 }
 
-test("unconfirmed cleanup overrides a checkpoint with global safety", async () => {
+test("unconfirmed cleanup preserves the checkpoint while overriding recovery with global safety", async () => {
   const controller = new globalThis.AbortController();
-  const reason = new Error("checkpoint fixture");
+  const reason = new Error("private checkpoint fixture");
   reason.code = "MEDIA_CHECKPOINT";
   const running = run("setTimeout(()=>process.exit(),150)", {
     signal: controller.signal,
@@ -130,10 +209,53 @@ test("unconfirmed cleanup overrides a checkpoint with global safety", async () =
   });
   await setTimeout(30);
   controller.abort(reason);
-  await assert.rejects(
-    running,
-    (error) => error.globalSafety === true && error.code === "MEDIA_PROCESS_CLEANUP",
-  );
+  await assert.rejects(running, (error) => {
+    assert.equal(error.globalSafety, true);
+    assert.equal(error.code, "MEDIA_PROCESS_CLEANUP");
+    assert.equal(error.originalReason, reason);
+    assert.equal(error.cause, undefined);
+    assert.equal(Object.hasOwn(error, "originalReason"), true);
+    assert.equal(Object.propertyIsEnumerable.call(error, "originalReason"), false);
+    assert.doesNotMatch(error.message, /private checkpoint fixture/);
+    assert.doesNotMatch(JSON.stringify(error), /originalReason|private checkpoint fixture/);
+    return true;
+  });
+});
+
+test("cleanup denial preserves its cause and exact checkpoint without serializing either", async () => {
+  const controller = new globalThis.AbortController();
+  const reason = Object.assign(new Error("private checkpoint fixture"), {
+    code: "MEDIA_CHECKPOINT",
+    privateFixture: "private checkpoint detail",
+  });
+  const denial = Object.assign(new Error("private cleanup fixture"), {
+    code: "EPERM",
+    privateFixture: "private cleanup detail",
+  });
+  const groups = [];
+  const running = run("setTimeout(()=>process.exit(),150)", {
+    signal: controller.signal,
+    timeoutMs: 1000,
+    signalProcessGroup(pid, signal) {
+      groups.push(pid);
+      if (signal === "SIGTERM") {
+        signalProcessGroup(pid, "SIGKILL");
+        throw denial;
+      }
+      return signalProcessGroup(pid, signal);
+    },
+  });
+  controller.abort(reason);
+  await assert.rejects(running, (error) => {
+    assert.equal(error.code, "MEDIA_PROCESS_CLEANUP");
+    assert.equal(error.globalSafety, true);
+    assert.equal(error.originalReason, reason);
+    assert.equal(error.cause, denial);
+    assert.doesNotMatch(error.message, /private/);
+    assert.doesNotMatch(JSON.stringify(error), /originalReason|cause|private/);
+    return true;
+  });
+  assert.equal(groups.length, 1);
 });
 
 test("owned group signals never target an unrelated process", async () => {
@@ -200,8 +322,13 @@ test("transient cleanup probe denial never becomes false evidence of cleanup", a
 });
 
 test("a separately detached descendant is outside original-group cleanup evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ntulearn-owned-escape-"));
+  const stopPath = join(directory, "stop");
+  const leaf = `const fs=require('node:fs');
+    setInterval(()=>{if(fs.existsSync(process.argv[1]))process.exit()},20);
+    setTimeout(()=>process.exit(),1800);`;
   const script = `const {spawn}=require('node:child_process');
-    const child=spawn(process.execPath,['-e','setTimeout(()=>process.exit(),1800)'],{detached:true,stdio:'ignore'});
+    const child=spawn(process.execPath,['-e',${JSON.stringify(leaf)},${JSON.stringify(stopPath)}],{detached:true,stdio:'ignore'});
     child.unref();console.log(child.pid);`;
   const groups = [];
   let escapedPid;
@@ -219,14 +346,25 @@ test("a separately detached descendant is outside original-group cleanup evidenc
     assert.ok(groups.length > 0);
     assert.ok(groups.every((pid) => pid !== escapedPid));
   } finally {
-    if (escapedPid) stopFixtureProcess(escapedPid);
+    try {
+      await writeFile(stopPath, "stop", { mode: 0o600 });
+      if (escapedPid) await waitForFixtureExit(escapedPid);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 
-function stopFixtureProcess(pid) {
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch (error) {
-    if (error.code !== "ESRCH") throw error;
+async function waitForFixtureExit(pid) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") return;
+      throw error;
+    }
+    await setTimeout(10);
   }
+  assert.fail("owned escaped fixture did not exit within its bound");
 }
