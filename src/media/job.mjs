@@ -1,10 +1,10 @@
-import { Buffer } from "node:buffer";
 import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
 import { providerForRecording } from "./external.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
 import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
 import { positiveDuration } from "./duration.mjs";
+import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
 
 const REGENERATION_LIMITATION = "Formatted transcript needs explicit regeneration (agent-led).";
 
@@ -91,9 +91,7 @@ export async function runMediaJob({
         if (nativeTranscript !== null && nativeTranscript !== undefined) {
           let providerBody;
           try {
-            const body = nativeBody(nativeTranscript);
-            assertSafeProviderTranscript(body);
-            providerBody = body;
+            providerBody = safeNativeTranscriptBody(nativeTranscript);
           } catch (error) {
             limitations.push(`Provider transcript rejected: ${publicMediaError(error)}.`);
           }
@@ -344,24 +342,6 @@ export async function runMediaJob({
       duration,
       speechDuration,
     });
-  }
-}
-
-function nativeBody(value) {
-  const body = value?.body ?? value?.content ?? value;
-  if (Buffer.isBuffer(body)) return body;
-  if (typeof body === "string") return body;
-  return Buffer.from(JSON.stringify(body));
-}
-
-function assertSafeProviderTranscript(body) {
-  const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
-  if (
-    /\b(?:ks|access_token|id_token|launch_token|launch|token|session|signature|cookie|state|sig)\s*=/i.test(
-      text,
-    )
-  ) {
-    throw new Error("provider transcript contains a session-bound address");
   }
 }
 
