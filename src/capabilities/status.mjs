@@ -35,12 +35,7 @@ export async function localStatus({
     discoveryIncomplete: 0,
     stale: 0,
     total: 0,
-    queued: 0,
-    active: 0,
-    checkpointed: 0,
-    completed: 0,
-    failed: 0,
-    withdrawn: 0,
+    ...countQueue([]),
   };
   for (const course of config.courses) {
     const receipt = await read(join(course.destination, IMPORT_STATUS_FILENAME), 16 * 1024);
@@ -77,7 +72,7 @@ export async function localStatus({
         ? "blocked"
         : "passed";
   const mediaStatus =
-    media.invalid || media.failed || media.discoveryIncomplete
+    media.invalid || media.failed || media.unresolved || media.discoveryIncomplete
       ? "failed"
       : media.missing || media.queued || media.active || media.checkpointed || media.stale
         ? "blocked"
