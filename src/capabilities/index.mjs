@@ -97,6 +97,7 @@ const routes = {
       "src/media/transcript.mjs",
       "src/media/caption-text.mjs",
       "src/media/formatter.mjs",
+      "src/media/formatter-output.mjs",
       "src/media/production-local.mjs",
     ],
     [
@@ -105,6 +106,8 @@ const routes = {
       "test/media-transcript.test.mjs",
       "test/media-caption-text.test.mjs",
       "test/media-formatter.test.mjs",
+      "test/media-formatter-output.test.mjs",
+      "test/media-production-local.test.mjs",
     ],
   ],
   "media-evaluation": [
