@@ -1,5 +1,9 @@
 # Recordings use a separate media workflow
 
+[ADR-0017](0017-transcript-formatting-preserves-source-wording.md) partially supersedes the
+formatting allowance for error correction and notation conversion; the separate workflow,
+source preservation, local models and storage decisions remain unchanged.
+
 `sync` stays the bounded additive walk it is. A separate media workflow discovers *recordings*
 through that same course walk and through each course's *Media Gallery*, then acquires media and
 transcripts through provider adapters. It keeps its own reconstructible queue and verdict: a green
