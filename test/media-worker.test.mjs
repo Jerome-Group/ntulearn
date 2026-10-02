@@ -713,6 +713,8 @@ async function writeQueue(statePath, course, recordingIds) {
           destination: course.destination ?? join(dirname(statePath), "course", course.key),
         },
         provider: recordingId.split("-")[0],
+        disposition: "recording",
+        classificationEvidence: "media",
       })),
     },
   });
@@ -1112,4 +1114,76 @@ test("capacity depletion cancels and confirms an owned runtime group before glob
   const retried = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
   assert.equal(retried[0].recordingId, held[0].recordingId);
   assert.ok(retried[0].attempts > held[0].attempts);
+});
+
+test("separates proven documents, unresolved tools and recording failures without acquiring exclusions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-dispositions-"));
+  const statePath = join(root, "state.json");
+  const course = { ...COURSE, destination: join(root, "course") };
+  const queue = [
+    {
+      recordingId: "document",
+      provider: "unsupported",
+      disposition: "non-recording",
+      classificationEvidence: "document",
+      complete: true,
+      transcript: { complete: true },
+    },
+    {
+      recordingId: "opaque",
+      provider: "unsupported",
+      stage: "failed",
+      attempts: 7,
+      lastError: "old file-shaped failure",
+    },
+    {
+      recordingId: "unsupported-video",
+      provider: "unsupported",
+      disposition: "recording",
+      classificationEvidence: "media",
+    },
+  ].map((job) => ({
+    ...job,
+    placement: {
+      destination: course.destination,
+      statusPath: `${job.recordingId}.media-status.md`,
+    },
+  }));
+  await writeMediaQueue({
+    statePath,
+    course,
+    discovery: { complete: true, verdict: "green", queue },
+  });
+  const acquired = [];
+  const digest = await runQueue({
+    statePath,
+    courses: [course],
+    mode: "manual",
+    runJob: async (job) => {
+      acquired.push(job.recordingId);
+      return {
+        complete: false,
+        stage: "failed",
+        verdict: "red",
+        retryable: false,
+        limitations: ["Unsupported positive recording. Inspect the source before retrying."],
+      };
+    },
+  });
+  assert.deepEqual(acquired, ["unsupported-video"]);
+  assert.equal(digest.counts.excluded, 1);
+  assert.equal(digest.counts.unresolved, 1);
+  assert.equal(digest.counts.failed, 1);
+  assert.equal(digest.counts.completed, 0);
+  assert.equal(digest.verdict, "red");
+  const held = (await readMediaQueue({ statePath, courseKey: course.key, course })).record.queue;
+  assert.equal(held.find((job) => job.recordingId === "opaque").attempts, 7);
+  const status = await readFile(join(course.destination, "Media Gallery/media-status.md"), "utf8");
+  assert.match(status, /Excluded non-recordings: 1/);
+  assert.match(status, /Unresolved appearances: 1/);
+  assert.match(status, /Complete: 0/);
+  assert.match(
+    await readFile(join(course.destination, "document.media-status.md"), "utf8"),
+    /no transcript completeness claimed/,
+  );
 });

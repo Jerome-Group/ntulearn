@@ -212,7 +212,8 @@ function ntulearnFileAdapter() {
     outputProvider: "unsupported",
     matches: ({ value, sourceKind }) =>
       ["attachment", "embedded-player"].includes(sourceKind) && isFileShape(value),
-    limitation: "NTULearn file-shaped reference is visible but is not a recording.",
+    limitation:
+      "NTULearn file-shaped reference is visible; recording disposition needs positive media or document metadata.",
   });
 }
 
@@ -348,13 +349,15 @@ function shapeDigest(value) {
   return createHash("sha256").update(shapeOf(value)).digest("hex").slice(0, 16);
 }
 
-function shapeOf(value, seen = new WeakSet(), key = "") {
+function shapeOf(value, seen = new WeakSet(), key = "", depth = 0, budget = { remaining: 64 }) {
+  if (depth > 4 || --budget.remaining < 0) return "inspection-bound";
   if (isEphemeralKey(key)) return "sensitive";
   if (Array.isArray(value)) {
     if (seen.has(value)) return "circular";
     seen.add(value);
     const result = `array:${value.length}:${value
-      .map((item) => shapeOf(item, seen, key))
+      .slice(0, 64)
+      .map((item) => shapeOf(item, seen, key, depth + 1, budget))
       .join(",")}`;
     seen.delete(value);
     return result;
@@ -364,7 +367,10 @@ function shapeOf(value, seen = new WeakSet(), key = "") {
     seen.add(value);
     const result = Object.keys(value)
       .sort()
-      .map((childKey) => `${childKey}:${shapeOf(value[childKey], seen, childKey)}`)
+      .slice(0, 64)
+      .map(
+        (childKey) => `${childKey}:${shapeOf(value[childKey], seen, childKey, depth + 1, budget)}`,
+      )
       .join("|");
     seen.delete(value);
     return result;

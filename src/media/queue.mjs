@@ -1,3 +1,4 @@
+import { recordingDisposition } from "./disposition.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
@@ -220,20 +221,81 @@ function mergeQueue(previousQueue, discoveredQueue) {
   const previousById = new Map(
     previous.filter((job) => job?.recordingId).map((job) => [job.recordingId, job]),
   );
-  const discoveredIds = new Set(discoveredQueue.map((appearance) => appearance?.recordingId));
+  const priorCandidates = Map.groupBy(previous, candidateKey);
+  const freshCandidates = Map.groupBy(discoveredQueue, candidateKey);
+  const retainedIds = new Set();
   const merged = discoveredQueue.map((appearance) => {
-    const previous = previousById.get(appearance?.recordingId);
-    if (!previous) return stripEphemeralFields(appearance);
-    return {
+    const key = candidateKey(appearance);
+    const matches = priorCandidates.get(key) ?? [];
+    const old =
+      previousById.get(appearance?.recordingId) ??
+      (key && matches.length === 1 && freshCandidates.get(key)?.length === 1 ? matches[0] : null);
+    if (!old) return stripEphemeralFields(appearance);
+    retainedIds.add(old.recordingId);
+    const reconciled = {
       ...stripEphemeralFields(appearance),
-      ...preservedState(previous),
-      ...(previous.placement ? { placement: previous.placement } : {}),
+      ...preservedState(old),
+      recordingId: old.recordingId,
+      ...(old.placement ? { placement: old.placement } : {}),
+      ...(appearance.limitation ? { limitation: appearance.limitation } : {}),
     };
+    const disposition = recordingDisposition(appearance);
+    if (disposition === "non-recording" && retainedRecordingEvidence(old)) {
+      reconciled.disposition = "unresolved";
+      reconciled.classificationEvidence = "conflicting-retained-recording";
+      reconciled.limitation =
+        "Fresh document metadata conflicts with retained recording evidence. Artifacts and history preserved; inspect the appearance before further acquisition.";
+    } else if (
+      disposition === "recording" &&
+      (recordingDisposition(old) !== "recording" || old.provider !== appearance.provider) &&
+      !isMediaJobComplete(old) &&
+      !old.withdrawn
+    ) {
+      Object.assign(reconciled, {
+        complete: false,
+        stage: "queued",
+        verdict: "yellow",
+        retryable: true,
+      });
+      if (appearance.providerName) reconciled.providerName = appearance.providerName;
+    }
+    return reconciled;
   });
   return rejectPlacementCollisions([
     ...merged,
-    ...previous.filter((job) => job?.recordingId && !discoveredIds.has(job.recordingId)),
+    ...previous.filter(
+      (job) =>
+        job?.recordingId &&
+        !retainedIds.has(job.recordingId) &&
+        !merged.some((fresh) => fresh.recordingId === job.recordingId),
+    ),
   ]);
+}
+
+function candidateKey(job) {
+  if (!job?.itemId || !job.sourceKind) return null;
+  let reference = job.candidateReference;
+  if (!reference && typeof job.providerReference === "string") {
+    const body = job.providerReference
+      .replace(
+        /^unsupported:(?:ntulearn-file|feedbackfruits|cengage|blackboard|padlet|turnitin):/,
+        "",
+      )
+      .replace(/^(?:unsupported|direct):/, "");
+    if (body !== job.providerReference) reference = `candidate:${body}`;
+  }
+  return reference ? `${job.itemId}:${job.sourceKind}:${reference}` : null;
+}
+
+function retainedRecordingEvidence(job) {
+  return (
+    job.transcript?.complete === true ||
+    job.media?.video?.available === true ||
+    job.media?.audio?.available === true ||
+    ["rawTranscript", "formattedTranscript", "providerTranscript", "media"].some(
+      (kind) => typeof job.artifacts?.[kind] === "string",
+    )
+  );
 }
 
 function preservedState(job) {

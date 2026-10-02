@@ -221,6 +221,7 @@ test("classifies YouTube and direct recordings while ignoring ordinary course li
   assert.deepEqual(
     recordings.map(({ provider, sourceKind }) => [provider, sourceKind]),
     [
+      ["unsupported", "attachment"],
       ["youtube", "embedded-player"],
       ["direct", "attachment"],
       ["direct", "embedded-player"],
@@ -228,11 +229,11 @@ test("classifies YouTube and direct recordings while ignoring ordinary course li
       ["direct", "external-link"],
     ],
   );
-  assert.equal(recordings[0].providerReference, "youtube:lecture123");
-  assert.match(recordings[1].providerReference, /^direct:/);
+  assert.equal(recordings[1].providerReference, "youtube:lecture123");
   assert.match(recordings[2].providerReference, /^direct:/);
-  assert.equal(recordings[1].mediaType, "audio");
-  assert.match(recordings[3].limitation, /unsupported/i);
+  assert.match(recordings[3].providerReference, /^direct:/);
+  assert.equal(recordings[2].mediaType, "audio");
+  assert.match(recordings[4].limitation, /unsupported/i);
   assert.equal(
     recordings.some(({ title }) => title === "Reading"),
     false,
@@ -316,7 +317,7 @@ test("keeps known external-tool shapes visible as retryable appearances", () => 
   assert.doesNotMatch(JSON.stringify(recordings), /https?:\/\/|secret/);
 });
 
-test("keeps file-shaped attachments visible as retryable non-recordings", () => {
+test("keeps positively identified document attachments visible as excluded non-recordings", () => {
   const recordings = discoverContentRecordings({
     course: { key: "CC0015", courseId: "_9_1", destination: "/courses/CC0015" },
     snapshot: {
@@ -351,7 +352,7 @@ test("keeps file-shaped attachments visible as retryable non-recordings", () => 
       retryable,
       sourceKind,
     ]),
-    [["unsupported", "NTULearn file", "ntulearn-file", true, "attachment"]],
+    [["unsupported", "NTULearn file", "ntulearn-file", false, "attachment"]],
   );
   assert.doesNotMatch(JSON.stringify(recordings), /https?:\/\/|signature=secret/);
 });
@@ -414,4 +415,41 @@ test("distinct players in one item have stable unique artifact paths", () => {
       .map((item) => item.placement)
       .sort((a, b) => a.videoPath.localeCompare(b.videoPath)),
   );
+});
+
+test("mixed attachments retain independent document and nested media appearances", () => {
+  const course = { key: "fixture", courseId: "_fixture_1", destination: "/fixture/course" };
+  const snapshot = { items: [{ id: "item", title: "Resources", position: 0 }] };
+  const discover = () =>
+    discoverContentRecordings({
+      course,
+      snapshot,
+      attachmentsByItem: new Map([
+        [
+          "item",
+          [
+            {
+              resourceUrl: "/bbcswebdav/notes.pdf",
+              mimeType: "application/pdf",
+              fileName: "notes.pdf",
+            },
+            {
+              file: {
+                resourceUrl: "/bbcswebdav/lecture.mp4",
+                mimeType: "video/mp4",
+                fileName: "lecture.mp4",
+              },
+            },
+          ],
+        ],
+      ]),
+    });
+  const first = discover();
+  assert.deepEqual(
+    first.map((job) => job.disposition),
+    ["non-recording", "recording"],
+  );
+  assert.equal(new Set(first.map((job) => job.recordingId)).size, 2);
+  assert.equal(new Set(first.map((job) => job.placement.formattedTranscriptPath)).size, 2);
+  assert.deepEqual(discover(), first);
 });

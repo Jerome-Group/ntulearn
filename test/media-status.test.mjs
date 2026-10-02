@@ -73,6 +73,8 @@ test("renders an independent course status from durable recording states", async
   assert.equal(summary.verdict, "yellow");
   assert.deepEqual(summary.counts, {
     total: 2,
+    excluded: 0,
+    unresolved: 0,
     complete: 1,
     queued: 1,
     active: 0,
@@ -105,6 +107,8 @@ test("marks discovery and attempted incomplete work red while retaining retry ev
     recordingId: "gallery-failed",
     title: "Week 3",
     provider: "unsupported",
+    disposition: "recording",
+    classificationEvidence: "media",
     sourceKind: "media-gallery",
     stage: "pending",
     verdict: "red",
@@ -145,7 +149,9 @@ test("keeps the known external provider name in unsupported status", () => {
   });
 
   assert.equal(summary.recordings[0].provider, "FeedbackFruits");
-  assert.equal(summary.recordings[0].retryable, true);
+  assert.equal(summary.recordings[0].retryable, false);
+  assert.equal(summary.counts.unresolved, 1);
+  assert.equal(summary.recordings[0].disposition, "unresolved");
 });
 
 test("writes a per-recording status with the complete media contract", async () => {
@@ -194,6 +200,8 @@ function recording({
   recordingId,
   title,
   provider,
+  disposition,
+  classificationEvidence,
   sourceKind,
   complete = false,
   stage,
@@ -210,6 +218,7 @@ function recording({
     title,
     provider,
     providerName: provider,
+    ...(disposition ? { disposition, classificationEvidence } : {}),
     sourceKind,
     complete,
     ...(stage ? { stage } : {}),

@@ -76,7 +76,7 @@ test("keeps an opaque unsupported reference stable without serializing its value
   assert.notEqual(first.providerReference, different.providerReference);
 });
 
-test("keeps NTULearn file-shaped non-media references retryable without saving their address", () => {
+test("excludes positively identified NTULearn documents without saving their address", () => {
   const result = classifyRecordingCandidate({
     value: {
       resourceUrl: "/bbcswebdav/readings/week-1.pdf?signature=secret",
@@ -89,7 +89,8 @@ test("keeps NTULearn file-shaped non-media references retryable without saving t
   assert.equal(result.provider, "unsupported");
   assert.equal(result.providerName, "NTULearn file");
   assert.equal(result.providerShape, "ntulearn-file");
-  assert.equal(result.retryable, true);
+  assert.equal(result.retryable, false);
+  assert.equal(result.disposition, "non-recording");
   assert.match(result.providerReference, /^unsupported:ntulearn/);
   assert.doesNotMatch(JSON.stringify(result), /https?:\/\/|signature=secret/);
 });
@@ -117,5 +118,191 @@ test("accepts a safe direct media field inside an opaque provider object", () =>
     provider: "direct",
     providerReference: "direct:cdn.example.test/lecture.mp4",
     mediaType: "video",
+    disposition: "recording",
+    classificationEvidence: "media",
+    identityReference: "direct:cdn.example.test/lecture.mp4",
+    candidateReference: "candidate:cdn.example.test/lecture.mp4",
   });
+});
+
+test("requires positive resource evidence and recognizes bounded nested media", () => {
+  const cases = [
+    [
+      {
+        file: {
+          resourceUrl: "/bbcswebdav/lecture.mp4",
+          fileName: "lecture.mp4",
+          mimeType: "video/mp4",
+        },
+      },
+      "recording",
+      "direct",
+    ],
+    [
+      { resourceUrl: "/bbcswebdav/slides", fileName: "slides.pdf", mimeType: "application/pdf" },
+      "non-recording",
+      "unsupported",
+    ],
+    [{ resourceUrl: "/bbcswebdav/opaque", uploadId: "fixture" }, "unresolved", "unsupported"],
+    [
+      { resourceUrl: "/bbcswebdav/conflict.mp4", mimeType: "application/pdf" },
+      "unresolved",
+      "unsupported",
+    ],
+    [
+      { file: { resourceUrl: "/bbcswebdav/lecture", mimeType: "audio/mp4" } },
+      "recording",
+      "direct",
+    ],
+    [
+      {
+        files: [
+          { resourceUrl: "/doc.pdf", mimeType: "application/pdf" },
+          { resourceUrl: "/video.mp4", mimeType: "video/mp4" },
+        ],
+      },
+      "unresolved",
+      "unsupported",
+    ],
+  ];
+  for (const [value, disposition, provider] of cases) {
+    const result = classifyRecordingCandidate({ value, sourceKind: "attachment" });
+    assert.equal(result.disposition, disposition);
+    assert.equal(result.provider, provider);
+    assert.doesNotMatch(JSON.stringify(result), /https?:\/\/|mimeType|resourceUrl/);
+  }
+  assert.equal(
+    classifyRecordingCandidate({
+      value: "https://padlet.com/fixture",
+      sourceKind: "embedded-player",
+    }).disposition,
+    "unresolved",
+  );
+});
+
+test("positive media without an acquisition reference remains an unsupported recording", () => {
+  const result = classifyRecordingCandidate({
+    value: { uploadId: "fixture", mimeType: "video/mp4" },
+    sourceKind: "attachment",
+  });
+  assert.equal(result.disposition, "recording");
+  assert.equal(result.provider, "unsupported");
+});
+
+test("cycles and traversal overflow remain bounded and unresolved", () => {
+  const value = { file: { resourceUrl: "/doc.pdf", mimeType: "application/pdf" } };
+  value.file.file = value;
+  assert.equal(
+    classifyRecordingCandidate({ value, sourceKind: "attachment" }).disposition,
+    "unresolved",
+  );
+  const wide = {
+    files: Array.from({ length: 80 }, (_, id) => ({
+      id: String(id),
+      resourceUrl: "/doc.pdf",
+      mimeType: "application/pdf",
+    })),
+  };
+  assert.equal(
+    classifyRecordingCandidate({ value: wide, sourceKind: "attachment" }).disposition,
+    "unresolved",
+  );
+});
+
+test("conflicting nested recordings and non-document MIME families remain unresolved", () => {
+  const values = [
+    { files: [{ url: "/first.mp4" }, { url: "/second.mp4" }] },
+    { resourceUrl: "/opaque", mimeType: "application/vnd.ms-wpl" },
+    { resourceUrl: "/opaque", mimeType: "application/octet-stream" },
+  ];
+  for (const value of values)
+    assert.equal(
+      classifyRecordingCandidate({ value, sourceKind: "attachment" }).disposition,
+      "unresolved",
+    );
+  assert.equal(
+    classifyRecordingCandidate({
+      value: {
+        resourceUrl: "/opaque",
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      },
+      sourceKind: "attachment",
+    }).disposition,
+    "non-recording",
+  );
+});
+
+test("tool titles resembling documents never prove a resource exclusion", () => {
+  for (const key of ["name", "displayName", "linkName"]) {
+    const result = classifyRecordingCandidate({
+      value: { url: "https://padlet.com/opaque", [key]: "slides.pdf" },
+      sourceKind: "embedded-player",
+    });
+    assert.equal(result.disposition, "unresolved");
+  }
+});
+
+test("distinct nested string recording references stay unresolved across providers", () => {
+  for (const resources of [
+    ["https://example.test/a.mp4", "https://example.test/b.mp4"],
+    ["https://youtu.be/fixtureA", "https://example.test/b.mp4"],
+    ["https://example.test/a.mp4", { resourceUrl: "https://example.test/b.mp4" }],
+  ]) {
+    const result = classifyRecordingCandidate({ value: { resources }, sourceKind: "attachment" });
+    assert.equal(result.disposition, "unresolved");
+    assert.equal(result.provider, "unsupported");
+  }
+  const repeated = classifyRecordingCandidate({
+    value: { resources: ["https://example.test/a.mp4", "https://example.test/a.mp4"] },
+    sourceKind: "attachment",
+  });
+  assert.equal(repeated.disposition, "recording");
+  assert.equal(repeated.provider, "direct");
+});
+
+test("nested document addresses conflict with recordings while title strings remain opaque", () => {
+  for (const [resources, disposition] of [
+    [["https://example.test/slides.pdf", "https://example.test/b.mp4"], "unresolved"],
+    [["https://example.test/slides.pdf?private=fixture"], "non-recording"],
+    [["/documents/slides.pdf"], "non-recording"],
+    [["slides.pdf"], "unresolved"],
+  ]) {
+    const result = classifyRecordingCandidate({ value: { resources }, sourceKind: "attachment" });
+    assert.equal(result.disposition, disposition);
+    assert.doesNotMatch(JSON.stringify(result), /private=fixture|https?:\/\//);
+  }
+});
+
+test("distinct provider IDs in one descriptor conflict while alternate same-ID URLs remain usable", () => {
+  for (const value of [
+    { url: "https://youtu.be/fixtureA", resourceUrl: "https://youtu.be/fixtureB" },
+    {
+      url: "https://media.test/index.php/extwidget/preview/entry_id/0_first",
+      resourceUrl: "https://media.test/index.php/extwidget/preview/entry_id/0_second",
+    },
+  ])
+    assert.equal(
+      classifyRecordingCandidate({ value, sourceKind: "attachment" }).disposition,
+      "unresolved",
+    );
+  const same = classifyRecordingCandidate({
+    value: {
+      url: "https://youtu.be/fixtureA",
+      resourceUrl: "https://youtube.com/watch?v=fixtureA",
+    },
+    sourceKind: "attachment",
+  });
+  assert.equal(same.disposition, "recording");
+  assert.equal(same.providerReference, "youtube:fixtureA");
+  for (const value of [
+    {
+      url: "https://media.test/index.php/extwidget/preview/entry_id/0_first",
+      resourceUrl: "https://media.test/download.mp4?entry_id=0_first",
+    },
+    { url: "https://youtu.be/fixtureA", resourceUrl: "https://example.test/download.mp4" },
+  ])
+    assert.equal(
+      classifyRecordingCandidate({ value, sourceKind: "attachment" }).disposition,
+      "recording",
+    );
 });

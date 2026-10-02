@@ -572,3 +572,130 @@ test("retains but blocks legacy recordings whose artifact placements collide", a
     true,
   );
 });
+
+test("fresh evidenced disposition preserves a legacy appearance and recovery history", async () => {
+  const course = { key: "fixture", courseId: "_fixture_1", destination: "/fixture/course" };
+  const statePath = "/fixture/state.json";
+  const old = {
+    recordingId: "legacy-id",
+    itemId: "item",
+    sourceKind: "attachment",
+    provider: "unsupported",
+    providerReference: "unsupported:ntulearn-file:ntulearn.ntu.edu.sg/bbcswebdav/resource",
+    placement: {
+      destination: course.destination,
+      statusPath: "Old.media-status.md",
+      formattedTranscriptPath: "Old.transcript.md",
+    },
+    stage: "failed",
+    retryable: false,
+    attempts: 4,
+    lastError: "prior failure",
+    artifacts: { metadata: "/fixture/held-metadata.json" },
+  };
+  let record = { courseKey: course.key, courseId: course.courseId, complete: true, queue: [old] };
+  const read = async (path) => (path.includes("media-queue") ? JSON.stringify(record) : null);
+  const write = async (path, body) => {
+    if (path.endsWith(".json")) record = JSON.parse(body);
+  };
+  const discover = async (appearance) =>
+    writeMediaQueue({
+      statePath,
+      course,
+      discovery: { complete: true, verdict: "green", queue: [appearance] },
+      read,
+      write,
+    });
+  const fresh = {
+    ...old,
+    recordingId: "fresh-id",
+    candidateReference: "candidate:ntulearn.ntu.edu.sg/bbcswebdav/resource",
+    disposition: "non-recording",
+    classificationEvidence: "document",
+    placement: { ...old.placement, statusPath: "New.media-status.md" },
+  };
+  await discover(fresh);
+  assert.equal(record.queue.length, 1);
+  assert.equal(record.queue[0].recordingId, "legacy-id");
+  assert.equal(record.queue[0].attempts, 4);
+  assert.deepEqual(record.queue[0].artifacts, old.artifacts);
+  assert.deepEqual(record.queue[0].placement, old.placement);
+  await discover({
+    ...fresh,
+    provider: "direct",
+    providerReference: "direct:ntulearn.ntu.edu.sg/bbcswebdav/resource",
+    disposition: "recording",
+    classificationEvidence: "media",
+  });
+  assert.equal(record.queue[0].recordingId, "legacy-id");
+  assert.equal(record.queue[0].stage, "queued");
+  assert.equal(record.queue[0].retryable, true);
+  assert.equal(record.queue[0].lastError, "prior failure");
+  assert.equal(record.queue[0].attempts, 4);
+  await discover({
+    ...fresh,
+    provider: "direct",
+    providerReference: "direct:ntulearn.ntu.edu.sg/bbcswebdav/resource",
+    disposition: "recording",
+    classificationEvidence: "media",
+  });
+  assert.equal(record.queue.length, 1);
+  await writeMediaQueue({
+    statePath,
+    course,
+    discovery: { complete: true, queue: [] },
+    read,
+    write,
+  });
+  assert.equal(record.queue.length, 1);
+});
+
+test("fresh document evidence never hides retained transcripts or transfers ambiguous legacy ownership", async () => {
+  const course = { key: "fixture", courseId: "_fixture_1", destination: "/fixture/course" };
+  const old = {
+    recordingId: "legacy",
+    itemId: "item",
+    sourceKind: "attachment",
+    provider: "unsupported",
+    providerReference: "unsupported:ntulearn-file:ntulearn.ntu.edu.sg/asset",
+    artifacts: { rawTranscript: "/fixture/source.json" },
+    attempts: 3,
+  };
+  let record = { courseKey: course.key, courseId: course.courseId, queue: [old] };
+  const read = async () => JSON.stringify(record);
+  const write = async (path, body) => {
+    if (path.endsWith(".json")) record = JSON.parse(body);
+  };
+  const fresh = {
+    recordingId: "new",
+    itemId: "item",
+    sourceKind: "attachment",
+    provider: "unsupported",
+    candidateReference: "candidate:ntulearn.ntu.edu.sg/asset",
+    disposition: "non-recording",
+    classificationEvidence: "document",
+  };
+  await writeMediaQueue({
+    statePath: "/fixture/state.json",
+    course,
+    discovery: { complete: true, queue: [fresh] },
+    read,
+    write,
+  });
+  assert.equal(record.queue[0].recordingId, "legacy");
+  assert.equal(record.queue[0].disposition, "unresolved");
+  assert.deepEqual(record.queue[0].artifacts, old.artifacts);
+  record = { ...record, queue: [old, { ...old, recordingId: "second-owner" }] };
+  await writeMediaQueue({
+    statePath: "/fixture/state.json",
+    course,
+    discovery: { complete: true, queue: [fresh] },
+    read,
+    write,
+  });
+  assert.deepEqual(
+    record.queue.map((job) => job.recordingId),
+    ["new", "legacy", "second-owner"],
+  );
+  assert.deepEqual(record.queue[1].artifacts, old.artifacts);
+});

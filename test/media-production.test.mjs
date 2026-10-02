@@ -77,7 +77,7 @@ test("runs all enabled courses and providers under one aggregate digest", async 
   assert.equal(await readFile(held.artifacts.formattedTranscript, "utf8"), "student annotation");
 });
 
-test("turns unsupported appearances into terminal red failures", async () => {
+test("turns positively identified unsupported recordings into terminal red failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-production-unsupported-"));
   const statePath = join(root, "state.json");
   const selected = { ...course("AB1001", "pilot"), destination: join(root, "course") };
@@ -143,6 +143,8 @@ async function queue(statePath, selectedCourse, provider, recordingId) {
         {
           recordingId,
           provider,
+          disposition: "recording",
+          classificationEvidence: "media",
           placement: {
             destination: selectedCourse.destination,
             videoPath: `${recordingId}.mp4`,

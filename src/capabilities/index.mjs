@@ -54,12 +54,18 @@ const routes = {
   "media-discovery": [
     [
       "src/media/discovery.mjs",
+      "src/media/classification.mjs",
+      "src/media/external.mjs",
+      "src/media/disposition.mjs",
       "src/media/gallery.mjs",
       "src/media/gallery-browser.mjs",
       "src/media/workflow.mjs",
     ],
     [
       "test/media-discovery.test.mjs",
+      "test/media-classification.test.mjs",
+      "test/media-external.test.mjs",
+      "test/media-disposition.test.mjs",
       "test/media-gallery.test.mjs",
       "test/media-gallery-browser.test.mjs",
       "test/media-workflow.test.mjs",
