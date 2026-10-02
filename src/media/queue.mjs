@@ -51,7 +51,7 @@ export async function writeMediaQueue({
   read = readFile,
 }) {
   const path = mediaQueuePath(statePath, course.key);
-  const existing = await readMediaQueue({ statePath, courseKey: course.key, read });
+  const existing = await readMediaQueue({ statePath, courseKey: course.key, course, read });
   if (discovery.complete !== true && existing.record) {
     const status = await persistQueueStatuses({
       course,
@@ -64,6 +64,7 @@ export async function writeMediaQueue({
   }
   const discoveredQueue =
     discovery.complete === true && Array.isArray(discovery.queue) ? discovery.queue : [];
+  assertQueueCourse(discoveredQueue, course, course.courseId);
   const reconciledQueue = mergeQueue(existing.record?.queue, discoveredQueue);
   const transition = withdrawal
     ? withdrawQueuedRecording({ queue: reconciledQueue, ...withdrawal })
@@ -100,13 +101,48 @@ export function mediaQueuePath(statePath, courseKey) {
   return join(dirname(statePath), "media-queue", `${safeCourseKey(courseKey)}.json`);
 }
 
-export async function readMediaQueue({ statePath, courseKey, read = readFile }) {
+export async function readMediaQueue({ statePath, courseKey, course = null, read = readFile }) {
   const path = mediaQueuePath(statePath, courseKey);
-  const content = await read(path).catch((error) => {
+  let content = await read(path).catch((error) => {
     if (error.code === "ENOENT") return null;
     throw error;
   });
-  return { path, record: content ? JSON.parse(content) : null };
+  const legacyPath = join(
+    dirname(statePath),
+    "media-queue",
+    `${
+      String(courseKey)
+        .trim()
+        .replace(/[^A-Za-z0-9._-]+/g, "_") || "course"
+    }.json`,
+  );
+  let legacy = false;
+  if (!content && legacyPath !== path) {
+    legacy = true;
+    content = await read(legacyPath).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+  }
+  const record = content ? JSON.parse(content) : null;
+  if (
+    legacy &&
+    record &&
+    (String(record.courseKey).toLowerCase() !== String(courseKey).toLowerCase() ||
+      (course && record.courseId !== course.courseId))
+  )
+    return { path, record: null };
+  if (
+    record &&
+    (String(record.courseKey).toLowerCase() !== String(courseKey).toLowerCase() ||
+      (course && record.courseId !== course.courseId))
+  ) {
+    throw new Error(
+      "Media queue belongs to another course. Run media discovery for the configured course; existing artifacts are retained.",
+    );
+  }
+  assertQueueCourse(record?.queue, course, record?.courseId);
+  return { path, record };
 }
 
 export async function updateMediaQueueJob({
@@ -123,7 +159,7 @@ export async function updateMediaQueueJob({
     throw new Error("Media queue job updates need an object.");
   }
 
-  const loaded = await readMediaQueue({ statePath, courseKey, read });
+  const loaded = await readMediaQueue({ statePath, courseKey, course, read });
   if (!loaded.record || !Array.isArray(loaded.record.queue)) {
     throw new Error(
       `No durable media queue exists for ${courseKey}. Run: npm run media:discover -- ${courseKey}`,
@@ -191,12 +227,13 @@ function mergeQueue(previousQueue, discoveredQueue) {
     return {
       ...stripEphemeralFields(appearance),
       ...preservedState(previous),
+      ...(previous.placement ? { placement: previous.placement } : {}),
     };
   });
-  return [
+  return rejectPlacementCollisions([
     ...merged,
     ...previous.filter((job) => job?.recordingId && !discoveredIds.has(job.recordingId)),
-  ];
+  ]);
 }
 
 function preservedState(job) {
@@ -356,8 +393,59 @@ async function persistQueueStatuses({ course, discovery, queue, now, write, reco
 }
 
 function safeCourseKey(value) {
-  const safe = String(value ?? "")
-    .trim()
-    .replace(/[^A-Za-z0-9._-]+/g, "_");
-  return safe || "course";
+  const key = String(value ?? "");
+  if (!key) throw new Error("Media queue needs a non-empty course key.");
+  return encodeURIComponent(key);
+}
+
+function assertQueueCourse(queue, course, courseId) {
+  for (const job of queue ?? []) {
+    if (
+      (job.courseId && job.courseId !== courseId) ||
+      (course?.destination &&
+        job.placement?.destination &&
+        job.placement.destination !== course.destination)
+    ) {
+      throw new Error(
+        "Media queue appearance belongs to another course or destination. Existing artifacts are retained; review the course configuration.",
+      );
+    }
+  }
+}
+
+function rejectPlacementCollisions(queue) {
+  const claims = new Map();
+  const collisions = new Set();
+  for (const job of queue) {
+    const placement = job.placement;
+    if (!placement?.destination) continue;
+    for (const field of ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"]) {
+      if (!placement[field]) continue;
+      const path = `${placement.destination}/${placement[field]}`.toLowerCase();
+      const owner = claims.get(path);
+      if (owner && owner !== job.recordingId) {
+        collisions.add(owner);
+        collisions.add(job.recordingId);
+      }
+      claims.set(path, job.recordingId);
+    }
+  }
+  return queue.map((job) =>
+    collisions.has(job.recordingId)
+      ? {
+          ...job,
+          complete: false,
+          stage: "failed",
+          verdict: "red",
+          retryable: false,
+          transcript: { ...job.transcript, complete: false },
+          limitations: [
+            ...new Set([
+              ...(job.limitations ?? []),
+              "Established artifact placement is shared by distinct recordings. Artifacts retained; Owner review is required before acquisition.",
+            ]),
+          ],
+        }
+      : job,
+  );
 }

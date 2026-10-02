@@ -1,35 +1,43 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { Buffer } from "node:buffer";
+import { mkdtemp, readFile, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runProductionMedia } from "../src/media/production.mjs";
 import { readMediaQueue, writeMediaQueue } from "../src/media/queue.mjs";
+import { runMediaJob } from "../src/media/job.mjs";
+import { createMediaStorage } from "../src/media/storage.mjs";
 
 test("runs all enabled courses and providers under one aggregate digest", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-production-"));
   const statePath = join(root, "state.json");
-  const courses = [course("AB1001"), course("AB1002")];
+  const courses = [course("AB1001"), course("AB1002")].map((entry) => ({
+    ...entry,
+    destination: join(root, entry.key),
+  }));
+  const mediaRoot = join(root, "media");
   await queue(statePath, courses[0], "kaltura", "entry-1");
   await queue(statePath, courses[1], "youtube", "video-1");
   let preflights = 0;
   let closes = 0;
 
-  const result = await runProductionMedia({
-    config: { statePath, courses, media: {} },
+  const options = {
+    config: { statePath, courses, media: { mediaRoot } },
     mode: "manual",
     verifyRuntime: async () => {
       preflights += 1;
       return { runtime: {} };
     },
     createJobRunner: async () => ({
-      run: async () => completeResult(),
+      run: async (appearance) => completeResult({ appearance, mediaRoot, volumeRoot: root }),
       close: async () => {
         closes += 1;
       },
     }),
     lock: null,
-  });
+  };
+  const result = await runProductionMedia(options);
 
   assert.equal(result.digest.verdict, "green");
   assert.equal(result.digest.counts.completed, 2);
@@ -37,12 +45,27 @@ test("runs all enabled courses and providers under one aggregate digest", async 
   assert.equal(result.exitCode, 0);
   assert.equal(preflights, 1);
   assert.equal(closes, 1);
+  const held = (await readMediaQueue({ statePath, courseKey: courses[0].key, course: courses[0] }))
+    .record.queue[0];
+  assert.match(held.sourceSha256, /^[0-9a-f]{64}$/);
+  assert.match(held.formattedSha256, /^[0-9a-f]{64}$/);
+  const rawBefore = await readFile(held.artifacts.rawTranscript, "utf8");
+  await unlink(held.artifacts.formattedTranscript);
+  const repaired = await runProductionMedia(options);
+  assert.equal(repaired.digest.verdict, "green");
+  assert.equal(repaired.digest.counts.processed, 1);
+  assert.equal(await readFile(held.artifacts.rawTranscript, "utf8"), rawBefore);
+  await writeFile(held.artifacts.formattedTranscript, "student annotation");
+  const edited = await runProductionMedia(options);
+  assert.equal(edited.digest.verdict, "red");
+  assert.equal(edited.exitCode, 1);
+  assert.equal(await readFile(held.artifacts.formattedTranscript, "utf8"), "student annotation");
 });
 
 test("turns unsupported appearances into terminal red failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-production-unsupported-"));
   const statePath = join(root, "state.json");
-  const selected = course("AB1001", "pilot");
+  const selected = { ...course("AB1001", "pilot"), destination: join(root, "course") };
   await queue(statePath, selected, "unsupported", "opaque-1");
   let composed = false;
   const options = {
@@ -99,16 +122,37 @@ async function queue(statePath, selectedCourse, provider, recordingId) {
     discovery: {
       complete: true,
       verdict: "green",
-      queue: [{ recordingId, provider, limitation: `${provider} limitation` }],
+      queue: [
+        {
+          recordingId,
+          provider,
+          placement: {
+            destination: selectedCourse.destination,
+            videoPath: `${recordingId}.mp4`,
+            audioPath: `${recordingId}.m4a`,
+            formattedTranscriptPath: `${recordingId}.transcript.md`,
+            statusPath: `${recordingId}.media-status.md`,
+          },
+        },
+      ],
     },
   });
 }
 
-function completeResult() {
-  return {
-    complete: true,
-    stage: "complete",
-    verdict: "green",
-    transcript: { complete: true, sourceKind: "generated", language: "en" },
-  };
+async function completeResult({ appearance, mediaRoot, volumeRoot }) {
+  const text = "This is a complete fixture transcript.";
+  return runMediaJob({
+    appearance,
+    storage: createMediaStorage({ mediaRoot, volumeRoot }),
+    provider: {
+      name: appearance.provider,
+      resolve: async () => ({ duration: 1 }),
+      transcript: async () => ({
+        filename: "captions.json",
+        body: JSON.stringify({ language: "en", segments: [{ start: 0, end: 1, text }] }),
+      }),
+      media: async () => ({ kind: "video", body: Buffer.from("fixture media"), audio: true }),
+    },
+    formatter: { version: "fixture-1", format: async () => text },
+  });
 }

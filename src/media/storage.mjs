@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { markGlobalMediaSafety } from "./errors.mjs";
-import { assertMediaRoot } from "./paths.mjs";
+import { assertMediaRoot, MEDIA_VOLUME_ROOT } from "./paths.mjs";
 
 // eslint-disable-next-line no-control-regex -- control characters cannot be filenames
 const UNSAFE_FILENAME_CHARACTERS = /[\\/:*?"<>|\x00-\x1F]/g;
@@ -37,6 +37,10 @@ export function createMediaStorage({
         throw new Error("Media storage accepts content or sourcePath, not both.");
       }
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
+      await assertMediaArtifactPath(
+        target.path,
+        artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+      );
       if (replaceProof) {
         assertReplacementProof({ kind, target, replaceProof });
         const current = await read(target.path).catch((error) => {
@@ -68,6 +72,10 @@ export function createMediaStorage({
 
     async read({ appearance, kind, mediaKind, filename }) {
       const target = targetFor({ root, appearance, kind, mediaKind, filename });
+      await assertMediaArtifactPath(
+        target.path,
+        artifactRoot({ root: volumeRoot ?? MEDIA_VOLUME_ROOT, appearance, kind }),
+      );
       try {
         return { path: target.path, content: await read(target.path) };
       } catch (error) {
@@ -90,7 +98,7 @@ async function copyAtomically(source, target) {
 }
 
 function targetFor({ root, appearance, kind, mediaKind, filename }) {
-  const recordingRoot = join(root, "recordings", recordingKey(appearance.recordingId));
+  const recordingRoot = mediaRecordingRoot(root, appearance.recordingId);
   if (kind === "provider-transcript") {
     return { path: join(recordingRoot, "provider", safeFilename(filename, "transcript.provider")) };
   }
@@ -140,6 +148,10 @@ function visiblePath(appearance, relativePath) {
   return target;
 }
 
+export function mediaRecordingRoot(mediaRoot, recordingId) {
+  return join(mediaRoot, "recordings", recordingKey(recordingId));
+}
+
 function recordingKey(recordingId) {
   return createHash("sha256").update(String(recordingId)).digest("hex").slice(0, 24);
 }
@@ -186,4 +198,38 @@ function assertReplacementProof({ kind, target, replaceProof }) {
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function artifactRoot({ root, appearance, kind }) {
+  const visible =
+    kind === "formatted-transcript" ||
+    kind === "status" ||
+    (kind === "media" && appearance.storageSurface !== "media-gallery");
+  return visible ? resolve(appearance.placement.destination) : root;
+}
+
+export async function assertMediaArtifactPath(path, root) {
+  const target = resolve(path);
+  const boundary = resolve(root);
+  if (target === boundary || !target.startsWith(`${boundary}${sep}`)) {
+    throw markGlobalMediaSafety(new Error("Media artifact resolves outside its storage root."));
+  }
+  let current = target;
+  while (true) {
+    const info = await lstat(current).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw markGlobalMediaSafety(error);
+    });
+    if (info?.isSymbolicLink()) {
+      throw markGlobalMediaSafety(
+        new Error(
+          `Media artifact path is a symlink: ${current}. Keep artifacts inside their course or Media store.`,
+        ),
+      );
+    }
+    if (current === boundary) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
 }

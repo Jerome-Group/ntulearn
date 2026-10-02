@@ -437,3 +437,138 @@ test("rejects non-numeric duration evidence at the durable queue boundary", asyn
     /duration must be a positive number/,
   );
 });
+
+test("distinct unsafe course keys never share a queue", () => {
+  assert.notEqual(
+    mediaQueuePath("/fixture/state.json", "A/B"),
+    mediaQueuePath("/fixture/state.json", "A?B"),
+  );
+});
+
+test("rediscovery retains established placement through title and order changes", async () => {
+  let record = null;
+  const read = async () => {
+    if (!record) {
+      const error = new Error("absent");
+      error.code = "ENOENT";
+      throw error;
+    }
+    return JSON.stringify(record);
+  };
+  const write = async (_, value) => {
+    record = JSON.parse(value);
+  };
+  const placement = {
+    destination: "/fixture/course",
+    videoPath: "01 Old.mp4",
+    formattedTranscriptPath: "01 Old.transcript.md",
+    statusPath: "01 Old.media-status.md",
+  };
+  const prior = {
+    recordingId: "one",
+    placement,
+    complete: true,
+    transcript: { complete: true },
+    artifacts: { formattedTranscript: "/fixture/course/01 Old.transcript.md" },
+  };
+  await writeMediaQueue({
+    statePath: "/fixture/state.json",
+    course: COURSE,
+    discovery: { complete: true, queue: [prior] },
+    read,
+    write,
+  });
+  await writeMediaQueue({
+    statePath: "/fixture/state.json",
+    course: COURSE,
+    discovery: {
+      complete: true,
+      queue: [{ ...prior, title: "New", placement: { ...placement, videoPath: "02 New.mp4" } }],
+    },
+    read,
+    write,
+  });
+  assert.deepEqual(record.queue[0].placement, placement);
+  assert.equal(record.queue[0].title, "New");
+});
+
+test("refuses a retained queue belonging to another course", async () => {
+  await assert.rejects(
+    writeMediaQueue({
+      statePath: "/fixture/state.json",
+      course: COURSE,
+      discovery: { complete: true, queue: [] },
+      read: async () => JSON.stringify({ courseKey: COURSE.key, courseId: "_99_1", queue: [] }),
+      write: async () => assert.fail("must not write"),
+    }),
+    /another course/i,
+  );
+});
+
+test("reads a proven legacy queue without moving its established artifacts", async () => {
+  const course = { ...COURSE, key: "A/B" };
+  const prior = {
+    courseKey: course.key,
+    courseId: course.courseId,
+    queue: [
+      {
+        recordingId: "one",
+        placement: { destination: "/fixture/course", formattedTranscriptPath: "Old.transcript.md" },
+        complete: true,
+        transcript: { complete: true },
+      },
+    ],
+  };
+  const read = async (path) => {
+    if (path.endsWith("A_B.json")) return JSON.stringify(prior);
+    const error = new Error("absent");
+    error.code = "ENOENT";
+    throw error;
+  };
+  const loaded = await readMediaQueue({
+    statePath: "/fixture/state.json",
+    courseKey: course.key,
+    course,
+    read,
+  });
+  assert.deepEqual(loaded.record, prior);
+  assert.match(loaded.path, /A%2FB\.json$/);
+  const other = await readMediaQueue({
+    statePath: "/fixture/state.json",
+    courseKey: "A?B",
+    course: { ...course, key: "A?B" },
+    read,
+  });
+  assert.equal(other.record, null);
+});
+
+test("retains but blocks legacy recordings whose artifact placements collide", async () => {
+  const placement = {
+    destination: "/fixture/course",
+    formattedTranscriptPath: "Shared.transcript.md",
+  };
+  const queue = ["one", "two"].map((recordingId) => ({
+    recordingId,
+    placement,
+    complete: true,
+    transcript: { complete: true },
+  }));
+  let saved;
+  await writeMediaQueue({
+    statePath: "/fixture/state.json",
+    course: COURSE,
+    discovery: { complete: true, queue },
+    read: async () => JSON.stringify({ courseKey: COURSE.key, courseId: COURSE.courseId, queue }),
+    write: async (_, value) => {
+      saved = JSON.parse(value);
+    },
+  });
+  assert.deepEqual(
+    saved.queue.map((job) => job.placement),
+    [placement, placement],
+  );
+  assert.equal(
+    saved.queue.every((job) => !job.complete && job.retryable === false),
+    true,
+  );
+});

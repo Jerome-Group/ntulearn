@@ -35,6 +35,7 @@ export async function runProductionMedia({
     const digest = await runMediaQueue({
       statePath: config.statePath,
       courses: config.courses,
+      media: config.media,
       mode,
       preflight,
       runJob,

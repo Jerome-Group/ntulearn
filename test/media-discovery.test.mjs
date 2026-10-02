@@ -384,3 +384,34 @@ test("prefers a launch shape when detail fields repeat one provider address", ()
     [["FeedbackFruits", "launch-link"]],
   );
 });
+
+test("distinct players in one item have stable unique artifact paths", () => {
+  const course = { key: "TEST", courseId: "_1_1", destination: "/fixture/course" };
+  const urls = [
+    "https://www.youtube.com/embed/abcdefghijk",
+    "https://www.youtube.com/embed/lmnopqrstuv",
+  ];
+  const discover = (links) =>
+    discoverContentRecordings({
+      course,
+      snapshot: {
+        items: [
+          {
+            id: "_2_1",
+            title: "Lectures",
+            position: 0,
+            body: { rawText: links.map((url) => `<iframe src="${url}"></iframe>`).join("") },
+          },
+        ],
+      },
+    });
+  const first = discover(urls);
+  assert.equal(new Set(first.map((item) => item.placement.formattedTranscriptPath)).size, 2);
+  assert.equal(new Set(first.map((item) => item.placement.videoPath)).size, 2);
+  assert.deepEqual(
+    first.map((item) => item.placement).sort((a, b) => a.videoPath.localeCompare(b.videoPath)),
+    discover([...urls].reverse())
+      .map((item) => item.placement)
+      .sort((a, b) => a.videoPath.localeCompare(b.videoPath)),
+  );
+});

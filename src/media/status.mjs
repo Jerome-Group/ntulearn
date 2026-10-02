@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
+import { lstat, readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 import { durationLabel, positiveDuration } from "./duration.mjs";
 import { publicMediaError } from "./errors.mjs";
+import { assertMediaArtifactPath, mediaRecordingRoot } from "./storage.mjs";
+import { mediaArtifactEvidenceUpdate } from "./worker-state.mjs";
 
 const STATUS_DIRECTORY = "Media Gallery";
 const COURSE_STATUS_FILENAME = "media-status.md";
@@ -46,10 +50,15 @@ export async function writeMediaCourseStatus({
   queue = [],
   now = () => new Date(),
   write = writeAtomically,
+  mediaRoot = null,
 }) {
   if (!course?.destination) return null;
-  const status = mediaCourseStatus({ course, discovery, queue, now });
+  const checkedQueue = await Promise.all(
+    queue.map((job) => checkArtifactAvailability(job, { course, mediaRoot })),
+  );
+  const status = mediaCourseStatus({ course, discovery, queue: checkedQueue, now });
   const path = mediaCourseStatusPath(course);
+  await assertMediaArtifactPath(path, course.destination);
   await write(path, `${courseStatusMarkdown(status)}\n`);
   return { path, status: "written", verdict: status.verdict };
 }
@@ -59,10 +68,16 @@ export async function writeMediaRecordingStatus({
   job = appearance,
   now = () => new Date(),
   write = writeAtomically,
+  mediaRoot = null,
 }) {
   const path = mediaRecordingStatusPath(appearance);
   if (!path) return null;
-  const status = mediaRecordingStatus({ appearance, job, now });
+  const checked = await checkArtifactAvailability(
+    { ...appearance, ...job },
+    { course: { destination: appearance.placement.destination }, mediaRoot },
+  );
+  const status = mediaRecordingStatus({ appearance, job: checked, now });
+  await assertMediaArtifactPath(path, appearance.placement.destination);
   await write(path, `${recordingStatusMarkdown(status)}\n`);
   return { path, status: "written", verdict: status.verdict };
 }
@@ -94,6 +109,11 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
     title: cleanText(job.title ?? appearance.title ?? "Untitled recording"),
     provider: job.providerName ?? job.provider ?? appearance.provider ?? "unknown",
     sourceKind: job.sourceKind ?? appearance.sourceKind ?? "unknown",
+    sourceReference: stableReference(job.providerReference ?? appearance.providerReference),
+    locations: artifactLocations(appearance, job),
+    artifactIntegrity:
+      job.artifactIntegrity ??
+      "queue declaration; artifact integrity and speech quality unverified",
     stage,
     verdict,
     complete,
@@ -167,6 +187,8 @@ function normalizedMediaKind(value) {
   return {
     available: value?.available === true,
     quality: Number.isFinite(value?.quality) ? value.quality : null,
+    availabilityVerified: value?.availabilityVerified !== false,
+    declaredAvailable: value?.declaredAvailable === true,
   };
 }
 
@@ -223,6 +245,13 @@ function recordingFields(recording) {
     `- Provider: ${displayName(recording.provider)}`,
     `- Source: ${cleanText(recording.sourceKind)}`,
     `- Stage: ${recording.stage}`,
+    `- State: ${recording.complete ? (recording.artifactIntegrity.startsWith("source and derivative digests verified") ? "ready (local artifact digests verified)" : "declared complete / integrity pending") : recording.verdict === "red" ? "failed / incomplete" : "incomplete"}`,
+    ...(recording.sourceReference ? [`- Source reference: ${recording.sourceReference}`] : []),
+    ...recording.locations.map(
+      ({ label, path, available, unverified }) =>
+        `- ${label}: ${available ? `[Open](<${encodeURI(path).replaceAll("<", "%3C").replaceAll(">", "%3E").replaceAll("#", "%23").replaceAll("?", "%3F")}>)` : `${unverified ? "declared / unverified" : "unavailable"} (${cleanText(path)})`}`,
+    ),
+    `- Evidence: ${recording.artifactIntegrity}`,
     `- Verdict: ${recording.verdict}`,
     `- Video: ${mediaAvailability(recording.media.video)}`,
     `- Audio: ${mediaAvailability(recording.media.audio)}`,
@@ -240,6 +269,8 @@ function recordingFields(recording) {
 }
 
 function mediaAvailability(value) {
+  if (!value.availabilityVerified)
+    return `unverified (queue reports ${value.declaredAvailable ? "available" : "unavailable"})`;
   return value.available
     ? `available${value.quality ? ` (${value.quality}p)` : ""}`
     : "unavailable";
@@ -289,4 +320,135 @@ function asDate(value) {
     throw new Error("Media status time must be a valid date. Check the media clock value.");
   }
   return date;
+}
+
+function stableReference(value) {
+  if (typeof value !== "string") return null;
+  return cleanText(value.split(/[?#&\s]/, 1)[0]);
+}
+
+function artifactLocations(appearance, job) {
+  const placement = job.placement ?? appearance.placement;
+  const artifacts = job.artifacts ?? {};
+  const entries = [
+    ["Recording media", artifacts.media],
+    ["Source transcript", artifacts.rawTranscript],
+    ["Formatted transcript", artifacts.formattedTranscript],
+    [
+      "Recording status",
+      placement?.destination && placement?.statusPath
+        ? resolveStatusPath(placement.destination, placement.statusPath)
+        : null,
+    ],
+  ];
+  return entries.flatMap(([label, path]) => {
+    if (typeof path !== "string" || !path.startsWith("/") || /[\0\r\n]|:\/\//.test(path)) return [];
+    return [
+      {
+        label,
+        path,
+        available: label === "Recording status" || job.availableArtifacts?.includes(path) === true,
+        unverified: !job.checkedArtifacts?.includes(path) && label !== "Recording status",
+      },
+    ];
+  });
+}
+
+async function checkArtifactAvailability(job, { course, mediaRoot } = {}) {
+  const artifacts = job.artifacts ?? {};
+  const destination = course?.destination ?? job.placement?.destination;
+  const recordingRoot = mediaRoot ? mediaRecordingRoot(mediaRoot, job.recordingId) : null;
+  const entries = Object.entries(artifacts).flatMap(([kind, path]) => {
+    if (typeof path !== "string" || !path.startsWith("/") || /[\0\r\n]|:\/\//.test(path)) return [];
+    const root =
+      kind === "formattedTranscript" ||
+      kind === "status" ||
+      (kind === "media" && job.storageSurface === "content-tree")
+        ? destination
+        : recordingRoot;
+    if (!root || !resolve(path).startsWith(`${resolve(root)}${sep}`)) return [];
+    return [{ path, root }];
+  });
+  let unreadableEvidence = false;
+  const availableArtifacts = (
+    await Promise.all(
+      entries.map(async ({ path, root }) => {
+        try {
+          await assertMediaArtifactPath(path, root);
+          const info = await lstat(path);
+          return info.isFile() ? path : null;
+        } catch (error) {
+          if (error.code !== "ENOENT") unreadableEvidence = true;
+          return null;
+        }
+      }),
+    )
+  ).filter(Boolean);
+  const formattedPresent = availableArtifacts.includes(artifacts.formattedTranscript);
+  let changed = false;
+  if (formattedPresent && job.formattedSha256) {
+    try {
+      const content = await readFile(artifacts.formattedTranscript);
+      changed = createHash("sha256").update(content).digest("hex") !== job.formattedSha256;
+    } catch {
+      unreadableEvidence = true;
+    }
+  }
+  let evidence = null;
+  if (mediaRoot && isMediaJobComplete(job) && !unreadableEvidence) {
+    try {
+      evidence = await mediaArtifactEvidenceUpdate(job, { mediaRoot, course: { destination } });
+    } catch {
+      unreadableEvidence = true;
+    }
+  }
+  const missingTranscript =
+    isMediaJobComplete(job) &&
+    (!artifacts.rawTranscript ||
+      !formattedPresent ||
+      (mediaRoot && !availableArtifacts.includes(artifacts.rawTranscript)));
+  const invalid =
+    unreadableEvidence || changed || missingTranscript || evidence?.complete === false;
+  const verified = mediaRoot && isMediaJobComplete(job) && !invalid;
+  const artifactIntegrity = verified
+    ? "source and derivative digests verified against workflow evidence; speech quality unverified"
+    : `queue declaration; visible artifact presence checked${formattedPresent && job.formattedSha256 && !changed ? "; derivative digest checked" : "; derivative ownership/integrity unverified"}; source integrity and speech quality unverified`;
+  const media = Object.fromEntries(
+    ["video", "audio"].map((kind) => {
+      const value = job.media?.[kind];
+      return [
+        kind,
+        value
+          ? {
+              ...value,
+              available: value.available === true && availableArtifacts.includes(value.path),
+              availabilityVerified: entries.some(({ path }) => path === value.path),
+              declaredAvailable: value.available === true,
+            }
+          : value,
+      ];
+    }),
+  );
+  return {
+    ...job,
+    availableArtifacts,
+    checkedArtifacts: entries.map(({ path }) => path),
+    artifactIntegrity,
+    media,
+    ...(invalid
+      ? {
+          complete: false,
+          stage: "red",
+          verdict: "red",
+          transcript: { ...job.transcript, complete: false },
+          limitations: [
+            ...(job.limitations ?? []),
+            ...(evidence?.limitations ?? []),
+            changed
+              ? "Formatted transcript differs from workflow evidence; preserved unchanged. Explicit regeneration or Owner review is required."
+              : "Source or formatted transcript evidence is missing or unverified; queue completion is not current file integrity evidence.",
+          ],
+        }
+      : {}),
+  };
 }

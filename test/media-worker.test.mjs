@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import { readMediaQueue, writeMediaQueue } from "../src/media/queue.mjs";
+import { readMediaQueue, writeMediaQueue, updateMediaQueueJob } from "../src/media/queue.mjs";
 import {
   isOvernightWindow,
   mediaDigestPaths,
@@ -35,7 +36,7 @@ test("processes every enabled queue one appearance at a time and writes an indep
       await Promise.resolve();
       events.push(`end:${job.recordingId}`);
       active -= 1;
-      return completeResult({ artifacts: {} });
+      return completeResult(statePath, job);
     },
   });
 
@@ -89,17 +90,15 @@ test("updates the course and recording status documents from worker results", as
     statePath,
     courses: [course],
     mode: "manual",
-    async runJob() {
+    async runJob(job) {
+      const result = await completeResult(statePath, job);
       return {
-        complete: true,
-        stage: "complete",
-        verdict: "green",
-        transcript: { complete: true, sourceKind: "provider", language: "en-SG" },
+        ...result,
         duration: 10,
         speechDuration: 9,
         media: {
-          video: { available: true, quality: 720, audio: true },
-          audio: { available: true, quality: null, audio: true },
+          video: { available: true, quality: 720, audio: true, path: result.artifacts.media.path },
+          audio: { available: true, quality: null, audio: true, path: result.artifacts.media.path },
         },
       };
     },
@@ -122,6 +121,12 @@ test("updates the course and recording status documents from worker results", as
     await readFile(join(course.destination, "Media Gallery/Week 1.media-status.md"), "utf8"),
     /Speech duration: 9\.0s/,
   );
+  const status = await readFile(
+    join(course.destination, "Media Gallery/Week 1.media-status.md"),
+    "utf8",
+  );
+  assert.match(status, /State: ready \(local artifact digests verified\)/);
+  assert.match(status, /speech quality unverified/);
 });
 
 test("does not accept a green worker result without a complete transcript", async () => {
@@ -133,7 +138,7 @@ test("does not accept a green worker result without a complete transcript", asyn
     statePath,
     courses: [COURSE],
     mode: "manual",
-    async runJob() {
+    async runJob(_job) {
       return {
         complete: true,
         stage: "complete",
@@ -172,9 +177,9 @@ test("retries a durable complete flag whose transcript is incomplete", async () 
     statePath,
     courses: [COURSE],
     mode: "manual",
-    async runJob() {
+    async runJob(job) {
       attempts += 1;
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -196,9 +201,9 @@ test("scheduled work does not start outside the overnight window, while manual w
     statePath,
     courses: [COURSE],
     now: () => new Date("2026-08-16T05:00:00+08:00"),
-    async runJob() {
+    async runJob(job) {
       attempted += 1;
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -211,9 +216,9 @@ test("scheduled work does not start outside the overnight window, while manual w
     courses: [COURSE],
     mode: "manual",
     now: () => new Date("2026-08-16T12:00:00+08:00"),
-    async runJob() {
+    async runJob(job) {
       attempted += 1;
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -246,7 +251,7 @@ test("keeps work pending before its eligible window and turns an incomplete atte
     courses: [course],
     timeZone: "Asia/Singapore",
     now: () => new Date("2026-08-16T05:00:00+08:00"),
-    async runJob() {
+    async runJob(_job) {
       throw new Error("scheduled work must wait outside the window");
     },
   });
@@ -261,7 +266,7 @@ test("keeps work pending before its eligible window and turns an incomplete atte
     courses: [course],
     timeZone: "Asia/Singapore",
     now: () => new Date("2026-08-17T01:00:00+08:00"),
-    async runJob() {
+    async runJob(_job) {
       return {
         complete: false,
         stage: "pending",
@@ -335,7 +340,7 @@ test("stops the current job at 04:00 and leaves a checkpoint that a later run re
     now: () => new Date("2026-08-16T12:00:00+08:00"),
     async runJob(job) {
       assert.match(job.recordingId, /^lecture-[12]$/);
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -389,7 +394,7 @@ test("keeps every enabled course in a failed preflight aggregate", async () => {
     async preflight() {
       throw new Error("Runtime verification failed. Run: npm run media:setup");
     },
-    async runJob() {
+    async runJob(_job) {
       throw new Error("preflight must stop jobs");
     },
   });
@@ -414,7 +419,7 @@ test("keeps recording failures retryable while continuing with later appearances
     async runJob(job) {
       attempted.push(job.recordingId);
       if (job.recordingId === "failed-1") throw new Error("provider unavailable");
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
   const queue = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
@@ -442,7 +447,7 @@ test("skips a completed appearance and never persists an execution-time provider
     async runJob(job) {
       attempts += 1;
       job.resolvedUrl = "https://provider.example.test/expiring?token=secret";
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -450,7 +455,7 @@ test("skips a completed appearance and never persists an execution-time provider
     statePath,
     courses: [COURSE],
     mode: "manual",
-    async runJob() {
+    async runJob(_job) {
       throw new Error("a completed appearance must not run again");
     },
   });
@@ -479,9 +484,9 @@ test("stops before any job on a global media-store safety failure", async () => 
       error.globalSafety = true;
       throw error;
     },
-    async runJob() {
+    async runJob(job) {
       attempted += 1;
-      return completeResult();
+      return completeResult(statePath, job);
     },
   });
 
@@ -510,7 +515,7 @@ test("writes a red course status when the media-store preflight fails", async ()
       error.globalSafety = true;
       throw error;
     },
-    async runJob() {
+    async runJob(_job) {
       throw new Error("preflight must stop the queue");
     },
   });
@@ -545,7 +550,7 @@ test("writes red status and retry history when a running job hits global safety"
     statePath,
     courses: [course],
     mode: "manual",
-    async runJob() {
+    async runJob(_job) {
       const error = new Error("Media store disappeared during acquisition.");
       error.globalSafety = true;
       throw error;
@@ -579,7 +584,7 @@ test("writes red course status when the durable queue cannot be read", async () 
     readQueue: async () => {
       throw new Error("queue state is unreadable");
     },
-    async runJob() {
+    async runJob(_job) {
       throw new Error("queue read must stop before a job");
     },
   });
@@ -651,7 +656,7 @@ test("records an overlapping run without starting another provider job", async (
       error.code = "MEDIA_QUEUE_LOCK_HELD";
       throw error;
     },
-    async runJob() {
+    async runJob(_job) {
       throw new Error("the overlapping run must not start a job");
     },
   });
@@ -669,7 +674,7 @@ test("keeps an explicit terminal failure red without retrying it", async () => {
     statePath,
     courses: [COURSE],
     mode: "manual",
-    async runJob() {
+    async runJob(_job) {
       attempts += 1;
       return {
         complete: false,
@@ -701,6 +706,11 @@ async function writeQueue(statePath, course, recordingIds) {
       verdict: "green",
       queue: recordingIds.map((recordingId) => ({
         recordingId,
+        courseKey: course.key,
+        courseId: course.courseId,
+        placement: {
+          destination: course.destination ?? join(dirname(statePath), "course", course.key),
+        },
         provider: recordingId.split("-")[0],
       })),
     },
@@ -708,15 +718,146 @@ async function writeQueue(statePath, course, recordingIds) {
 }
 
 function runQueue(options) {
-  return runMediaQueue({ preflight: async () => {}, ...options });
+  return runMediaQueue({
+    preflight: async () => {},
+    ...options,
+    media: { mediaRoot: join(dirname(options.statePath), "media") },
+    courses: options.courses.map((course) => ({
+      ...course,
+      destination: course.destination ?? join(dirname(options.statePath), "course", course.key),
+    })),
+  });
 }
 
-function completeResult(extra = {}) {
+async function completeResult(statePath, job, extra = {}) {
+  const root = join(
+    dirname(statePath),
+    "media",
+    "recordings",
+    createHash("sha256").update(job.recordingId).digest("hex").slice(0, 24),
+  );
+  await mkdir(root, { recursive: true });
+  const rawTranscript = join(root, "transcript.raw.json");
+  const destination =
+    job.placement?.destination ?? join(dirname(statePath), "course", job.courseKey ?? COURSE.key);
+  await mkdir(destination, { recursive: true });
+  const formattedTranscript = join(
+    destination,
+    `${job.recordingId.replaceAll(":", "_")}.transcript.md`,
+  );
+  const media = join(root, "lecture.mp4");
+  await Promise.all([
+    writeFile(rawTranscript, "source"),
+    writeFile(formattedTranscript, "formatted"),
+    writeFile(media, "media"),
+  ]);
   return {
     complete: true,
     stage: "complete",
     verdict: "green",
     transcript: { complete: true, sourceKind: "provider", language: "en-SG" },
+    artifacts: {
+      rawTranscript: { path: rawTranscript },
+      formattedTranscript: { path: formattedTranscript },
+      media: { path: media },
+    },
+    sourceSha256: createHash("sha256").update("source").digest("hex"),
+    formattedSha256: createHash("sha256").update("formatted").digest("hex"),
     ...extra,
   };
 }
+
+test("missing source with a preserved formatted transcript emits red without overwriting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-missing-source-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    runJob: (job) => completeResult(statePath, job),
+  };
+  assert.equal((await runQueue(options)).verdict, "green");
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  const prior = await readFile(held.artifacts.formattedTranscript, "utf8");
+  await unlink(held.artifacts.rawTranscript);
+  const result = await runQueue({
+    ...options,
+    runJob: async () => assert.fail("must preserve source-less derivative"),
+  });
+  assert.equal(result.verdict, "red");
+  assert.equal(mediaWorkerExitCode(result), 1);
+  assert.equal(await readFile(held.artifacts.formattedTranscript, "utf8"), prior);
+  const retained = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.equal(retained.retryable, false);
+  assert.match(retained.limitations.join(" "), /regeneration|review/i);
+});
+
+test("unreadable evidence returned by a job publishes a red digest with an action", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-unreadable-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  const result = await runQueue({
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    runJob: async (job) => {
+      const complete = await completeResult(statePath, job);
+      await unlink(complete.artifacts.rawTranscript.path);
+      await mkdir(complete.artifacts.rawTranscript.path);
+      return complete;
+    },
+  });
+  assert.equal(result.verdict, "red");
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.match(held.lastError, /Check artifact permissions/);
+});
+
+test("reconstructs legacy queue digests only from matching owned metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-legacy-proof-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    runJob: (job) => completeResult(statePath, job),
+  };
+  await runQueue(options);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  await writeFile(
+    join(dirname(held.artifacts.rawTranscript), "transcript.metadata.json"),
+    JSON.stringify({
+      recordingId: held.recordingId,
+      sourceSha256: held.sourceSha256,
+      formattedSha256: held.formattedSha256,
+    }),
+  );
+  await updateMediaQueueJob({
+    statePath,
+    courseKey: COURSE.key,
+    recordingId: held.recordingId,
+    update: { sourceSha256: null, formattedSha256: null },
+  });
+  const skipped = await runQueue({
+    ...options,
+    runJob: async () => assert.fail("owned metadata should reconstruct completion"),
+  });
+  assert.equal(skipped.verdict, "green");
+  const restored = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.equal(restored.sourceSha256, held.sourceSha256);
+  assert.equal(restored.formattedSha256, held.formattedSha256);
+  await writeFile(held.artifacts.formattedTranscript, "user edit");
+  await updateMediaQueueJob({
+    statePath,
+    courseKey: COURSE.key,
+    recordingId: held.recordingId,
+    update: { sourceSha256: null, formattedSha256: null },
+  });
+  const edited = await runQueue({
+    ...options,
+    runJob: async () => assert.fail("changed derivative requires review"),
+  });
+  assert.equal(edited.verdict, "red");
+  assert.equal(await readFile(held.artifacts.formattedTranscript, "utf8"), "user edit");
+});
