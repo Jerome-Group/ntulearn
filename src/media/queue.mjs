@@ -1,3 +1,4 @@
+import { queueCourseBoundary } from "./queue-course.mjs";
 import { recordingDisposition } from "./disposition.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -52,12 +53,20 @@ export async function writeMediaQueue({
   read = readFile,
 }) {
   const path = mediaQueuePath(statePath, course.key);
-  const existing = await readMediaQueue({ statePath, courseKey: course.key, course, read });
+  const boundary = queueCourseBoundary({ course });
+  const existing = await readMediaQueue({
+    statePath,
+    courseKey: course.key,
+    course,
+    read,
+    boundary,
+  });
   if (discovery.complete !== true && existing.record) {
     const status = await persistQueueStatuses({
       course,
       discovery,
       queue: existing.record.queue,
+      boundary,
       now,
       write,
     });
@@ -65,8 +74,8 @@ export async function writeMediaQueue({
   }
   const discoveredQueue =
     discovery.complete === true && Array.isArray(discovery.queue) ? discovery.queue : [];
-  assertQueueCourse(discoveredQueue, course, course.courseId);
-  const reconciledQueue = mergeQueue(existing.record?.queue, discoveredQueue);
+  await boundary.assert(discoveredQueue, course.courseId);
+  const reconciledQueue = mergeQueue(existing.record?.queue, discoveredQueue, boundary);
   const transition = withdrawal
     ? withdrawQueuedRecording({ queue: reconciledQueue, ...withdrawal })
     : { status: "written", queue: reconciledQueue };
@@ -92,6 +101,7 @@ export async function writeMediaQueue({
     course,
     discovery,
     queue,
+    boundary,
     now,
     write,
   });
@@ -102,7 +112,13 @@ export function mediaQueuePath(statePath, courseKey) {
   return join(dirname(statePath), "media-queue", `${safeCourseKey(courseKey)}.json`);
 }
 
-export async function readMediaQueue({ statePath, courseKey, course = null, read = readFile }) {
+export async function readMediaQueue({
+  statePath,
+  courseKey,
+  course = null,
+  read = readFile,
+  boundary = queueCourseBoundary({ course }),
+}) {
   const path = mediaQueuePath(statePath, courseKey);
   let content = await read(path).catch((error) => {
     if (error.code === "ENOENT") return null;
@@ -142,7 +158,7 @@ export async function readMediaQueue({ statePath, courseKey, course = null, read
       "Media queue belongs to another course. Run media discovery for the configured course; existing artifacts are retained.",
     );
   }
-  assertQueueCourse(record?.queue, course, record?.courseId);
+  await boundary.assert(record?.queue, record?.courseId);
   return { path, record };
 }
 
@@ -160,7 +176,8 @@ export async function updateMediaQueueJob({
     throw new Error("Media queue job updates need an object.");
   }
 
-  const loaded = await readMediaQueue({ statePath, courseKey, course, read });
+  const boundary = queueCourseBoundary({ course });
+  const loaded = await readMediaQueue({ statePath, courseKey, course, read, boundary });
   if (!loaded.record || !Array.isArray(loaded.record.queue)) {
     throw new Error(
       `No durable media queue exists for ${courseKey}. Run: npm run media:discover -- ${courseKey}`,
@@ -190,6 +207,7 @@ export async function updateMediaQueueJob({
     now,
     write,
     recording: queue[index],
+    boundary,
   });
   return { path: loaded.path, record, job: queue[index], statusPath: status?.path };
 }
@@ -216,7 +234,7 @@ export function withdrawQueuedRecording({ queue, recordingId, confirmed }) {
   return { status: "withdrawn", queue: next };
 }
 
-function mergeQueue(previousQueue, discoveredQueue) {
+function mergeQueue(previousQueue, discoveredQueue, boundary) {
   const previous = Array.isArray(previousQueue) ? previousQueue : [];
   const previousById = new Map(
     previous.filter((job) => job?.recordingId).map((job) => [job.recordingId, job]),
@@ -261,15 +279,18 @@ function mergeQueue(previousQueue, discoveredQueue) {
     }
     return reconciled;
   });
-  return rejectPlacementCollisions([
-    ...merged,
-    ...previous.filter(
-      (job) =>
-        job?.recordingId &&
-        !retainedIds.has(job.recordingId) &&
-        !merged.some((fresh) => fresh.recordingId === job.recordingId),
-    ),
-  ]);
+  return rejectPlacementCollisions(
+    [
+      ...merged,
+      ...previous.filter(
+        (job) =>
+          job?.recordingId &&
+          !retainedIds.has(job.recordingId) &&
+          !merged.some((fresh) => fresh.recordingId === job.recordingId),
+      ),
+    ],
+    boundary,
+  );
 }
 
 function candidateKey(job) {
@@ -436,19 +457,49 @@ function safeCheckpoint(value) {
   return { at: value.at, reason: publicMediaError(value.reason) };
 }
 
-async function persistQueueStatuses({ course, discovery, queue, now, write, recording = null }) {
+async function persistQueueStatuses({
+  course,
+  discovery,
+  queue,
+  now,
+  write,
+  recording = null,
+  boundary,
+}) {
   if (!course?.destination) return null;
-  const courseStatus = await writeMediaCourseStatus({ course, discovery, queue, now, write });
+  const statusCourse = { ...course, destination: boundary.placementKey(course.destination) };
+  const statusAppearance = (job) =>
+    job.placement
+      ? {
+          ...job,
+          placement: {
+            ...job.placement,
+            destination: boundary.placementKey(job.placement.destination),
+          },
+        }
+      : job;
+  const courseStatus = await writeMediaCourseStatus({
+    course: statusCourse,
+    discovery,
+    queue: queue.map(statusAppearance),
+    now,
+    write,
+  });
   if (recording) {
     await writeMediaRecordingStatus({
-      appearance: recording,
-      job: recording,
+      appearance: statusAppearance(recording),
+      job: statusAppearance(recording),
       now,
       write,
     });
   } else {
     for (const appearance of queue) {
-      await writeMediaRecordingStatus({ appearance, job: appearance, now, write });
+      await writeMediaRecordingStatus({
+        appearance: statusAppearance(appearance),
+        job: statusAppearance(appearance),
+        now,
+        write,
+      });
     }
   }
   return courseStatus;
@@ -460,22 +511,7 @@ function safeCourseKey(value) {
   return encodeURIComponent(key);
 }
 
-function assertQueueCourse(queue, course, courseId) {
-  for (const job of queue ?? []) {
-    if (
-      (job.courseId && job.courseId !== courseId) ||
-      (course?.destination &&
-        job.placement?.destination &&
-        job.placement.destination !== course.destination)
-    ) {
-      throw new Error(
-        "Media queue appearance belongs to another course or destination. Existing artifacts are retained; review the course configuration.",
-      );
-    }
-  }
-}
-
-function rejectPlacementCollisions(queue) {
+function rejectPlacementCollisions(queue, boundary) {
   const claims = new Map();
   const collisions = new Set();
   for (const job of queue) {
@@ -483,7 +519,8 @@ function rejectPlacementCollisions(queue) {
     if (!placement?.destination) continue;
     for (const field of ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"]) {
       if (!placement[field]) continue;
-      const path = `${placement.destination}/${placement[field]}`.toLowerCase();
+      const path =
+        `${boundary.placementKey(placement.destination)}/${placement[field]}`.toLowerCase();
       const owner = claims.get(path);
       if (owner && owner !== job.recordingId) {
         collisions.add(owner);

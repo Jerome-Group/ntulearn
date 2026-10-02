@@ -699,3 +699,219 @@ test("fresh document evidence never hides retained transcripts or transfers ambi
   );
   assert.deepEqual(record.queue[1].artifacts, old.artifacts);
 });
+
+test("physical destination aliases preserve read, merge and update ownership", async (t) => {
+  const { mkdir, symlink, writeFile, rm } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-queue-alias-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const destination = join(root, "course");
+  const alias = join(root, "alias");
+  await mkdir(destination);
+  await symlink(destination, alias);
+  const course = { ...COURSE, destination };
+  const statePath = join(root, "state.json");
+  const checkpoint = { at: "2026-10-03T00:00:00Z", reason: "Synthetic checkpoint" };
+  const source = join(alias, "source.json");
+  const edited = join(alias, "Lecture.transcript.md");
+  await writeFile(source, "Preserved synthetic source");
+  await writeFile(edited, "Student edited derivative");
+  const job = {
+    recordingId: "synthetic-recording",
+    courseKey: course.key,
+    courseId: course.courseId,
+    title: "Lecture",
+    provider: "kaltura",
+    providerReference: "entry:stable",
+    sourceKind: "content-tree",
+    disposition: "recording",
+    stage: "failed",
+    attempts: 3,
+    checkpoint,
+    artifacts: { rawTranscript: source, formattedTranscript: edited },
+    placement: {
+      destination: alias,
+      videoPath: "Lecture.mp4",
+      formattedTranscriptPath: "Lecture.transcript.md",
+      statusPath: "Lecture.media-status.md",
+    },
+  };
+  const path = mediaQueuePath(statePath, course.key);
+  await mkdir(join(root, "media-queue"));
+  await writeFile(
+    path,
+    JSON.stringify({
+      courseKey: course.key,
+      courseId: course.courseId,
+      complete: true,
+      queue: [job],
+    }),
+  );
+  const read = await readMediaQueue({ statePath, courseKey: course.key, course });
+  assert.equal(read.record.queue[0].placement.destination, alias);
+  await writeMediaQueue({
+    statePath,
+    course,
+    discovery: {
+      complete: true,
+      queue: [{ ...job, placement: { ...job.placement, destination } }],
+    },
+  });
+  const updated = await updateMediaQueueJob({
+    statePath,
+    courseKey: course.key,
+    course,
+    recordingId: job.recordingId,
+    update: { attempts: 4 },
+  });
+  assert.deepEqual(updated.job.placement, job.placement);
+  assert.deepEqual(updated.job.artifacts, job.artifacts);
+  assert.deepEqual(updated.job.checkpoint, checkpoint);
+  assert.equal(updated.job.attempts, 4);
+  assert.equal(await readFile(source, "utf8"), "Preserved synthetic source");
+  assert.equal(await readFile(edited, "utf8"), "Student edited derivative");
+});
+
+test("unverified destinations refuse read, publication and update before changing owned bytes", async (t) => {
+  const { mkdir, symlink, writeFile, rm } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-queue-alias-refusal-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const destination = join(root, "course");
+  const other = join(root, "other-course");
+  const alias = join(root, "alias");
+  await mkdir(destination);
+  await mkdir(other);
+  await mkdir(join(root, "media-queue"));
+  const course = { ...COURSE, destination };
+  const statePath = join(root, "state.json");
+  const path = mediaQueuePath(statePath, course.key);
+  const ownedPath = join(destination, "student.md");
+  await writeFile(ownedPath, "Student-owned bytes");
+  const notDirectory = join(root, "not-directory");
+  await writeFile(notDirectory, "Retained regular file");
+  const good = {
+    recordingId: "synthetic",
+    courseId: course.courseId,
+    title: "Lecture",
+    provider: "kaltura",
+    providerReference: "entry:stable",
+    placement: { destination: alias, statusPath: "Lecture.media-status.md" },
+    attempts: 3,
+  };
+  for (const bad of [
+    { ...good, courseId: "other-course" },
+    { ...good, placement: { ...good.placement, destination: other } },
+    { ...good, placement: { ...good.placement, destination: join(root, "missing") } },
+    { ...good, placement: { ...good.placement, destination: notDirectory } },
+    { ...good, placement: { destination: 42 } },
+  ]) {
+    const bytes = JSON.stringify({
+      courseKey: course.key,
+      courseId: course.courseId,
+      queue: [bad],
+    });
+    await writeFile(path, bytes);
+    await assert.rejects(
+      readMediaQueue({ statePath, courseKey: course.key, course }),
+      /review the course configuration/,
+    );
+    await assert.rejects(
+      writeMediaQueue({ statePath, course, discovery: { complete: true, queue: [good] } }),
+      /review the course configuration/,
+    );
+    await assert.rejects(
+      updateMediaQueueJob({
+        statePath,
+        courseKey: course.key,
+        course,
+        recordingId: good.recordingId,
+        update: { attempts: 4 },
+      }),
+      /review the course configuration/,
+    );
+    assert.equal(await readFile(path, "utf8"), bytes);
+    assert.equal(await readFile(ownedPath, "utf8"), "Student-owned bytes");
+  }
+  await writeFile(
+    path,
+    JSON.stringify({ courseKey: course.key, courseId: course.courseId, queue: [good] }),
+  );
+  await assert.rejects(
+    updateMediaQueueJob({
+      statePath,
+      courseKey: course.key,
+      course,
+      recordingId: good.recordingId,
+      update: { attempts: 4 },
+    }),
+    /restore accessible course folders/,
+  );
+  await symlink(destination, alias);
+  const recovered = await updateMediaQueueJob({
+    statePath,
+    courseKey: course.key,
+    course,
+    recordingId: good.recordingId,
+    update: { attempts: 4 },
+  });
+  assert.equal(recovered.job.attempts, 4);
+  assert.equal(recovered.job.placement.destination, alias);
+  const priorBytes = await readFile(path, "utf8");
+  for (const destination of [other, join(root, "missing"), notDirectory]) {
+    await assert.rejects(
+      writeMediaQueue({
+        statePath,
+        course,
+        discovery: {
+          complete: true,
+          queue: [{ ...good, placement: { ...good.placement, destination } }],
+        },
+      }),
+      /review the course configuration/,
+    );
+    assert.equal(await readFile(path, "utf8"), priorBytes);
+  }
+  assert.equal(await readFile(ownedPath, "utf8"), "Student-owned bytes");
+});
+
+test("distinct recorded aliases cannot bypass physical artifact placement collisions", async (t) => {
+  const { mkdir, symlink, writeFile, rm } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-queue-alias-collision-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const destination = join(root, "course");
+  await mkdir(destination);
+  const first = join(root, "alias-one");
+  const second = join(root, "alias-two");
+  await symlink(destination, first);
+  await symlink(destination, second);
+  const course = { ...COURSE, destination };
+  const statePath = join(root, "state.json");
+  const edited = join(destination, "Lecture.transcript.md");
+  await writeFile(edited, "Student edited derivative");
+  const queue = [first, second].map((path, index) => ({
+    recordingId: `recording-${index}`,
+    courseId: course.courseId,
+    title: "Lecture",
+    disposition: "recording",
+    provider: "kaltura",
+    providerReference: `entry:${index}`,
+    placement: {
+      destination: path,
+      formattedTranscriptPath: "Lecture.transcript.md",
+      statusPath: "Lecture.media-status.md",
+    },
+  }));
+  const saved = await writeMediaQueue({ statePath, course, discovery: { complete: true, queue } });
+  const retained = JSON.parse(await readFile(saved.path, "utf8")).queue;
+  assert.deepEqual(
+    retained.map((job) => job.placement.destination),
+    [first, second],
+  );
+  assert.deepEqual(
+    retained.map((job) => [job.stage, job.verdict, job.retryable]),
+    [
+      ["failed", "red", false],
+      ["failed", "red", false],
+    ],
+  );
+  assert.equal(await readFile(edited, "utf8"), "Student edited derivative");
+});
