@@ -1,3 +1,4 @@
+import { sessionPath } from "./session-path.mjs";
 import { absoluteUrl } from "../ntulearn/urls.mjs";
 import { acquireRepresentation, chooseRepresentation } from "./acquisition.mjs";
 
@@ -46,7 +47,7 @@ export function kalturaReferenceOf(value) {
   const pathReference = safeEntryReference(pathEntry);
   if (pathReference) return pathReference;
   if (!isKalturaUrl(parsed)) return null;
-  return `path:${parsed.hostname}${parsed.pathname}`;
+  return `path:${parsed.hostname}${sessionPath(parsed.pathname).value}`;
 }
 
 export function isKalturaUrl(value) {

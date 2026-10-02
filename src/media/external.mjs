@@ -1,3 +1,4 @@
+import { sessionPath } from "./session-path.mjs";
 import { createHash } from "node:crypto";
 import { absoluteUrl } from "../ntulearn/urls.mjs";
 import { MEDIA_ADDRESS_KEYS } from "./addresses.mjs";
@@ -182,7 +183,7 @@ export function stableProviderReference(provider, value) {
   assertProviderName(provider);
   const prefix = provider === "unsupported" ? "unsupported" : safeIdentity(provider);
   const id = stableIdOf(value);
-  if (id) return `${prefix}:id:${safeIdentity(id)}`;
+  if (id) return `${prefix}:id:${safeIdentity(sessionPath(id).value)}`;
 
   const address = addressOf(value);
   const addressParts = stableAddressParts(address);
@@ -317,7 +318,7 @@ function stableQuery(parsed) {
   return [...parsed.searchParams.entries()]
     .filter(([key, value]) => STABLE_QUERY_KEYS.has(key) && value)
     .sort(([first], [second]) => first.localeCompare(second))
-    .map(([key, value]) => `${safeIdentity(key)}=${safeIdentity(value)}`)
+    .map(([key, value]) => `${safeIdentity(key)}=${safeIdentity(sessionPath(value).value)}`)
     .join("&");
 }
 
@@ -342,7 +343,7 @@ function normalizeProviderReference(provider, reference) {
     return `${prefix}opaque:${shapeDigest(body)}`;
   }
   EPHEMERAL_PARAMETER_PATTERN.lastIndex = 0;
-  return `${prefix}${safeIdentity(body)}`;
+  return `${prefix}${safeIdentity(sessionPath(body).value)}`;
 }
 
 function shapeDigest(value) {
@@ -382,7 +383,7 @@ function shapeOf(value, seen = new WeakSet(), key = "", depth = 0, budget = { re
         addressParts.query ? `?${addressParts.query}` : ""
       }`;
     }
-    return `text:${redactEphemeralParameters(value)}`;
+    return `text:${redactEphemeralParameters(sessionPath(value).value)}`;
   }
   return `${typeof value}:${JSON.stringify(value)}`;
 }
@@ -391,7 +392,7 @@ function stableAddressParts(value) {
   if (!addressLike(value)) return null;
   try {
     const parsed = new URL(absoluteUrl(value));
-    const identity = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, "");
+    const identity = `${parsed.hostname}${sessionPath(parsed.pathname).value}`.replace(/\/+$/, "");
     return identity ? { identity, query: stableQuery(parsed) } : null;
   } catch {
     return null;

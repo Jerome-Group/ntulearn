@@ -1,3 +1,4 @@
+import { sessionPath } from "./session-path.mjs";
 import { recordingDisposition } from "./disposition.mjs";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
@@ -131,7 +132,9 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
       job.classificationEvidence ??
       appearance.classificationEvidence ??
       "legacy declaration; resource disposition not independently evidenced",
-    recordingId: job.recordingId ?? appearance.recordingId ?? null,
+    recordingId:
+      sessionPath(job.recordingId ?? appearance.recordingId ?? "", { retained: true }).value ||
+      null,
     title: cleanText(job.title ?? appearance.title ?? "Untitled recording"),
     provider: job.providerName ?? job.provider ?? appearance.provider ?? "unknown",
     sourceKind: job.sourceKind ?? appearance.sourceKind ?? "unknown",
@@ -371,7 +374,7 @@ function asDate(value) {
 
 function stableReference(value) {
   if (typeof value !== "string") return null;
-  return cleanText(value.split(/[?#&\s]/, 1)[0]);
+  return cleanText(sessionPath(value, { retained: true }).value.split(/[?#&\s]/, 1)[0]);
 }
 
 function artifactLocations(appearance, job) {

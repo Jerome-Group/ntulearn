@@ -1,3 +1,4 @@
+import { sessionPath } from "./session-path.mjs";
 import { MEDIA_ADDRESS_KEYS } from "./addresses.mjs";
 import { directMediaKindOf, directMediaReferenceOf } from "./direct.mjs";
 import { externalRecordingAdapters, stableProviderReference } from "./external.mjs";
@@ -68,6 +69,29 @@ export function classifyRecordingCandidate({
       classificationEvidence: "conflicting-or-incomplete",
       limitation:
         "Resource metadata is conflicting or exceeds the bounded inspection. Appearance unresolved; inspect it in NTULearn and run media discovery after metadata is clarified.",
+    };
+  }
+  const sessionAddress = evidence.values.some((candidate) => {
+    const fields =
+      typeof candidate === "string"
+        ? [candidate]
+        : MEDIA_ADDRESS_KEYS.map((key) => candidate?.[key]);
+    return fields.some((field) => typeof field === "string" && hasSessionDependentPath(field));
+  });
+  const independentIdentity =
+    classification?.provider === "youtube" ||
+    (classification?.provider === "kaltura" &&
+      classification.providerReference.startsWith("entry:"));
+  if (sessionAddress && !independentIdentity) {
+    return {
+      ...base,
+      ...common,
+      provider: "unsupported",
+      disposition: "unresolved",
+      classificationEvidence: "session-dependent-reference",
+      retryable: true,
+      limitation:
+        "Session-bearing source lacks a supported independent acquisition identity. Session values excluded; media identity and completeness remain unresolved. Inspect in NTULearn and rediscover with a stable reference.",
     };
   }
   if (classification)
@@ -221,4 +245,9 @@ function candidateEvidence(roots) {
     media,
     mixed: document && media,
   };
+}
+
+function hasSessionDependentPath(value) {
+  const path = sessionPath(value);
+  return path.sessionBearing || path.uncertain;
 }
