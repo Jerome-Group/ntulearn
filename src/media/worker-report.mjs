@@ -1,3 +1,4 @@
+import { recordingDisposition } from "./disposition.mjs";
 import { safeLimitations } from "./worker-state.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 
@@ -76,6 +77,8 @@ export function countQueue(queue) {
   return queue.reduce(
     (counts, job) => {
       if (job.withdrawn === true || job.stage === "withdrawn") counts.withdrawn += 1;
+      else if (recordingDisposition(job) === "non-recording") counts.excluded += 1;
+      else if (recordingDisposition(job) === "unresolved") counts.unresolved += 1;
       else if (isMediaJobComplete(job)) counts.completed += 1;
       else if (job.stage === "failed" || job.stage === "red" || job.verdict === "red")
         counts.failed += 1;
@@ -84,14 +87,32 @@ export function countQueue(queue) {
       else counts.queued += 1;
       return counts;
     },
-    { queued: 0, active: 0, checkpointed: 0, completed: 0, failed: 0, withdrawn: 0 },
+    {
+      excluded: 0,
+      unresolved: 0,
+      queued: 0,
+      active: 0,
+      checkpointed: 0,
+      completed: 0,
+      failed: 0,
+      withdrawn: 0,
+    },
   );
 }
 
 export function summarizeCounts(summaries) {
   return summaries.reduce(
     (counts, summary) => {
-      for (const key of ["queued", "active", "checkpointed", "completed", "failed", "withdrawn"]) {
+      for (const key of [
+        "queued",
+        "active",
+        "checkpointed",
+        "completed",
+        "failed",
+        "withdrawn",
+        "excluded",
+        "unresolved",
+      ]) {
         counts[key] += summary[key] ?? 0;
       }
       counts.processed += summary.processed ?? 0;
@@ -107,6 +128,8 @@ export function summarizeCounts(summaries) {
       completed: 0,
       failed: 0,
       withdrawn: 0,
+      excluded: 0,
+      unresolved: 0,
     },
   );
 }
@@ -115,6 +138,7 @@ export function verdictFor({ summaries, counts, globalStop, stoppedAtBoundary })
   if (
     globalStop ||
     counts.failed ||
+    counts.unresolved ||
     summaries.some((summary) => summary.discoveryVerdict === "red")
   ) {
     return "red";
@@ -130,11 +154,11 @@ export function messageFor({ verdict, counts, globalStop, stoppedAtBoundary, sum
   }
   if (verdict === "red") {
     const limitation = summaries.find((summary) => summary.limitation)?.limitation;
-    return `Media queue red: ${counts.failed} recording failure(s); ${
+    return `Media queue red: ${counts.failed} recording failure(s), ${counts.unresolved} unresolved appearance(s), ${counts.excluded} excluded non-recording(s); ${
       limitation ? `first limitation: ${limitation}` : "retryable work remains queued."
     }`;
   }
   if (verdict === "yellow")
     return `Media queue pending: ${counts.queued + counts.checkpointed} recording(s) remain.`;
-  return `Media queue complete: ${counts.completed} recording(s) complete.`;
+  return `Media queue complete: ${counts.completed} recording(s) complete; ${counts.excluded} non-recording appearance(s) excluded without transcript completeness.`;
 }

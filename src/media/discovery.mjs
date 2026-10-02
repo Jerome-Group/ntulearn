@@ -77,6 +77,10 @@ function appearance({
   placement,
   provider,
   providerReference,
+  identityReference,
+  candidateReference,
+  disposition,
+  classificationEvidence,
   mediaType,
   providerName,
   providerShape,
@@ -87,7 +91,7 @@ function appearance({
 }) {
   const target = mediaPlacement({ course, item, placement, attachment });
   return {
-    recordingId: `content-tree:${course.courseId}:${item.id}:${providerReference}`,
+    recordingId: `content-tree:${course.courseId}:${item.id}:${identityReference ?? providerReference}`,
     courseKey: course.key,
     courseId: course.courseId,
     itemId: item.id,
@@ -96,6 +100,9 @@ function appearance({
     trail: placement.trail,
     provider,
     providerReference,
+    candidateReference,
+    disposition,
+    classificationEvidence,
     mediaType: mediaType ?? null,
     ...(providerName ? { providerName } : {}),
     ...(providerShape ? { providerShape } : {}),
@@ -134,12 +141,11 @@ function mediaPlacement({ course, item, placement, attachment }) {
 }
 
 function attachmentCandidates(attachments) {
-  return attachments.flatMap((attachment) => [
-    { value: attachment, sourceKind: "attachment", attachment },
-    ...["resourceUrl", "viewerUrl", "url", "launchUrl", "launchLink", "entryId", "entry_id"]
-      .filter((key) => attachment?.[key] != null)
-      .map((key) => ({ value: attachment[key], sourceKind: "attachment", attachment })),
-  ]);
+  return attachments.map((attachment) => ({
+    value: attachment,
+    sourceKind: "attachment",
+    attachment,
+  }));
 }
 
 function bodyCandidates(item) {

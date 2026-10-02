@@ -1,3 +1,4 @@
+import { recordingDisposition } from "./disposition.mjs";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -83,10 +84,18 @@ export async function writeMediaRecordingStatus({
 }
 
 export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => new Date() }) {
+  const disposition = recordingDisposition({ ...appearance, ...job });
   const withdrawn = job.withdrawn === true || job.stage === "withdrawn";
   const declaredComplete = job.complete === true || job.stage === "complete";
   const media = normalizedMedia(job.media);
   const transcript = normalizedTranscript(job.transcript);
+  if (disposition !== "recording") {
+    transcript.complete = false;
+    transcript.provenance =
+      disposition === "non-recording"
+        ? "not applicable; no transcript completeness claimed"
+        : "unresolved appearance; prior transcript evidence, if any, is retained without a completeness claim";
+  }
   const limitations = unique(
     [
       ...(Array.isArray(job.limitations) ? job.limitations : []),
@@ -97,14 +106,31 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
     ].map((limitation) => publicMediaError(limitation)),
   );
   const complete = isMediaJobComplete({ ...job, transcript });
-  const stage = withdrawn ? "withdrawn" : (job.stage ?? (complete ? "complete" : "queued"));
-  const verdict = withdrawn
-    ? "green"
-    : declaredComplete && !complete
-      ? "red"
-      : (job.verdict ?? (complete ? (limitations.length ? "yellow" : "green") : "yellow"));
+  const stage =
+    !withdrawn && disposition !== "recording"
+      ? disposition === "non-recording"
+        ? "excluded"
+        : "unresolved"
+      : withdrawn
+        ? "withdrawn"
+        : (job.stage ?? (complete ? "complete" : "queued"));
+  const verdict =
+    !withdrawn && disposition !== "recording"
+      ? disposition === "non-recording"
+        ? "green"
+        : "red"
+      : withdrawn
+        ? "green"
+        : declaredComplete && !complete
+          ? "red"
+          : (job.verdict ?? (complete ? (limitations.length ? "yellow" : "green") : "yellow"));
 
   return {
+    disposition,
+    classificationEvidence:
+      job.classificationEvidence ??
+      appearance.classificationEvidence ??
+      "legacy declaration; resource disposition not independently evidenced",
     recordingId: job.recordingId ?? appearance.recordingId ?? null,
     title: cleanText(job.title ?? appearance.title ?? "Untitled recording"),
     provider: job.providerName ?? job.provider ?? appearance.provider ?? "unknown",
@@ -117,7 +143,7 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
     stage,
     verdict,
     complete,
-    retryable: withdrawn ? false : job.retryable !== false,
+    retryable: disposition === "recording" && !withdrawn && job.retryable !== false,
     transcript,
     media,
     ...durationFields(job),
@@ -134,6 +160,8 @@ function countRecordings(recordings) {
     (counts, recording) => {
       counts.total += 1;
       if (recording.stage === "withdrawn") counts.withdrawn += 1;
+      else if (recording.disposition === "non-recording") counts.excluded += 1;
+      else if (recording.disposition === "unresolved") counts.unresolved += 1;
       else if (recording.complete) counts.complete += 1;
       else if (recording.verdict === "red" || recording.stage === "failed") counts.failed += 1;
       else if (recording.stage === "active") counts.active += 1;
@@ -141,14 +169,29 @@ function countRecordings(recordings) {
       else counts.queued += 1;
       return counts;
     },
-    { total: 0, complete: 0, queued: 0, active: 0, checkpointed: 0, failed: 0, withdrawn: 0 },
+    {
+      excluded: 0,
+      unresolved: 0,
+      total: 0,
+      complete: 0,
+      queued: 0,
+      active: 0,
+      checkpointed: 0,
+      failed: 0,
+      withdrawn: 0,
+    },
   );
 }
 
 function courseVerdict({ course, discovery, recordings, counts }) {
   if (course?.mediaMode === "off") return "green";
   if (discovery.complete !== true || discovery.verdict === "red") return "red";
-  if (counts.failed || recordings.some((recording) => recording.verdict === "red")) return "red";
+  if (
+    counts.unresolved ||
+    counts.failed ||
+    recordings.some((recording) => recording.verdict === "red")
+  )
+    return "red";
   if (
     counts.queued ||
     counts.active ||
@@ -200,7 +243,9 @@ function courseStatusMarkdown(status) {
     `- Media mode: ${cleanText(status.mediaMode)}`,
     `- Verdict: ${status.verdict}`,
     `- Discovery: ${status.discovery}`,
-    `- Recordings: ${status.counts.total}`,
+    `- Discovered appearances: ${status.counts.total}`,
+    `- Excluded non-recordings: ${status.counts.excluded}`,
+    `- Unresolved appearances: ${status.counts.unresolved}`,
     `- Complete: ${status.counts.complete}`,
     `- Queued: ${status.counts.queued}`,
     `- Active: ${status.counts.active}`,
@@ -242,10 +287,12 @@ function recordingLines(recording) {
 
 function recordingFields(recording) {
   return [
+    `- Disposition: ${recording.disposition}`,
+    `- Classification evidence: ${recording.classificationEvidence}`,
     `- Provider: ${displayName(recording.provider)}`,
     `- Source: ${cleanText(recording.sourceKind)}`,
     `- Stage: ${recording.stage}`,
-    `- State: ${recording.complete ? (recording.artifactIntegrity.startsWith("source and derivative digests verified") ? "ready (local artifact digests verified)" : "declared complete / integrity pending") : recording.verdict === "red" ? "failed / incomplete" : "incomplete"}`,
+    `- State: ${recording.disposition === "non-recording" ? "excluded from acquisition; transcript completeness not claimed" : recording.disposition === "unresolved" ? "unresolved; inspect in NTULearn and rediscover with positive metadata" : recording.complete ? (recording.artifactIntegrity.startsWith("source and derivative digests verified") ? "ready (local artifact digests verified)" : "declared complete / integrity pending") : recording.verdict === "red" ? "failed / incomplete" : "incomplete"}`,
     ...(recording.sourceReference ? [`- Source reference: ${recording.sourceReference}`] : []),
     ...recording.locations.map(
       ({ label, path, available, unverified }) =>

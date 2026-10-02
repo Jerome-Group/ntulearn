@@ -1,6 +1,7 @@
 import { withCapacityDeadline } from "./capacity-deadline.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
 import { monitorMediaCapacity } from "./capacity-monitor.mjs";
+import { recordingDisposition } from "./disposition.mjs";
 import { randomUUID } from "node:crypto";
 import { clearTimeout as cancelTimer, setTimeout as scheduleTimer } from "node:timers";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
@@ -346,6 +347,7 @@ async function runCourse({
   let stoppedAtBoundary = false;
 
   for (const job of queue) {
+    if (recordingDisposition(job) !== "recording") continue;
     let evidence;
     try {
       evidence = await mediaArtifactEvidenceUpdate(job, { mediaRoot: media?.mediaRoot, course });

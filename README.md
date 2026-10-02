@@ -169,11 +169,26 @@ completeness is a separate concern: the sync remains additive and does not claim
 complete. Each appearance keeps its own placement and status, while source evidence and working
 artifacts stay on the configured Media store and readable derivatives stay beside the numbered item.
 Kaltura, YouTube, and direct video/audio links are classified without retaining expiring query strings;
-opaque embedded or launch players are reported as unsupported rather than silently omitted. Known
+opaque embedded or launch references remain visibly unresolved rather than silently omitted. Known
 FeedbackFruits, Cengage, Blackboard placement, Padlet, and Turnitin shapes keep their provider name,
 stable reference, retryability, and limitation in the status; provider-specific acquisition is an
-injected adapter seam. NTULearn file-shaped non-media references remain visible as retryable
-non-recordings. Session material and expiring provider addresses are never persisted. A transcript
+injected adapter seam. Nested file/media metadata is inspected to depth four and at most 64
+values. Positive document MIME types or filename/address extensions identify excluded
+non-recordings; positive audio/video evidence identifies recordings, including unsupported
+recordings whose acquisition reference is unavailable. Conflicting, mixed, cyclic or oversized
+metadata remains unresolved. Tool names, upload IDs and earlier failures never prove a resource
+is not a recording.
+
+The digest and course status separately count recording failures, unresolved appearances and
+excluded non-recordings. Exclusion skips acquisition and never counts as a complete transcript;
+unresolved appearances keep the aggregate red without adding acquisition attempts. Inspect an
+unresolved resource in NTULearn, then the Owner can re-run `npm run media:discover -- <course>`
+when positive metadata or an adapter becomes available. Rediscovery preserves stable appearance
+identities, established placements, artifacts and attempt history; disappearance does not delete
+an appearance. Fresh document metadata conflicting with retained recording evidence remains
+unresolved for review. Legacy rows without sufficient identity proof are retained rather than
+being guessed into another artifact owner. Historical unsupported failures therefore cannot all
+be dismissed as irrelevant without fresh evidence. Session material and expiring provider addresses are never persisted. A transcript
 is complete only when both
 a validated source and formatted Markdown derivative exist. Recording completeness remains
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
