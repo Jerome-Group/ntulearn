@@ -78,7 +78,9 @@ async function readOwner(lockPath) {
 }
 
 function lockHeld(lockPath) {
-  const error = new Error(`Another media queue run holds ${lockPath}.`);
+  const error = new Error(
+    `Another media queue run holds ${lockPath}. Wait for the active run to finish, then retry the command.`,
+  );
   error.code = "MEDIA_QUEUE_LOCK_HELD";
   return error;
 }

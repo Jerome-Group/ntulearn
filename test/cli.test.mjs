@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { mediaQueueLockPath, withMediaQueueLock } from "../src/media/lock.mjs";
+import { mediaQueuePath } from "../src/media/queue.mjs";
 
 // `URL.pathname` percent-encodes, and a checkout can live under a path with a space in it.
 const CLI = fileURLToPath(new URL("../src/cli.mjs", import.meta.url));
@@ -47,8 +49,11 @@ async function runCli(...args) {
 
 function runCliWithEnvironment(env, ...args) {
   return new Promise((done) => {
-    execFile(process.execPath, [CLI, ...args], { env }, (error, stdout, stderr) =>
-      done({ code: error?.code ?? 0, stdout, stderr }),
+    execFile(
+      process.execPath,
+      [CLI, ...args],
+      { env, timeout: 5000, maxBuffer: 65536 },
+      (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr }),
     );
   });
 }
@@ -61,6 +66,142 @@ test("prints usage and exits 1 when given no command", async () => {
     stderr,
     /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
+});
+
+async function mediaWriterFixture(t) {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-media-writer-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, "state.json");
+  const destination = join(root, "course");
+  await mkdir(destination);
+  const course = { key: "SYNTHETIC", courseId: "_fixture_1", destination, mediaMode: "off" };
+  const configPath = join(root, "courses.json");
+  const profilePath = join(root, "unused%20profile");
+  await writeFile(configPath, JSON.stringify({ profilePath, statePath, courses: [course] }));
+  const queuePath = mediaQueuePath(statePath, course.key);
+  await mkdir(join(root, "media-queue"));
+  const artifacts = { rawTranscriptPath: join(destination, "source.json") };
+  await writeFile(artifacts.rawTranscriptPath, "synthetic source evidence");
+  await writeFile(join(destination, "Synthetic.transcript.md"), "Student annotated transcript");
+  const checkpoint = {
+    at: "2026-10-03T00:00:00.000Z",
+    reason: "synthetic format checkpoint",
+  };
+  const record = {
+    version: 1,
+    courseKey: course.key,
+    courseId: course.courseId,
+    complete: true,
+    verdict: "green",
+    updatedAt: new Date().toISOString(),
+    queue: [
+      {
+        recordingId: "synthetic-recording",
+        stage: "checkpointed",
+        checkpoint,
+        artifacts,
+        placement: {
+          destination,
+          formattedTranscriptPath: "Synthetic.transcript.md",
+          statusPath: "Synthetic.media-status.md",
+        },
+      },
+    ],
+  };
+  await writeFile(queuePath, JSON.stringify(record));
+  return {
+    root,
+    statePath,
+    destination,
+    queuePath,
+    checkpoint,
+    artifacts,
+    profilePath,
+    env: { ...process.env, NTULEARN_CONFIG_PATH: configPath },
+  };
+}
+
+test("media discovery refuses a held queue lock before entering the session boundary", async (t) => {
+  const at = await mediaWriterFixture(t);
+  const before = await readFile(at.queuePath);
+  const files = await readdir(at.destination);
+  await withMediaQueueLock({
+    statePath: at.statePath,
+    run: async () => {
+      const ownerPath = join(mediaQueueLockPath(at.statePath), "owner.json");
+      const owner = await readFile(ownerPath);
+      const result = await runCliWithEnvironment(at.env, "media-discover", "SYNTHETIC");
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /Another media queue run holds/);
+      assert.match(result.stderr, /Wait for the active run to finish, then retry/);
+      assert.doesNotMatch(result.stderr, /URL-encoded|\n\s+at /);
+      assert.deepEqual(await readFile(at.queuePath), before);
+      assert.deepEqual(await readdir(at.destination), files);
+      assert.deepEqual(await readFile(ownerPath), owner);
+      await assert.rejects(readdir(at.profilePath), { code: "ENOENT" });
+    },
+  });
+  const released = await runCliWithEnvironment(at.env, "media-discover", "SYNTHETIC");
+  assert.match(released.stderr, /profile path is URL-encoded/);
+  assert.deepEqual(await readFile(at.queuePath), before);
+  await assert.rejects(readdir(mediaQueueLockPath(at.statePath)), { code: "ENOENT" });
+  await assert.rejects(readdir(at.profilePath), { code: "ENOENT" });
+});
+
+test("media withdrawal serializes its transaction and retries without losing checkpoint or artifacts", async (t) => {
+  const at = await mediaWriterFixture(t);
+  const before = await readFile(at.queuePath);
+  const files = await readdir(at.destination);
+  await withMediaQueueLock({
+    statePath: at.statePath,
+    run: async () => {
+      const ownerPath = join(mediaQueueLockPath(at.statePath), "owner.json");
+      const owner = await readFile(ownerPath);
+      const usage = await runCliWithEnvironment(
+        at.env,
+        "media-withdraw",
+        "SYNTHETIC",
+        "synthetic-recording",
+      );
+      assert.equal(usage.code, 1);
+      assert.match(usage.stderr, /^Usage: npm run media:withdraw/);
+      const result = await runCliWithEnvironment(
+        at.env,
+        "media-withdraw",
+        "SYNTHETIC",
+        "synthetic-recording",
+        "confirm",
+      );
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /Another media queue run holds/);
+      assert.match(result.stderr, /Wait for the active run to finish, then retry/);
+      assert.deepEqual(await readFile(at.queuePath), before);
+      assert.deepEqual(await readdir(at.destination), files);
+      assert.deepEqual(await readFile(ownerPath), owner);
+    },
+  });
+  const released = await runCliWithEnvironment(
+    at.env,
+    "media-withdraw",
+    "SYNTHETIC",
+    "synthetic-recording",
+    "confirm",
+  );
+  assert.equal(released.code, 0);
+  assert.equal(released.stderr, "");
+  assert.equal(JSON.parse(released.stdout).status, "withdrawn");
+  const saved = JSON.parse(await readFile(at.queuePath, "utf8")).queue[0];
+  assert.equal(saved.withdrawn, true);
+  assert.deepEqual(saved.checkpoint, at.checkpoint);
+  assert.deepEqual(saved.artifacts, at.artifacts);
+  assert.equal(await readFile(at.artifacts.rawTranscriptPath, "utf8"), "synthetic source evidence");
+  assert.equal(
+    await readFile(join(at.destination, "Synthetic.transcript.md"), "utf8"),
+    "Student annotated transcript",
+  );
+  await assert.rejects(readdir(mediaQueueLockPath(at.statePath)), { code: "ENOENT" });
 });
 
 test("prints usage and exits 1 for a command that does not exist", async () => {
