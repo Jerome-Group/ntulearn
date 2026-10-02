@@ -273,7 +273,7 @@ test("runs the provider transcript and independent media paths through one pure 
     async generate({ segments }) {
       calls.push("format");
       assert.equal(segments.length, 2);
-      return { markdown: `# Lecture\n\n${segments.map(({ text }) => text).join(" ")}` };
+      return { markdown: segments.map(({ text }) => text).join(" ") };
     },
   };
   const formatter = {

@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+import { assertFormattedTranscript } from "./transcript.mjs";
 import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
 
 export const LOCAL_FORMATTING_RULES = Object.freeze([
@@ -36,7 +38,13 @@ function removeRepeatedMarker(output, marker) {
     .join("");
 }
 
-export function createLocalFormatter({ model, version, maxSegments = 24, maxDuration = 120 }) {
+export function createLocalFormatter({
+  model,
+  version,
+  maxSegments = 24,
+  maxDuration = 120,
+  maxSourceBytes = 768,
+}) {
   if (!model || typeof model.generate !== "function") {
     throw new Error("Local formatter needs a model.generate adapter.");
   }
@@ -50,17 +58,30 @@ export function createLocalFormatter({ model, version, maxSegments = 24, maxDura
     throw new Error("Local formatter maxDuration must be positive.");
   }
 
+  if (!Number.isSafeInteger(maxSourceBytes) || maxSourceBytes <= 0) {
+    throw new Error("Local formatter maxSourceBytes must be a positive safe integer.");
+  }
+
   return {
     version,
 
     // Chunks are sent one at a time so the local model never needs the whole lecture in memory and
-    // cannot reorder segments across a boundary. The job's semantic guards inspect the joined text.
-    async format({ appearance, language, segments }) {
-      const chunks = chunk(segments, maxSegments, maxDuration);
+    // cannot reorder segments across a boundary. Lexical guards inspect each chunk and the joined text; they do not prove meaning.
+    async format({ appearance, language, segments, signal }) {
+      throwIfAborted(signal);
+      const chunks = chunk(segments, maxSegments, maxDuration, maxSourceBytes);
       const outputs = [];
       const limitations = [];
       for (const segmentChunk of chunks) {
+        throwIfAborted(signal);
         const text = segmentChunk.map(({ text: segmentText }) => segmentText).join(" ");
+        if (Buffer.byteLength(text, "utf8") > maxSourceBytes) {
+          outputs.push(text);
+          limitations.push(
+            "Source segment exceeds the local formatter byte budget; preserved source wording without model formatting.",
+          );
+          continue;
+        }
         const prompt = localFormatterPrompt({ language, text });
         const result = await model.generate({
           appearance,
@@ -69,12 +90,21 @@ export function createLocalFormatter({ model, version, maxSegments = 24, maxDura
           text,
           instructions: LOCAL_FORMATTING_RULES,
           prompt,
+          signal,
         });
+        throwIfAborted(signal);
         const markdown = cleanLocalFormatterOutput(
           typeof result === "string" ? result : result?.markdown,
           prompt,
         );
-        if (markdown) outputs.push(markdown.trim());
+        try {
+          outputs.push(assertFormattedTranscript(markdown, segmentChunk).trim());
+        } catch {
+          outputs.push(text);
+          limitations.push(
+            "Local formatter output failed lexical preservation checks; preserved source wording. Semantic equivalence is not proven.",
+          );
+        }
         if (Array.isArray(result?.limitations)) limitations.push(...result.limitations);
       }
       return { markdown: outputs.join("\n\n"), limitations };
@@ -95,21 +125,37 @@ function localFormatterPrompt({ language, text }) {
   ].join("\n");
 }
 
-function chunk(values, maxSegments, maxDuration) {
+function chunk(values, maxSegments, maxDuration, maxSourceBytes) {
   const chunks = [];
   let current = [];
+  let bytes = 0;
   for (const value of values) {
     if (value.end - value.start > maxDuration) {
       throw new Error("Local formatter received a segment longer than maxDuration.");
     }
     const first = current[0];
     const elapsed = first ? value.end - first.start : 0;
-    if (current.length && (current.length >= maxSegments || elapsed > maxDuration)) {
+    const nextBytes = Buffer.byteLength(value.text, "utf8");
+    if (
+      current.length &&
+      (current.length >= maxSegments ||
+        elapsed > maxDuration ||
+        bytes + 1 + nextBytes > maxSourceBytes)
+    ) {
       chunks.push(current);
       current = [];
+      bytes = 0;
     }
+    bytes += nextBytes + (current.length ? 1 : 0);
     current.push(value);
   }
   if (current.length) chunks.push(current);
   return chunks;
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted)
+    throw (
+      signal.reason ?? new Error("Local formatting interrupted; retry after the media checkpoint.")
+    );
 }

@@ -5,9 +5,9 @@ import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
 const TIMESTAMP = /^(\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?$/;
 const TIMESTAMP_RANGE =
   /^(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})\s+-->\s+(\d{1,2}(?::\d{2}){1,2}[.,]?\d{0,3})/;
-const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
+const FORMATTED_TIMESTAMP = /\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 const FORMATTER_PROMPT = new RegExp(escapeRegExp(FORMATTER_PROMPT_OPENING), "gi");
-const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^]/g;
+const PROTECTED_TOKEN = /\d+(?:\.\d+)?|[+\-−×÷*/=<>≤≥^!%&|~]/g;
 const SOURCE_KINDS = new Set(["provider", "generated", "non-speech"]);
 // eslint-disable-next-line no-control-regex -- ASCII is the deliberate language boundary
 const NON_ASCII_RUN = /[^\x00-\x7F]+/g;
@@ -73,10 +73,11 @@ export function validateTranscript(
   if (lastEnd > recordingDuration + tolerance) {
     return { valid: false, reason: "it extends beyond recording duration" };
   }
-  if (lastEnd < expectedDuration * coverageRatio) {
+  const coveredDuration = intervalCoverage(normalized.segments, recordingDuration);
+  if (coveredDuration < expectedDuration * coverageRatio) {
     return {
       valid: false,
-      reason: `it covers ${lastEnd.toFixed(1)}s of ${expectedDuration.toFixed(1)}s`,
+      reason: `it covers ${coveredDuration.toFixed(1)}s of ${expectedDuration.toFixed(1)}s`,
     };
   }
 
@@ -118,10 +119,10 @@ export function assertFormattedTranscript(markdown, segments) {
   if (typeof markdown !== "string" || !markdown.trim()) {
     throw new Error("formatted transcript is empty");
   }
-  if (FORMATTED_TIMESTAMP.test(markdown)) {
+  const sourceText = segments.map(({ text }) => text).join(" ");
+  if (!sameSequence(timestampValues(sourceText), timestampValues(markdown))) {
     throw new Error("formatted transcript still contains timestamps");
   }
-  const sourceText = segments.map(({ text }) => text).join(" ");
   if (promptOccurrences(markdown) > promptOccurrences(sourceText)) {
     throw new Error("formatted transcript contains formatter prompt");
   }
@@ -138,6 +139,12 @@ export function assertFormattedTranscript(markdown, segments) {
   if (!isSubsequence(expectedTokens, actualTokens)) {
     throw new Error("formatted transcript reorders protected notation");
   }
+  if (
+    !sameSequence(expectedTokens, actualTokens) &&
+    !sameSequence(expectedTokens, protectedTokens(withoutMarkdownStructure(markdown)))
+  ) {
+    throw new Error("formatted transcript changes protected notation");
+  }
   for (const run of segments
     .map(({ text }) => text.match(NON_ASCII_RUN) ?? [])
     .flat()
@@ -153,6 +160,16 @@ export function assertFormattedTranscript(markdown, segments) {
     .flatMap((text) => lexicalWords(text));
   if (!isSubsequence(switchedWords, lexicalWords(markdown))) {
     throw new Error("formatted transcript loses code-switched text");
+  }
+  if (
+    segments.length &&
+    ((!sameSequence(contentWords(sourceText), contentWords(markdown)) &&
+      !sameSequence(contentWords(sourceText), contentWords(withoutMarkdownStructure(markdown)))) ||
+      !sameSequence(expectedTokens.filter(isNumberToken), actualTokens.filter(isNumberToken)))
+  ) {
+    throw new Error(
+      "formatted transcript changes ordered lexical content; preserve source wording",
+    );
   }
   return markdown.trimEnd() + "\n";
 }
@@ -224,6 +241,7 @@ function textOf(value) {
 }
 
 function numberOrNull(value) {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -251,4 +269,42 @@ function isSubsequence(expected, actual) {
     if (index === expected.length) return true;
   }
   return index === expected.length;
+}
+
+function intervalCoverage(segments, duration) {
+  let covered = 0;
+  let end = 0;
+  for (const segment of segments) {
+    const nextEnd = Math.min(segment.end, duration);
+    covered += Math.max(0, nextEnd - Math.max(segment.start, end));
+    end = Math.max(end, nextEnd);
+  }
+  return covered;
+}
+
+function timestampValues(value) {
+  return [...value.matchAll(FORMATTED_TIMESTAMP)].map(([timestamp]) => timestamp);
+}
+
+function contentWords(value) {
+  return [...value.matchAll(/[\p{L}\p{M}_][\p{L}\p{M}\p{N}_]*(?:['’][\p{L}\p{M}\p{N}_]+)*/gu)].map(
+    ([word]) => word.replaceAll("’", "'"),
+  );
+}
+
+function sameSequence(expected, actual) {
+  return (
+    expected.length === actual.length && expected.every((value, index) => value === actual[index])
+  );
+}
+
+function isNumberToken(value) {
+  return /^\d/.test(value);
+}
+
+function withoutMarkdownStructure(value) {
+  return value
+    .replace(/^\s*[-+*]\s+/gm, "")
+    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, "$2")
+    .replace(/(\*|_)(?=\S)([^\n]*?\S)\1/g, "$2");
 }
