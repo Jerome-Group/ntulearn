@@ -3,10 +3,11 @@ import { assertFormattedTranscript } from "./transcript.mjs";
 import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
 
 export const LOCAL_FORMATTING_RULES = Object.freeze([
-  "Preserve the source language and all code-switching; never translate.",
-  "Correct spelling, grammar, and obvious non-semantic noise only; never summarize.",
-  "Do not invent headings or transitions. Add a heading only when the source explicitly transitions.",
-  "Convert mathematical or symbolic notation only when unambiguous and keep the source wording nearby.",
+  "Preserve every source word, its spelling and case, and their order, including technical terms, repetitions and uncertain wording.",
+  "Preserve the source language and all code-switching; never translate, summarize or correct spelling, grammar or recognition noise.",
+  "Add only punctuation, paragraph breaks and Markdown emphasis or list markers that preserve the exact source words, numbers and symbols.",
+  "Do not invent headings, speaker labels, transitions or other content.",
+  "Preserve numbers and mathematical symbols exactly; keep spoken mathematics as spoken words and never infer or convert notation.",
   "Do not emit timestamps in the Markdown derivative.",
 ]);
 
@@ -116,7 +117,7 @@ function localFormatterPrompt({ language, text }) {
   return [
     FORMATTER_PROMPT_OPENING,
     "Return only the Markdown transcript, with no preface, analysis, timestamps, or summary.",
-    "Preserve every word, number, symbol, code-switched phrase, and their order. Correct only obvious spelling, grammar, and speech-recognition noise.",
+    "Change presentation only; preserve every source word, its spelling and case, number, symbol, code-switched phrase, and their order.",
     `Source language: ${language}`,
     "Rules:",
     ...LOCAL_FORMATTING_RULES.map((instruction) => `- ${instruction}`),

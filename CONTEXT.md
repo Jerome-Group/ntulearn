@@ -215,9 +215,11 @@ A transcript produced locally from a *recording* when no provider transcript is 
 _Avoid_: AI transcript, Whisper transcript — neither the technique nor one model defines the term
 
 **Formatted transcript**:
-A readable derivative of a *provider transcript* or *generated transcript* whose spelling,
-grammar and non-semantic noise may be corrected without changing meaning. It carries no
-timestamps; those remain in the transcript it derives from.
+A readable derivative of a *provider transcript* or *generated transcript* that changes
+presentation while preserving ordered source words, spelling, case, numbers, symbols and
+code-switching. Recognition errors and spoken mathematics remain as source wording. It carries no
+segment timestamps; those remain in the transcript it derives from. Lexical preservation does not
+prove semantic equivalence or acoustic fidelity.
 _Avoid_: cleaned transcript, corrected transcript — both can imply that the source is replaced
 
 ### What is kept

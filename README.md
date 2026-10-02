@@ -197,6 +197,13 @@ replaces a formatted derivative. An agent-led caller must opt into `runMediaJob(
 the storage proof still requires current workflow ownership and a matching source digest, so a
 manually owned file or preserved source cannot be overwritten.
 
+The current formatter changes presentation only: punctuation, paragraph breaks and Markdown
+emphasis or list markers must preserve ordered source words, spelling, case, numbers, symbols and
+code-switching. It leaves recognition errors and spoken mathematics intact rather than inferring
+corrections or notation. Unsupported edits fall back to source wording and report the limitation.
+These lexical checks do not prove semantic equivalence or acoustic fidelity; changing the prompt
+alone does not establish improved model quality.
+
 ### Controlled browser-playback fallback
 
 Browser playback remains a last resort because it is more intrusive and less reproducible than

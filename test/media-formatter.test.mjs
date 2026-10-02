@@ -57,6 +57,10 @@ test("formats bounded timestamp-derived chunks sequentially through the local mo
   );
   assert.deepEqual(calls[0].instructions, LOCAL_FORMATTING_RULES);
   assert.match(calls[0].prompt, /^Rewrite this speech transcript as readable Markdown\./);
+  assert.doesNotMatch(
+    calls[0].prompt,
+    /Correct spelling, grammar|Correct only obvious spelling|Convert mathematical or symbolic notation/,
+  );
   assert.equal(result.markdown, "one two\n\nthree");
 });
 
@@ -219,5 +223,47 @@ test("falls back per chunk for contradiction, empty output and added claims", as
     assert.equal(result.markdown, source[0].text);
     assert.match(result.limitations.join(" "), /lexical preservation/);
     assert.match(result.limitations.join(" "), /Semantic equivalence is not proven/);
+  }
+});
+
+test("accepts presentation changes while preserving technical wording and code-switching", async () => {
+  const segments = [
+    { start: 0, end: 1, text: "the eignvalue may be minus two" },
+    { start: 1, end: 2, text: "Use x = -2 and 3.5" },
+    { start: 2, end: 3, text: "保留原文 please" },
+  ];
+  const original = globalThis.structuredClone(segments);
+  const markdown = "the **eignvalue** may be minus two.\n\nUse x = -2 and 3.5.\n\n保留原文 please.";
+  const formatter = createLocalFormatter({
+    version: "fixture",
+    model: { generate: async () => markdown },
+  });
+  const result = await formatter.format({ language: "und", segments });
+  assert.equal(result.markdown, markdown);
+  assert.deepEqual(result.limitations, []);
+  assert.deepEqual(segments, original);
+});
+
+test("preserves source wording when a formatter corrects, infers or adds content", async () => {
+  const text = "the eignvalue may be minus two it are uncertain and x = -2 保留原文 please";
+  const segments = [{ start: 0, end: 1, text }];
+  for (const markdown of [
+    text.replace("eignvalue", "eigenvalue"),
+    text.replace("the", "The"),
+    text.replace("it are", "it is"),
+    text.replace("minus two", "-2"),
+    text.replace("x = -2", "x = 2"),
+    text.replace("保留原文", "preserve the original"),
+    `# Eigenvalues\n\n${text}`,
+    `Lecturer: ${text}`,
+  ]) {
+    const formatter = createLocalFormatter({
+      version: "fixture",
+      model: { generate: async () => markdown },
+    });
+    const result = await formatter.format({ language: "und", segments });
+    assert.equal(result.markdown, text);
+    assert.equal(result.limitations.length, 1);
+    assert.match(result.limitations[0], /failed lexical preservation/);
   }
 });
