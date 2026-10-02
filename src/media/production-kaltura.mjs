@@ -53,10 +53,16 @@ async function resolveKaltura(page, reference, signal) {
     const duration = await kalturaDuration(page, signal);
     return {
       duration,
-      speechDuration: duration,
       media: { video: [{ url: manifest, height: 720, audio: true }] },
       ...(captions[0]
-        ? { transcript: { body: captions[0], language: "en", filename: "captions.vtt" } }
+        ? {
+            transcript: {
+              body: captions[0],
+              language: "und",
+              filename: "captions.vtt",
+              captionProvenance: { kind: "observed", language: "und", format: "vtt" },
+            },
+          }
         : {}),
     };
   } finally {

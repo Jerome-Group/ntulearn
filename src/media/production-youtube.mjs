@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { remuxYoutube } from "./production-remux.mjs";
 import { createYoutubeProvider } from "./youtube.mjs";
+import { createCaptionFetcher, youtubeCaptions } from "./captions.mjs";
 
 const HOUR_MS = 60 * 60 * 1_000;
 
@@ -10,6 +11,7 @@ export function createProductionYoutubeProvider(context) {
     resolveVideo: ({ reference, signal }) => resolveYoutube(reference, signal, context),
     download: (url, options) => downloadYoutube(url, options, context),
     remux: (downloaded, options) => remuxYoutube(downloaded, options, context),
+    fetchTranscript: createCaptionFetcher({ fetch: context.captionFetch }),
   });
 }
 
@@ -43,7 +45,8 @@ async function resolveYoutube(reference, signal, { commands, runProcess }) {
   }
   const duration = Number(metadata.duration);
   return {
-    ...(Number.isFinite(duration) && duration > 0 ? { duration, speechDuration: duration } : {}),
+    ...(Number.isFinite(duration) && duration > 0 ? { duration } : {}),
+    captions: youtubeCaptions(metadata),
     media: {
       video: [
         {

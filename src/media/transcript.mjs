@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { FORMATTER_PROMPT_OPENING } from "./formatter-contract.mjs";
+import { captionText } from "./caption-text.mjs";
 
 const TIMESTAMP = /^(\d{1,2}:)?\d{1,2}:\d{2}(?:[.,]\d{1,3})?$/;
 const TIMESTAMP_RANGE =
@@ -20,6 +21,7 @@ export function parseProviderTranscript(value) {
   return {
     sourceKind: "provider",
     language: value?.language ?? value?.lang ?? parsed.language ?? parsed.lang ?? "und",
+    ...captionProvenance(value),
     segments,
   };
 }
@@ -98,7 +100,12 @@ export function normalizeTranscript(transcript) {
     }
     return { start, end, text };
   });
-  const normalized = { sourceKind, language, segments };
+  const normalized = {
+    sourceKind,
+    language,
+    segments,
+    ...(sourceKind === "provider" ? captionProvenance(transcript) : {}),
+  };
   if (sourceKind === "non-speech") {
     const reason = String(transcript?.reason ?? "").trim();
     if (!reason) throw new Error("non-speech source needs a reason");
@@ -210,17 +217,33 @@ function parseCaptionText(value) {
   for (const line of value.replace(/^WEBVTT\s*\n?/i, "").split(/\r?\n/)) {
     const range = line.match(TIMESTAMP_RANGE);
     if (range) {
-      if (current) segments.push(current);
+      if (current) segments.push({ ...current, text: captionText(current.text) });
       current = { start: parseTime(range[1]), end: parseTime(range[2]), text: "" };
     } else if (current && line.trim()) {
       current.text = `${current.text} ${line.trim()}`.trim();
     } else if (!line.trim() && current) {
-      segments.push(current);
+      segments.push({ ...current, text: captionText(current.text) });
       current = null;
     }
   }
-  if (current) segments.push(current);
+  if (current) segments.push({ ...current, text: captionText(current.text) });
   return { segments };
+}
+
+function captionProvenance(value) {
+  const provenance = value?.captionProvenance;
+  if (
+    !provenance ||
+    !["manual", "automatic", "observed"].includes(provenance.kind) ||
+    provenance.format !== "vtt"
+  )
+    return {};
+  const language =
+    typeof provenance.language === "string" &&
+    /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(provenance.language)
+      ? provenance.language
+      : "und";
+  return { captionProvenance: { kind: provenance.kind, language, format: "vtt" } };
 }
 
 function parseTime(value) {
