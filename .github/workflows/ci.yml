@@ -19,6 +19,7 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # Actions are pinned to a commit, not a tag, so a moved tag cannot change what runs here.
       # Dependabot is what moves these pins forward (.github/dependabot.yml).
@@ -38,6 +39,9 @@ jobs:
       - name: MAP.md exists
         run: test -f MAP.md
 
+      - name: Capability contracts shared with agents
+        run: node src/cli.mjs check contracts
+
       # This repository's real checks are the `code` job below. What they owe — what CI must
       # prove, how the checks grow, and why none of them gets a path filter — is
       # `CODING_STANDARDS.md` §5, which is the text rather than a summary of it.
@@ -55,6 +59,7 @@ jobs:
 
   code:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       # Nothing here drives a browser, and the download is the slowest thing in the run.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
@@ -70,6 +75,4 @@ jobs:
       # dependency's postinstall out of CI.
       - run: npm ci --ignore-scripts
 
-      - run: npm run format:check
-      - run: npm run lint
-      - run: npm test
+      - run: npm run check
