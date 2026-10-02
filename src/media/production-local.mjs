@@ -25,7 +25,10 @@ export function createProductionLocalModels(context) {
   };
 }
 
-async function transcribe({ media, signal }, { paths, commands, models, runProcess }) {
+async function transcribe(
+  { media, signal },
+  { paths, commands, models, runProcess, preserveArtifacts = false },
+) {
   const directory = await mkdtemp(join(paths.work, "asr-"));
   const audio = join(directory, "audio.flac");
   const output = join(directory, "transcript");
@@ -59,7 +62,8 @@ async function transcribe({ media, signal }, { paths, commands, models, runProce
     cleanupConfirmed = error.code !== "MEDIA_PROCESS_CLEANUP";
     throw error;
   } finally {
-    if (cleanupConfirmed) await rm(directory, { recursive: true, force: true });
+    if (cleanupConfirmed && !preserveArtifacts)
+      await rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -89,7 +93,10 @@ function normalizeWhisper(result) {
   };
 }
 
-async function format({ prompt, text, segments, signal }, { paths, commands, models, runProcess }) {
+async function format(
+  { prompt, text, segments, signal },
+  { paths, commands, models, runProcess, preserveArtifacts = false },
+) {
   const directory = await mkdtemp(join(paths.work, "format-"));
   const promptFile = join(directory, "prompt.txt");
   await writeFile(promptFile, prompt, "utf8");
@@ -135,7 +142,8 @@ async function format({ prompt, text, segments, signal }, { paths, commands, mod
       throw error;
     return fallback(text, "Local formatter failed");
   } finally {
-    if (cleanupConfirmed) await rm(directory, { recursive: true, force: true });
+    if (cleanupConfirmed && !preserveArtifacts)
+      await rm(directory, { recursive: true, force: true });
   }
 }
 

@@ -211,6 +211,73 @@ provider retrieval. The fallback is limited to controls and media already visibl
 student, checks for meaningful audio before capture, restores temporary routing on every exit, and
 keeps 2x disabled until Owner evidence proves it safe for one provider.
 
+### Offline transcript evaluation
+
+A synthesis script records intended words, not verified acoustic ground truth. Evaluation keeps
+conditional reference alignment, timestamp/coverage validation, formatter lexical preservation,
+and acoustic review separate. An annotation must declare listening provenance tied to the exact
+source and reference SHA-256 hashes; that declaration still cannot prove annotation quality.
+Neither model agreement nor a formatter fallback proves speech fidelity or semantic equivalence.
+
+`src/media/evaluation.mjs` exposes read-only `planMediaEvaluation({ manifestPath })` and local
+`runMediaEvaluation({ manifestPath, outputDirectory, outputRoot, media, signalProcessGroup,
+memoryMeasurement, codeRevision, signal })`. A private version-1 JSON manifest declares:
+
+```json
+{
+  "version": 1,
+  "budgets": {
+    "maxFixtureSeconds": 300,
+    "maxInputBytes": 268435456,
+    "maxOutputBytes": 67108864,
+    "jobTimeoutMs": 600000,
+    "processTimeoutMs": 120000
+  },
+  "fixtures": [{
+    "audio": { "path": "source.wav", "sha256": "<source SHA-256>" },
+    "reference": {
+      "kind": "generated-script",
+      "path": "reference.txt",
+      "sha256": "<reference SHA-256>",
+      "provenance": {
+        "method": "speech-synthesis",
+        "sourceSha256": "<source SHA-256>",
+        "referenceSha256": "<reference SHA-256>"
+      }
+    }
+  }]
+}
+```
+
+Use `annotated-audio` with `listening-annotation` for a declared acoustic annotation, or
+`{ "kind": "unavailable" }` when no reference exists. Relative paths resolve beside the
+private manifest. Optional `interruptionAfterMs` deliberately checkpoints ASR, then attempts
+recovery with a fresh signal. Evaluation does not synthesize references, acquire media, install
+assets, or grant access. Keep manifests and results private.
+
+Runs require the configured runtime's full mandatory verification and capacity checks, and a
+fresh output directory below the configured Media store. The API's explicit `outputRoot` can
+select an already authorized private scratch directory on the same canonical RAID0 device;
+the default and CLI boundary remain the Media store. This parameter is not an access grant.
+Existing attempts and user edits are never reused. Native ASR output, failed process output and evaluation-owned work are retained privately; invalid
+timestamps stay failed and formatting stays unrun. Restore the reported runtime/storage or
+correct the manifest, then retry into another fresh directory. Public structured results contain
+hashes, safe flags and aggregate measurements, without source words, local paths or raw errors.
+
+Prevalidation and plan reads have a five-second logical deadline and stream aborts. The declared
+job budget covers the whole run after manifest validation, including runtime preflight and final
+input checks; read probes also respect its remaining time. Writes are never raced against a
+logical deadline because a late physical write could promote rejected evidence.
+
+Wall times describe individual subprocesses; extraction, ASR and each formatter invocation are
+recorded separately. `memoryMeasurement: "darwin-time"` uses the installed macOS time tool's
+maximum resident set size; missing or ambiguous measurement records leave memory `null`/`unrun`.
+`wallMsBeforeReport` includes preflight and final input verification, excluding the final report write. Observed peak storage is
+sampled and checked at stage boundaries, not a continuous maximum. Logical read-probe and
+process deadlines cannot cancel arbitrary physical filesystem I/O or independently detached
+process descendants. Acoustic quality remains blocked until independent review supplies stronger
+evidence; successful lexical checks and conditional alignment never turn that block green.
+
 ### Kaltura Media Gallery discovery
 
 Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the

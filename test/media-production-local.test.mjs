@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -72,5 +72,29 @@ test("formatter output overflow stays actionable and never promotes fallback com
     assert.deepEqual(await readdir(work), []);
   } finally {
     await rm(work, { recursive: true, force: true });
+  }
+});
+
+test("evaluation artifact retention is explicit and ordinary model cleanup remains unchanged", async (t) => {
+  for (const preserveArtifacts of [false, true]) {
+    const work = await mkdtemp(join(tmpdir(), "ntulearn-local-retention-"));
+    t.after(() => rm(work, { recursive: true, force: true }));
+    const local = createProductionLocalModels({
+      ...context(work, async (_command, args, options) => {
+        if (options.label === "Whisper transcription")
+          await writeFile(
+            `${args[args.indexOf("-of") + 1]}.json`,
+            JSON.stringify({ segments: [{ start: 0, end: 20, text: "Fixture source wording." }] }),
+          );
+        return { stdout: "Fixture source wording.", stderr: "" };
+      }),
+      preserveArtifacts,
+    });
+    await local.transcriber.transcribe({ media: { path: "fixture.wav", kind: "audio" } });
+    await local.formatter.format({
+      language: "en",
+      segments: [{ start: 0, end: 20, text: "Fixture source wording." }],
+    });
+    assert.equal((await readdir(work)).length, preserveArtifacts ? 2 : 0);
   }
 });

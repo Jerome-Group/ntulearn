@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { capabilityIndex } from "./capabilities/index.mjs";
+import { capabilityResult, observation } from "./capabilities/result.mjs";
 import { runRepositoryChecks } from "./capabilities/check.mjs";
 import { localHealth } from "./capabilities/health.mjs";
 import { localStatus } from "./capabilities/status.mjs";
@@ -24,7 +25,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -264,6 +265,7 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
+  if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
     return offlineCommand(name, argumentsForCommand);
   }
@@ -273,6 +275,97 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
+}
+
+async function mediaEvaluate([mode, manifestPath, outputDirectory, ...unexpected]) {
+  let result;
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      new Error("Offline media evaluation interrupted. Retry in a fresh output directory."),
+    );
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  try {
+    if (
+      !["plan", "run"].includes(mode) ||
+      !manifestPath ||
+      unexpected.length ||
+      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory)
+    ) {
+      result = capabilityResult("media:evaluate", [
+        observation(
+          "arguments",
+          "blocked",
+          "EVALUATION_USAGE",
+          "Invalid evaluation arguments.",
+          "Run: npm run media:evaluate -- plan <manifest> or run <manifest> <fresh-output-directory>",
+        ),
+      ]);
+    } else {
+      const { planMediaEvaluation, runMediaEvaluation } = await import("./media/evaluation.mjs");
+      if (mode === "plan") result = await planMediaEvaluation({ manifestPath });
+      else {
+        const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+        const { runMediaProcess } = await import("./media/process.mjs");
+        const revisionOptions = {
+          signal: controller.signal,
+          signalProcessGroup: signalMediaProcessGroup,
+          timeoutMs: 3_000,
+          stdoutMaxBytes: 32 * 1024,
+          stderrMaxBytes: 1024,
+          label: "Evaluation code revision",
+        };
+        const checkout = await runMediaProcess(
+          "git",
+          ["-C", ROOT, "status", "--porcelain"],
+          revisionOptions,
+        ).catch(provenanceUnavailable);
+        const revision =
+          checkout?.stdout === ""
+            ? await runMediaProcess("git", ["-C", ROOT, "rev-parse", "HEAD"], {
+                ...revisionOptions,
+                stdoutMaxBytes: 128,
+              }).catch(provenanceUnavailable)
+            : null;
+        result = await runMediaEvaluation({
+          manifestPath,
+          outputDirectory,
+          media: config.media,
+          signalProcessGroup: signalMediaProcessGroup,
+          signal: controller.signal,
+          memoryMeasurement: process.platform === "darwin" ? "darwin-time" : null,
+          codeRevision: revision?.stdout.trim() ?? null,
+        });
+      }
+    }
+  } catch (error) {
+    result = capabilityResult("media:evaluate", [
+      observation(
+        "execution",
+        "failed",
+        error.code === "MEDIA_PROCESS_CLEANUP"
+          ? "MEDIA_PROCESS_CLEANUP"
+          : "EVALUATION_COMMAND_FAILED",
+        error.globalSafety
+          ? "Evaluation stopped on a process safety failure; no later work permitted."
+          : "Evaluation could not execute; no raw exception exposed.",
+        error.globalSafety
+          ? "Stop media work, inspect the owned runtime processes, then retry in a fresh output directory."
+          : "Check the private configuration, manifest and prepared runtime; retry plan before run.",
+      ),
+    ]);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
+}
+
+function provenanceUnavailable(error) {
+  if (error.globalSafety) throw error;
+  return null;
 }
 
 async function offlineCommand(name, argumentsForCommand) {

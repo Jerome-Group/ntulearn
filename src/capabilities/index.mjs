@@ -107,6 +107,28 @@ const routes = {
       "test/media-formatter.test.mjs",
     ],
   ],
+  "media-evaluation": [
+    [
+      "src/media/evaluation.mjs",
+      "src/media/evaluation-manifest.mjs",
+      "src/media/evaluation-alignment.mjs",
+      "src/media/evaluation-process.mjs",
+      "src/media/evaluation-fixture.mjs",
+      "src/media/evaluation-read.mjs",
+      "src/media/evaluation-storage.mjs",
+    ],
+    [
+      "test/media-evaluation.test.mjs",
+      "test/media-evaluation-manifest.test.mjs",
+      "test/media-evaluation-alignment.test.mjs",
+      "test/media-evaluation-process.test.mjs",
+      "test/media-evaluation-fixture.test.mjs",
+      "test/media-evaluation-read.test.mjs",
+      "test/media-evaluation-storage.test.mjs",
+      "test/media-production-local.test.mjs",
+      "test/cli.test.mjs",
+    ],
+  ],
   "media-storage": [
     [
       "src/media/storage.mjs",
@@ -298,6 +320,39 @@ const commands = [
       risk: "media-acquisition",
       limitations: [
         "Scheduled mode works only 00:00–03:59 Asia/Singapore; manual mode ignores the overnight boundary.",
+      ],
+    },
+  ),
+  command(
+    "media-evaluate",
+    "media:evaluate",
+    "media-evaluation",
+    [
+      "private-evaluation-manifest",
+      "authorized-source-audio",
+      "prepared-runtime-for-run",
+      "RAID0-and-reserve-for-run",
+    ],
+    {
+      reads: ["private-manifest", "private-audio", "private-reference", "runtime-for-run"],
+      writes: ["fresh-private-evaluation-directory-for-run"],
+    },
+    {
+      arguments: ["<plan|run>", "<manifest>", "[fresh-output-directory]"],
+      risk: "local-media-resources",
+      output: "capability-result-v1",
+      exitCodes: offlineCodes,
+      operations: {
+        plan: { network: false, browser: false, writes: [], runtime: false },
+        run: {
+          network: false,
+          browser: false,
+          writes: ["fresh-private-evaluation-directory"],
+          runtime: true,
+        },
+      },
+      limitations: [
+        "Declared script alignment does not prove acoustic fidelity. Annotation quality requires independent review.",
       ],
     },
   ),
