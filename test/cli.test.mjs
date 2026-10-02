@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -485,4 +485,58 @@ process.kill=(pid,signal)=>{
       code: "ENOENT",
     });
   }
+});
+
+test("historical formatting CLI exposes offline route and structured usage errors", async () => {
+  const invalid = await runCli("media-format", "apply");
+  assert.equal(invalid.code, 2);
+  assert.equal(JSON.parse(invalid.stdout).checks[0].code, "HISTORICAL_FORMAT_USAGE");
+  assert.equal(invalid.stderr, "");
+  const index = await runCli("capabilities", "historical-transcripts");
+  const value = JSON.parse(index.stdout);
+  assert.equal(index.code, 0);
+  assert.equal(value.commands[0].effects.network, false);
+  assert.equal(value.commands[0].effects.browser, false);
+  assert.equal(value.commands[0].operations.verify.writes.length, 0);
+  assert.ok(value.commands[0].operations.apply.prerequisites.includes("media-queue-lock"));
+});
+
+test("historical CLI plan apply verify executes offline against owned temporary roots", async (t) => {
+  const { historicalFixture } = await import("./fixtures/historical.mjs");
+  const at = await historicalFixture(t),
+    checkout = join(at.root, "checkout");
+  await cp(fileURLToPath(new URL("../src", import.meta.url)), join(checkout, "src"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(checkout, "src/config.mjs"),
+    `import {readFile} from 'node:fs/promises'; export const INITIAL_WATCHDOG_TIMEOUT_MS=1000; export async function loadConfig(_root,path){return JSON.parse(await readFile(path,'utf8'));} export function selectCourses(config){return config.courses;}`,
+  );
+  const capacityPath = join(checkout, "src/media/capacity.mjs");
+  await writeFile(
+    capacityPath,
+    (await readFile(capacityPath, "utf8")).replace(
+      "volumeRoot = MEDIA_VOLUME_ROOT",
+      "volumeRoot = " + JSON.stringify(at.root),
+    ),
+  );
+  const configPath = join(at.root, "cli-config.json");
+  await writeFile(configPath, JSON.stringify(at.config));
+  const run = (mode) =>
+    new Promise((resolve) =>
+      execFile(
+        process.execPath,
+        [join(checkout, "src/cli.mjs"), "media-format", mode, at.manifestPath],
+        { env: { ...process.env, NTULEARN_CONFIG_PATH: configPath }, timeout: 5000 },
+        (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }),
+      ),
+    );
+  for (const mode of ["plan", "apply", "verify"]) {
+    const value = await run(mode);
+    assert.equal(value.code, 0, value.stderr + value.stdout);
+    assert.equal(JSON.parse(value.stdout).status, "passed");
+    assert.equal(value.stderr, "");
+  }
+  assert.equal(await readFile(at.originalPath, "utf8"), at.original);
+  assert.equal(await readFile(at.sourcePath, "utf8"), at.raw);
 });

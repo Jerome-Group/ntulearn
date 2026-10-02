@@ -33,7 +33,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "media:evaluate": "node src/cli.mjs media-evaluate"
+    "media:evaluate": "node src/cli.mjs media-evaluate",
+    "media:format": "node src/cli.mjs media-format"
   },
   "dependencies": {
     "playwright": "^1.63.0",

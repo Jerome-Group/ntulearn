@@ -667,3 +667,33 @@ npm run format:check          # prettier
 
 `AGENTS.md` is the instruction file for agents and contributors both; `CONTRIBUTING.md` is how
 work flows here, and `MAP.md` says where everything lives.
+
+## Historical transcript editions
+
+`npm run --silent capabilities -- historical-transcripts` exposes the offline repair route. With the configured
+course roots and Media store accessible, run `npm run media:format -- plan /absolute/private/plan.json`,
+then explicitly authorized `npm run media:format -- apply /absolute/private/plan.json`;
+`npm run media:format -- verify /absolute/private/plan.json` checks the published editions. Plan includes disabled courses, native/raw sources and unassociated derivatives.
+No model, browser, network or acoustic reference is required. Apply requires RAID0, the configured
+free-space reserve and exclusive media locking. It never changes original sources, original derivatives,
+queues, state or media status. Keep private manifests and receipts out of the public repository.
+
+The consistent policy joins source segments into paragraphs of at most eight segments or about
+800 characters; long individual segments remain intact. Ordered words, spelling, case, numbers,
+symbols and uncertainty remain guarded by the mandatory lexical check. HTML/login/error payloads,
+encoding/control text and prompt/runtime banners block editions. Repetition is a review flag, not
+evidence of hallucination. Timing/coverage failures and unknown duration remain explicit and cannot
+become complete media through formatting. Missing, edited or ambiguous associations remain listed.
+
+Each course gains `Transcript editions/source-paragraphs-v1-<plan-id>/index.md`, linking paragraph
+editions, originals, sources, provenance and media status. Fresh names use recording identity;
+exclusive hard-link publication refuses conflicting occupied bytes. Identical editions are reused.
+Per-output receipts support interruption/retry without transactions, cleanup or a claim of universal
+concurrent-editor safety. A changed source/provenance/queue invalidates the plan: inspect retained
+partial editions, then create a new private plan. Reads have logical deadlines, not physical I/O
+cancellation guarantees. The inventory bounds are 20,000 directory entries, depth 16, 4 MiB per
+relevant file, 256 MiB of admitted reads/output per operation and a 120-second logical read budget.
+
+The bounded owned-fixture check is `node --test test/media-historical.test.mjs test/media-historical-format.test.mjs test/media-historical-files.test.mjs test/media-historical-inventory.test.mjs`.
+Use `npm run --silent media:format -- <plan|apply|verify> /absolute/private/plan.json` when
+consuming the structured JSON result; exit 0 means passed, 1 failed and 2 usage/blocked.
