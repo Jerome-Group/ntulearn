@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, writeFile, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
+import { runMediaProcess } from "../src/media/process.mjs";
 import { readMediaQueue, writeMediaQueue, updateMediaQueueJob } from "../src/media/queue.mjs";
 import {
   isOvernightWindow,
@@ -720,6 +721,7 @@ async function writeQueue(statePath, course, recordingIds) {
 function runQueue(options) {
   return runMediaQueue({
     preflight: async () => {},
+    checkCapacity: async () => {},
     ...options,
     media: { mediaRoot: join(dirname(options.statePath), "media") },
     courses: options.courses.map((course) => ({
@@ -860,4 +862,254 @@ test("reconstructs legacy queue digests only from matching owned metadata", asyn
   });
   assert.equal(edited.verdict, "red");
   assert.equal(await readFile(held.artifacts.formattedTranscript, "utf8"), "user edit");
+});
+
+test("stops later acquisition below reserve and retries after capacity recovers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-capacity-jobs-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["first", "second"]);
+  let freeBytes = 200;
+  let consumeReserve = true;
+  const acquired = [];
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    lock: null,
+    preflight: async () => {},
+    checkCapacity: async () => {
+      if (freeBytes < 100) {
+        const error = new Error(
+          "Media reserve exhausted. Free space, then retry the media worker.",
+        );
+        error.globalSafety = true;
+        throw error;
+      }
+    },
+    runJob: async (job) => {
+      acquired.push(job.recordingId);
+      if (consumeReserve) {
+        freeBytes = 50;
+        consumeReserve = false;
+      }
+      return { complete: false, stage: "failed", retryable: false };
+    },
+  };
+  const stopped = await runMediaQueue(options);
+  assert.deepEqual(acquired, ["first"]);
+  assert.equal(stopped.globalStop, true);
+  assert.equal(stopped.verdict, "red");
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.match(held.lastError, /Free space/);
+  assert.equal(held.retryable, true);
+  freeBytes = 200;
+  await runMediaQueue(options);
+  assert.deepEqual(acquired, ["first", "first", "second"]);
+});
+
+test("cancels scratch growth globally and preserves the next queued appearance", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-scratch-reserve-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["growing", "next"]);
+  let available = 200;
+  const acquired = [];
+  const digest = await runMediaQueue({
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    lock: null,
+    preflight: async () => {},
+    capacityMonitorIntervalMs: 1,
+    checkCapacity: async () => {
+      if (available < 100) {
+        const error = new Error("Scratch exhausted the reserve. Free space, then retry.");
+        error.globalSafety = true;
+        throw error;
+      }
+    },
+    runJob: async (job, { signal }) => {
+      acquired.push(job.recordingId);
+      available = 50;
+      await new Promise((resolve, reject) => {
+        const timeout = globalThis.setTimeout(
+          () => reject(new Error("capacity cancellation did not arrive")),
+          300,
+        );
+        signal.addEventListener(
+          "abort",
+          () => {
+            globalThis.clearTimeout(timeout);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      throw signal.reason;
+    },
+  });
+  assert.deepEqual(acquired, ["growing"]);
+  assert.equal(digest.globalStop, true);
+  assert.equal(digest.verdict, "red");
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
+  assert.match(held[0].lastError, /Scratch.*Free space/);
+  assert.equal(held[1].attempts ?? 0, 0);
+  assert.equal(held[1].lastError ?? null, null);
+});
+
+test("bounds an unresolved pre-job capacity probe, persists red, and recovers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-capacity-unresolved-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["first", "next"]);
+  let probe = () => new Promise(() => {});
+  const acquired = [];
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    lock: null,
+    preflight: async () => {},
+    capacityCheckTimeoutMs: 10,
+    checkCapacity: () => probe(),
+    runJob: async (job) => {
+      acquired.push(job.recordingId);
+      return { complete: false, stage: "failed", retryable: false };
+    },
+  };
+  const digest = await Promise.race([
+    runMediaQueue(options),
+    new Promise((_, reject) =>
+      globalThis.setTimeout(() => reject(new Error("fixture exceeded bound")), 150),
+    ),
+  ]);
+  assert.equal(digest.globalStop, true);
+  assert.equal(digest.verdict, "red");
+  assert.deepEqual(acquired, []);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
+  assert.match(held[0].lastError, /timed out.*retry/);
+  assert.equal(held[1].attempts ?? 0, 0);
+  probe = async () => {};
+  await runMediaQueue(options);
+  assert.deepEqual(acquired, ["first", "next"]);
+});
+
+test("bounds an unresolved final job capacity probe without crediting completion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-capacity-final-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["first", "next"]);
+  let probes = 0;
+  const acquired = [];
+  const digest = await Promise.race([
+    runMediaQueue({
+      statePath,
+      courses: [COURSE],
+      mode: "manual",
+      lock: null,
+      preflight: async () => {},
+      capacityCheckTimeoutMs: 10,
+      checkCapacity: () => (++probes === 2 ? new Promise(() => {}) : Promise.resolve()),
+      runJob: async (job) => {
+        acquired.push(job.recordingId);
+        return { complete: false, stage: "failed", retryable: false };
+      },
+    }),
+    new Promise((_, reject) =>
+      globalThis.setTimeout(() => reject(new Error("fixture exceeded bound")), 150),
+    ),
+  ]);
+  assert.deepEqual(acquired, ["first"]);
+  assert.equal(digest.verdict, "red");
+  assert.equal(digest.globalStop, true);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
+  assert.match(held[0].lastError, /timed out.*retry/);
+  assert.equal(held[0].complete, false);
+  assert.equal(held[1].attempts ?? 0, 0);
+});
+
+test("capacity depletion cancels and confirms an owned runtime group before global stop and retry", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-capacity-process-"));
+  const statePath = join(root, "state.json");
+  const readyPath = join(root, "runtime-ready.json");
+  await writeQueue(statePath, COURSE, ["growing", "next"]);
+  let childPid;
+  const signals = [];
+  const signalProcessGroup = (pid, signal) => {
+    try {
+      process.kill(-pid, signal);
+      if (signal !== 0) signals.push(signal);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      throw error;
+    }
+  };
+  t.after(async () => {
+    if (childPid) signalProcessGroup(childPid, "SIGKILL");
+    await rm(root, { recursive: true, force: true });
+  });
+  let deplete = true;
+  let stoppedChild = false;
+  const acquired = [];
+  const exhaustion = new Error("Synthetic scratch reserve exhausted. Free space, then retry.");
+  exhaustion.globalSafety = true;
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    lock: null,
+    capacityMonitorIntervalMs: 5,
+    checkCapacity: async () => {
+      if (!deplete) return;
+      const ready = await readFile(readyPath, "utf8").catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (ready) {
+        childPid = JSON.parse(ready).pid;
+        throw exhaustion;
+      }
+    },
+    runJob: async (job, { signal }) => {
+      acquired.push(job.recordingId);
+      if (!deplete) return completeResult(statePath, job);
+      const script = `process.on('SIGTERM',()=>{});
+        require('node:fs').writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));
+        setTimeout(()=>process.exit(),3000);`;
+      try {
+        await runMediaProcess(process.execPath, ["-e", script, readyPath], {
+          signal,
+          signalProcessGroup,
+          timeoutMs: 2000,
+          label: "capacity fixture runtime",
+          graceMs: 50,
+          cleanupMs: 500,
+        });
+        assert.fail("capacity cancellation must interrupt runtime acquisition");
+      } catch (error) {
+        assert.equal(error, exhaustion);
+        stoppedChild = true;
+        throw error;
+      }
+    },
+  };
+  const stopped = await runQueue(options);
+  assert.equal(stoppedChild, true);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(signalProcessGroup(childPid, 0), false);
+  assert.equal(stopped.globalStop, true);
+  assert.equal(stopped.verdict, "red");
+  assert.deepEqual(acquired, ["growing"]);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
+  assert.equal(held[0].complete, false);
+  assert.match(held[0].lastError, /reserve exhausted.*Free space/);
+  assert.equal(held[1].attempts ?? 0, 0);
+  const latest = JSON.parse(await readFile(mediaDigestPaths(statePath).latestPath, "utf8"));
+  assert.equal(latest.globalStop, true);
+  assert.equal(latest.verdict, "red");
+  deplete = false;
+  const recovered = await runQueue(options);
+  assert.deepEqual(acquired, ["growing", "growing", "next"]);
+  assert.equal(recovered.verdict, "green");
+  const retried = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
+  assert.equal(retried[0].recordingId, held[0].recordingId);
+  assert.ok(retried[0].attempts > held[0].attempts);
 });

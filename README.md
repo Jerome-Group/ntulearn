@@ -142,7 +142,14 @@ downloads the pinned artifacts, verifies their checksums and runtime commands, a
 `Media/.runtime/metadata/runtime.json`. The manifest records identity, revision, checksum,
 licence, path and size. Every worker run refuses a missing, replaced or misconfigured runtime or
 tool and points back to `media:setup`; model weights, caches and working files remain outside this
-repository.
+repository. Cheap canonical-path and free-space checks run before each acquisition and every
+second while a job is active; they do not rehash models. Artifact writes account for the incoming
+bytes on their destination filesystem and recheck the reserve before promotion. Capacity failures
+cancel acquisition, preserve previously held artifacts and stop the queue red with a retry action.
+Each cheap check has a five-second logical deadline, including the final monitor drain. An
+underlying read-only filesystem probe may remain pending; its late result cannot authorize a write.
+Physical writes and copies remain awaited: stalled I/O can delay completion, and no later job starts
+while it is pending.
 
 Mandatory worker verification keeps all five full checksums, manifest identities, canonical roots,
 reserve checks and external-tool checks. Read-only verification has a 120-second cumulative logical

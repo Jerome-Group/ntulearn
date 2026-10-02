@@ -1,3 +1,5 @@
+import { withCapacityDeadline } from "./capacity-deadline.mjs";
+import { createMediaCapacity } from "./capacity.mjs";
 import { join } from "node:path";
 import { openClient } from "../ntulearn/client.mjs";
 import { runMediaProcess } from "./process.mjs";
@@ -13,6 +15,8 @@ export async function runProductionMedia({
   signalProcessGroup,
   mode = "scheduled",
   verifyRuntime = verifyMediaRuntime,
+  createCapacity = createMediaCapacity,
+  capacityCheckTimeoutMs = 5_000,
   createJobRunner = createProductionJobRunner,
   lock,
   write,
@@ -23,13 +27,28 @@ export async function runProductionMedia({
   updateJob,
 }) {
   let runtime;
+  let capacity;
   let runner;
   const preflight = async () => {
     runtime = await verifyRuntime(config.media, { signalProcessGroup });
+    capacity = await withCapacityDeadline(
+      () =>
+        createCapacity(config.media, {
+          courses: config.courses,
+          timeoutMs: capacityCheckTimeoutMs,
+        }),
+      { timeoutMs: capacityCheckTimeoutMs },
+    );
   };
   const runJob = async (appearance, context) => {
     if (appearance.provider === "unsupported") return unsupportedResult(appearance);
-    runner ??= await createJobRunner({ config, runtime, signalProcessGroup });
+    runner ??= await createJobRunner({
+      config,
+      runtime,
+      capacity,
+      capacityCheckTimeoutMs,
+      signalProcessGroup,
+    });
     return runner.run(appearance, context);
   };
 
@@ -40,6 +59,8 @@ export async function runProductionMedia({
       media: config.media,
       mode,
       preflight,
+      checkCapacity: ({ course }) => capacity.checkJob(course),
+      capacityCheckTimeoutMs,
       runJob,
       ...(lock === undefined ? {} : { lock }),
       ...(write === undefined ? {} : { write }),
@@ -58,6 +79,8 @@ export async function runProductionMedia({
 export async function createProductionJobRunner({
   config,
   runtime,
+  capacity,
+  capacityCheckTimeoutMs,
   signalProcessGroup,
   open = openClient,
 }) {
@@ -69,7 +92,11 @@ export async function createProductionJobRunner({
   const context = productionContext(config, runtime.runtime, signalProcessGroup);
   const providers = createProductionProviders(context);
   const local = createProductionLocalModels(context);
-  const storage = createMediaStorage({ mediaRoot: config.media.mediaRoot });
+  const storage = createMediaStorage({
+    mediaRoot: config.media.mediaRoot,
+    checkCapacity: capacity.check,
+    capacityCheckTimeoutMs,
+  });
   const client = await open(config.profilePath);
 
   return {
