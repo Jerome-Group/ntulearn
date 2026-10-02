@@ -116,7 +116,12 @@ async function mediaWorker(config, mode = "scheduled") {
     throw new Error("Usage: npm run media:worker -- <scheduled|manual>");
   }
   const { runProductionMedia } = await import("./media/production.mjs");
-  const result = await runProductionMedia({ config, mode, timeZone: "Asia/Singapore" });
+  const result = await runProductionMedia({
+    config,
+    mode,
+    timeZone: "Asia/Singapore",
+    signalProcessGroup: signalMediaProcessGroup,
+  });
   await writeLine(stdout, asJson(result.digest));
   return result.exitCode;
 }
@@ -196,6 +201,21 @@ function watchdogRunner() {
     }),
     argumentsFor: (command) => [CLI, command, "all"],
   };
+}
+
+function signalMediaProcessGroup(pid, signal) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || ![0, "SIGTERM", "SIGKILL"].includes(signal)) {
+    throw new Error(
+      "Media cleanup needs an owned process-group PID and signal. Check the runtime composition before retrying.",
+    );
+  }
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 function killProcessGroup(pid) {

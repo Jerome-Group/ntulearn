@@ -1,6 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { runMediaProcess } from "./process.mjs";
 import { mediaExtension } from "./production-values.mjs";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -60,8 +59,8 @@ export async function remuxYoutube(downloaded, { signal }, context) {
   });
 }
 
-export async function probeMediaDuration(input, signal, { commands }) {
-  const result = await runMediaProcess(
+export async function probeMediaDuration(input, signal, { commands, runProcess }) {
+  const result = await runProcess(
     commands.ffprobe,
     [
       "-v",
@@ -72,7 +71,7 @@ export async function probeMediaDuration(input, signal, { commands }) {
       "default=noprint_wrappers=1:nokey=1",
       input,
     ],
-    { signal, timeoutMs: 60_000, label: "Direct media duration probe" },
+    { signal, timeoutMs: 60_000, label: "Direct media duration probe", stdoutMaxBytes: 4096 },
   );
   const duration = Number.parseFloat(result.stdout.trim());
   if (!Number.isFinite(duration) || duration <= 0) {
@@ -99,14 +98,18 @@ async function remux({
     if (extraDirectory) await rm(extraDirectory, { recursive: true, force: true });
   };
   try {
-    await runMediaProcess(context.commands.ffmpeg, ["-y", "-i", input, ...argumentsFor, output], {
-      signal,
-      timeoutMs: 4 * HOUR_MS,
-      label,
-    });
+    await context.runProcess(
+      context.commands.ffmpeg,
+      ["-nostats", "-y", "-i", input, ...argumentsFor, output],
+      {
+        signal,
+        timeoutMs: 4 * HOUR_MS,
+        label,
+      },
+    );
     return { path: output, filename, audio: true, cleanup };
   } catch (error) {
-    await cleanup();
+    if (error.code !== "MEDIA_PROCESS_CLEANUP") await cleanup();
     throw error;
   }
 }
