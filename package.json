@@ -13,6 +13,12 @@
     "node": "^22.13.0 || >=24"
   },
   "scripts": {
+    "capabilities": "node src/cli.mjs capabilities",
+    "health": "node src/cli.mjs health",
+    "status": "node src/cli.mjs status",
+    "check": "node src/cli.mjs check",
+    "check:syntax": "node src/cli.mjs check syntax",
+    "check:contracts": "node src/cli.mjs check contracts",
     "login": "node src/cli.mjs login",
     "discover": "node src/cli.mjs discover",
     "watchdog": "node src/cli.mjs watchdog",

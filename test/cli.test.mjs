@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,11 +12,36 @@ const STACK_FRAME = /\n\s+at /;
 
 // execFile rejects on a non-zero exit, and the rejection carries the streams. Both outcomes are
 // expected here, so the code is part of what is asserted rather than a reason to throw.
-function runCli(...args) {
-  return runCliWithEnvironment(
-    { ...process.env, NTULEARN_CONFIG_PATH: "config/courses.example.json" },
-    ...args,
+async function runCli(...args) {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-isolated-"));
+  const example = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("../config/courses.example.json", import.meta.url)),
+      "utf8",
+    ),
   );
+  const configPath = join(root, "courses.json");
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      ...example,
+      statePath: join(root, "state.json"),
+      profilePath: join(root, "profile"),
+    }),
+  );
+  try {
+    const result = await runCliWithEnvironment(
+      { ...process.env, NTULEARN_CONFIG_PATH: configPath },
+      ...args,
+    );
+    const sandboxDigest = await readFile(join(root, "media-latest.json"), "utf8").catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    return { ...result, sandboxDigest: sandboxDigest ? JSON.parse(sandboxDigest) : null };
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 function runCliWithEnvironment(env, ...args) {
@@ -33,7 +58,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -67,11 +92,13 @@ test("keeps media setup explicit and owner-started", async () => {
   );
 });
 
-test("runs the tracked media worker entrypoint without Owner configuration", async () => {
-  const { code, stdout, stderr } = await runCli("media-worker", "manual");
+test("keeps default media worker CLI evidence inside its disposable sandbox", async () => {
+  const { code, stdout, stderr, sandboxDigest } = await runCli("media-worker", "manual");
   assert.equal(code, 0);
   assert.equal(stderr, "");
   assert.equal(JSON.parse(stdout).verdict, "green");
+  assert.deepEqual(sandboxDigest, JSON.parse(stdout));
+  assert.equal(sandboxDigest.counts.total, 0);
 });
 
 test("rejects an unknown media worker mode", async () => {
@@ -132,3 +159,44 @@ function redMediaConfig(root) {
     ],
   };
 }
+
+test("offline commands work without configuration, dependencies or browser installation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn fresh agent ü "));
+  await cp(fileURLToPath(new URL("../src", import.meta.url)), join(root, "src"), {
+    recursive: true,
+  });
+  const env = { ...process.env, NTULEARN_CONFIG_PATH: "missing-private-config.json" };
+  const run = (name) =>
+    new Promise((done) => {
+      execFile(
+        process.execPath,
+        [join(root, "src/cli.mjs"), name],
+        { cwd: root, env },
+        (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr }),
+      );
+    });
+  const index = await run("capabilities");
+  assert.equal(index.code, 0);
+  assert.equal(index.stderr, "");
+  assert.equal(JSON.parse(index.stdout).schemaVersion, 1);
+  for (const name of ["health", "status"]) {
+    const result = await run(name);
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    assert.equal(JSON.parse(result.stdout).status, "blocked");
+    assert.doesNotMatch(result.stdout, /missing-private-config/);
+  }
+});
+
+test("offline usage failures preserve structured output and nonzero exits", async () => {
+  for (const args of [
+    ["capabilities", "unknown"],
+    ["status", "unexpected"],
+    ["check", "unknown"],
+  ]) {
+    const result = await runCli(...args);
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    assert.equal(JSON.parse(result.stdout).status, "blocked");
+  }
+});

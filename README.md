@@ -17,6 +17,33 @@ separately from sync and verify.
 
 ## Commands
 
+Start with `npm run capabilities`: its versioned JSON index lists prerequisites, Owner restrictions,
+read/write effects, arguments, implementation and fixture verification routes. It needs no local
+configuration or browser installation. Select a command or feature with
+`npm run capabilities -- transcripts`.
+
+```bash
+npm run health               # offline config/filesystem observations; never opens the session
+npm run status               # offline receipts, queues and digest freshness; no source contents
+npm run check                # shared CI/agent syntax, contracts, format, lint and fixture checks
+npm run check -- test        # one check; unselected checks explicitly unrun
+```
+
+These three commands emit `schemaVersion: 1`, per-check `passed`, `failed`, `blocked` or `unrun`,
+actions and bounded evidence. Exit codes: `0` passed, `1` failed, `2` blocked/unrun/usage. Health
+reads only profile directory metadata; it does not validate login. Runtime metadata observations
+do not replace the worker's checksum/tool/reserve verifier. Status counts queue declarations,
+keeps sync/media verdicts separate and treats evidence older than 48 hours as stale; it does not
+prove artifact bytes, audio fidelity or exhaustive upstream visibility. Private course paths,
+identifiers, raw errors and log contents are excluded.
+
+`npm ci --ignore-scripts`, then `npm run check` is the clean-checkout verification route. It runs
+the existing `npm test`, `npm run lint` and `npm run format:check` tools plus ESM syntax and catalog
+contracts, without browser/network tests. Each check is bounded to two minutes and all selected
+checks report even after another fails. Evidence includes elapsed time, exit code and output hash;
+failed tool details can be read locally by running the indexed tool command. No TypeScript is
+present: syntax, lint, runtime contracts and fixture/process regressions are the applicable checks.
+
 ```bash
 npm run login                 # refresh the NTU SSO/MFA session
 npm run discover              # list the NTULearn courses you can see
