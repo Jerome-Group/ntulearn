@@ -100,6 +100,8 @@ function mediaResult({
     stage,
     verdict,
     complete: workflowComplete,
+    sourceSha256: sourceSha256 ?? null,
+    formattedSha256: artifacts.formattedTranscript?.sha256 ?? null,
     transcript: {
       complete: transcriptComplete,
       sourceKind: source?.sourceKind ?? null,

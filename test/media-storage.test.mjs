@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -263,4 +263,55 @@ test("marks storage-capacity failures as global media safety errors", async () =
     }),
     (error) => error.globalSafety === true && error.code === "ENOSPC",
   );
+});
+
+test("rejects symlinked artifact ancestors before writing outside its store", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-escape-"));
+  try {
+    const volumeRoot = join(root, "RAID0");
+    const mediaRoot = join(volumeRoot, "Media");
+    const outside = join(root, "outside");
+    await mkdir(mediaRoot, { recursive: true });
+    await mkdir(outside);
+    await symlink(outside, join(mediaRoot, "recordings"));
+    const storage = createMediaStorage({ mediaRoot, volumeRoot });
+    await assert.rejects(
+      storage.write({
+        appearance: { recordingId: "fixture" },
+        kind: "raw-transcript",
+        content: "fixture",
+      }),
+      /symlink|outside/i,
+    );
+    await assert.rejects(readFile(join(outside, "transcript.raw.json")), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a symlinked course artifact directory and preserves user edits", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-course-escape-"));
+  try {
+    const volumeRoot = join(root, "RAID0");
+    const mediaRoot = join(volumeRoot, "Media");
+    const destination = join(root, "course");
+    const outside = join(root, "outside");
+    await mkdir(mediaRoot, { recursive: true });
+    await mkdir(destination);
+    await mkdir(outside);
+    await writeFile(join(outside, "Lecture.transcript.md"), "user edit");
+    await symlink(outside, join(destination, "Lectures"));
+    const storage = createMediaStorage({ mediaRoot, volumeRoot });
+    const appearance = {
+      recordingId: "fixture",
+      placement: { destination, formattedTranscriptPath: "Lectures/Lecture.transcript.md" },
+    };
+    await assert.rejects(
+      storage.write({ appearance, kind: "formatted-transcript", content: "replacement" }),
+      /symlink/i,
+    );
+    assert.equal(await readFile(join(outside, "Lecture.transcript.md"), "utf8"), "user edit");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -5,7 +5,7 @@ import { withMediaQueueLock } from "./lock.mjs";
 import { readMediaQueue, updateMediaQueueJob } from "./queue.mjs";
 import { verifyMediaRuntime } from "./setup.mjs";
 import { persistMediaDigest } from "./digest.mjs";
-import { writeMediaCourseStatus } from "./status.mjs";
+import { writeMediaCourseStatus, writeMediaRecordingStatus } from "./status.mjs";
 import {
   courseSummary,
   discoveryIncompleteSummary,
@@ -15,7 +15,13 @@ import {
   summarizeCounts,
   verdictFor,
 } from "./worker-report.mjs";
-import { checkpointUpdate, failureUpdate, finishedJob, resultUpdate } from "./worker-state.mjs";
+import {
+  checkpointUpdate,
+  failureUpdate,
+  finishedJob,
+  resultUpdate,
+  mediaArtifactEvidenceUpdate,
+} from "./worker-state.mjs";
 
 export { mediaDigestPaths } from "./digest.mjs";
 
@@ -147,7 +153,7 @@ async function runMediaQueueUnlocked({
     );
     const summaries = [];
     for (const course of selectedCourses) {
-      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue }));
+      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue, media }));
     }
     return persistMediaDigest({
       statePath,
@@ -175,7 +181,7 @@ async function runMediaQueueUnlocked({
         ? {
             globalStop: false,
             stoppedAtBoundary: false,
-            summary: await summarizeUnprocessedCourse({ statePath, course, readQueue }),
+            summary: await summarizeUnprocessedCourse({ statePath, course, readQueue, media }),
           }
         : await runCourse({
             statePath,
@@ -188,6 +194,7 @@ async function runMediaQueueUnlocked({
             cancelSchedule: clearSchedule,
             readQueue,
             updateJob,
+            media,
           });
     summaries.push(outcome.summary);
     globalStop ||= outcome.globalStop;
@@ -219,16 +226,21 @@ async function runMediaQueueUnlocked({
   });
 }
 
-async function summarizeUnprocessedCourse({ statePath, course, readQueue }) {
+async function summarizeUnprocessedCourse({ statePath, course, readQueue, media }) {
   try {
-    const loaded = await readQueue({ statePath, courseKey: course.key });
+    const loaded = await readQueue({ statePath, courseKey: course.key, course });
     const record = loaded?.record;
     if (!record || !Array.isArray(record.queue)) return missingQueueSummary(course, loaded?.path);
     if (record.complete !== true) return discoveryIncompleteSummary(course, loaded.path, record);
     return courseSummary({
       course,
       queuePath: loaded.path,
-      queue: record.queue,
+      queue: await Promise.all(
+        record.queue.map(async (job) => ({
+          ...job,
+          ...(await mediaArtifactEvidenceUpdate(job, { mediaRoot: media?.mediaRoot, course })),
+        })),
+      ),
       processed: 0,
       discovery: record,
     });
@@ -263,10 +275,11 @@ async function runCourse({
   readQueue,
   updateJob,
   timeZone,
+  media,
 }) {
   let loaded;
   try {
-    loaded = await readQueue({ statePath, courseKey: course.key });
+    loaded = await readQueue({ statePath, courseKey: course.key, course });
   } catch (error) {
     await persistRedCourseStatus({
       course,
@@ -314,6 +327,25 @@ async function runCourse({
   let stoppedAtBoundary = false;
 
   for (const job of queue) {
+    let evidence;
+    try {
+      evidence = await mediaArtifactEvidenceUpdate(job, { mediaRoot: media?.mediaRoot, course });
+      if (evidence) {
+        const reconciled = await persistJobUpdate({
+          updateJob,
+          statePath,
+          course,
+          job,
+          update: evidence,
+          now,
+        });
+        Object.assign(job, reconciled.job);
+      }
+    } catch (error) {
+      globalStop = true;
+      await persistRedCourseStatus({ course, discovery: record, queue, now, error });
+      break;
+    }
     if (finishedJob(job)) continue;
     if (mode === "scheduled" && !isOvernightWindow(now(), timeZone)) {
       stoppedAtBoundary = true;
@@ -444,12 +476,23 @@ async function runCourse({
       continue;
     }
 
+    const update = resultUpdate(result, finishedAt);
+    let evidenceAfterRun;
+    try {
+      evidenceAfterRun = await mediaArtifactEvidenceUpdate(
+        { ...job, ...update },
+        { mediaRoot: media?.mediaRoot, course },
+      );
+    } catch (error) {
+      evidenceAfterRun = failureUpdate(error, finishedAt);
+      globalStop = isGlobalMediaSafetyFailure(error);
+    }
     const completed = await persistJobUpdate({
       updateJob,
       statePath,
       course,
       job,
-      update: resultUpdate(result, finishedAt),
+      update: { ...update, ...evidenceAfterRun },
       now,
     }).catch((error) => ({ error }));
     if (completed.error) {
@@ -463,6 +506,25 @@ async function runCourse({
       });
     } else Object.assign(job, completed.job);
     if (globalStop) break;
+  }
+
+  if (!globalStop) {
+    try {
+      await writeMediaCourseStatus({
+        course,
+        discovery: record,
+        queue,
+        now,
+        mediaRoot: media?.mediaRoot,
+      });
+      for (const job of queue) {
+        if (job.placement?.statusPath)
+          await writeMediaRecordingStatus({ appearance: job, now, mediaRoot: media?.mediaRoot });
+      }
+    } catch (error) {
+      globalStop = true;
+      await persistRedCourseStatus({ course, discovery: record, queue, now, error });
+    }
   }
 
   return {

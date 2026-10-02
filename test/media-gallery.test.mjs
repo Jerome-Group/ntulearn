@@ -301,3 +301,37 @@ function galleryEntry(id, providerReference, title, createdAt) {
     published: true,
   };
 }
+
+test("fresh Gallery collision paths remain stable when visible order changes", () => {
+  const entries = [
+    galleryEntry("gallery-1", "entry:one", "Topic / One", "2026-08-10T09:00:00+08:00"),
+    galleryEntry("gallery-2", "entry:two", "Topic _ One", "2026-08-10T09:00:00+08:00"),
+  ];
+  const discover = (items) =>
+    discoverMediaGallery({
+      course: COURSE,
+      pages: [{ displayedCount: 2, entries: items, hasMore: false }],
+    }).recordings;
+  const paths = (items) =>
+    Object.fromEntries(
+      items.map((item) => [item.recordingId, item.placement.formattedTranscriptPath]),
+    );
+  assert.deepEqual(paths(discover(entries)), paths(discover([...entries].reverse())));
+});
+
+test("Gallery ordinal suffixes never take a naturally titled recording path", () => {
+  const entries = [
+    galleryEntry("a", "entry:a", "Lecture", "2026-08-10T09:00:00+08:00"),
+    galleryEntry("b", "entry:b", "Lecture", "2026-08-10T09:00:00+08:00"),
+    galleryEntry("c", "entry:c", "Lecture (2)", "2026-08-10T09:00:00+08:00"),
+  ];
+  const result = discoverMediaGallery({
+    course: COURSE,
+    pages: [{ displayedCount: 3, entries, hasMore: false }],
+  });
+  assert.equal(result.complete, true);
+  assert.equal(
+    new Set(result.recordings.map((item) => item.placement.formattedTranscriptPath)).size,
+    3,
+  );
+});

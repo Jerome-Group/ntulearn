@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { attachmentName, isFolder } from "../ntulearn/content.mjs";
 import { attachmentPlacement, placedFile, placementsIn } from "../placement.mjs";
 import { orderedName } from "../paths.mjs";
@@ -49,7 +50,25 @@ export function discoverContentRecordings({
     }
   }
 
-  return recordings;
+  return collisionSafePlacements(recordings);
+}
+
+function collisionSafePlacements(recordings) {
+  const groups = Map.groupBy(recordings, (recording) => recording.itemId);
+  return recordings.map((recording) => {
+    if (groups.get(recording.itemId).length === 1) return recording;
+    const suffix = createHash("sha256").update(recording.recordingId).digest("hex").slice(0, 16);
+    const placement = { ...recording.placement };
+    for (const field of ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"]) {
+      if (field === "videoPath" && placement.videoAlreadyPresent) continue;
+      if (field === "audioPath" && placement.audioAlreadyPresent) continue;
+      placement[field] = placement[field].replace(
+        /(\.(?:transcript|media-status)\.md|\.[^/.]+)$/,
+        ` (${suffix})$1`,
+      );
+    }
+    return { ...recording, placement };
+  });
 }
 
 function appearance({

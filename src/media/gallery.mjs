@@ -110,12 +110,22 @@ function normalizeEntry(entry, index) {
 }
 
 function placeEntries(course, entries) {
-  const collisions = new Map();
+  const baseNameOf = (entry) =>
+    `${formatCreationTimestamp(entry.createdAt)} ${safeSegment(entry.title)}`;
+  const reserved = new Set(entries.map((entry) => baseNameOf(entry).toLowerCase()));
+  const assigned = new Set();
+  const names = new Map();
+  for (const entry of [...entries].sort((a, b) => a.appearanceId.localeCompare(b.appearanceId))) {
+    const base = baseNameOf(entry);
+    let name = base;
+    let occurrence = 2;
+    while (assigned.has(name.toLowerCase()) || (name !== base && reserved.has(name.toLowerCase())))
+      name = `${base} (${occurrence++})`;
+    assigned.add(name.toLowerCase());
+    names.set(entry.appearanceId, name);
+  }
   return entries.map((entry, galleryIndex) => {
-    const baseName = `${formatCreationTimestamp(entry.createdAt)} ${safeSegment(entry.title)}`;
-    const occurrence = (collisions.get(baseName) ?? 0) + 1;
-    collisions.set(baseName, occurrence);
-    const stem = occurrence === 1 ? baseName : `${baseName} (${occurrence})`;
+    const stem = names.get(entry.appearanceId);
     const directory = "Media Gallery";
 
     return {

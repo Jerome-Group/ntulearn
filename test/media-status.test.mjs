@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +11,9 @@ import {
   writeMediaCourseStatus,
   writeMediaRecordingStatus,
 } from "../src/media/status.mjs";
+
+import { mediaRecordingRoot } from "../src/media/storage.mjs";
+import { writeMediaQueue } from "../src/media/queue.mjs";
 
 const COURSE = {
   key: "MH1101",
@@ -35,6 +39,23 @@ test("renders an independent course status from durable recording states", async
       audio: { available: true, quality: null, audio: true, path: "/media/week-1.mp4" },
     },
   });
+  await mkdir(course.destination);
+  complete.storageSurface = "content-tree";
+  const mediaPath = join(course.destination, "week-1.mp4");
+  const rawPath = join(root, "transcript.raw.json");
+  const formattedPath = join(course.destination, "week-1.transcript.md");
+  await Promise.all([
+    writeFile(mediaPath, "video"),
+    writeFile(rawPath, "source"),
+    writeFile(formattedPath, "formatted"),
+  ]);
+  complete.artifacts = {
+    media: mediaPath,
+    rawTranscript: rawPath,
+    formattedTranscript: formattedPath,
+  };
+  complete.media.video.path = mediaPath;
+  complete.media.audio.path = mediaPath;
   const queued = recording({
     recordingId: "gallery-queued",
     title: "Week 2",
@@ -201,3 +222,85 @@ function recording({
     lastError,
   };
 }
+
+test("exposes existing artifact links and marks missing transcript evidence incomplete", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-links-"));
+  const course = { ...COURSE, destination: join(root, "Course #1?") };
+  await mkdir(course.destination);
+  const mediaRoot = join(root, "Media");
+  const recordingRoot = mediaRecordingRoot(mediaRoot, "one");
+  await mkdir(recordingRoot, { recursive: true });
+  const rawTranscript = join(recordingRoot, "transcript.raw.json");
+  const formattedTranscript = join(course.destination, "A lecture.transcript.md");
+  await writeFile(rawTranscript, "source");
+  await writeFile(formattedTranscript, "student edit");
+  const appearance = {
+    recordingId: "one",
+    title: "One",
+    provider: "youtube",
+    providerReference: "youtube:abcdefghijk?token=private",
+    complete: true,
+    transcript: { complete: true, sourceKind: "provider" },
+    artifacts: { rawTranscript, formattedTranscript },
+    sourceSha256: createHash("sha256").update("source").digest("hex"),
+    formattedSha256: createHash("sha256").update("student edit").digest("hex"),
+    placement: { destination: course.destination, statusPath: "One.media-status.md" },
+  };
+  const first = await writeMediaRecordingStatus({ appearance, mediaRoot });
+  const ready = await readFile(first.path, "utf8");
+  assert.match(ready, /State: ready/);
+  assert.match(ready, /Course%20%231%3F/);
+  assert.match(ready, /Source transcript: \[Open\]/);
+  assert.match(ready, /Formatted transcript: \[Open\]/);
+  assert.match(ready, /Source reference: youtube:abcdefghijk/);
+  assert.doesNotMatch(ready, /token|private/);
+  assert.equal(await readFile(formattedTranscript, "utf8"), "student edit");
+  await unlink(rawTranscript);
+  await writeMediaRecordingStatus({ appearance, mediaRoot });
+  const missing = await readFile(first.path, "utf8");
+  assert.match(missing, /State: failed \/ incomplete/);
+  assert.match(missing, /Source transcript: unavailable/);
+  assert.equal(await readFile(formattedTranscript, "utf8"), "student edit");
+});
+
+test("rediscovery labels declarations and detects an edited derivative without reading an arbitrary source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-rediscovery-integrity-"));
+  const course = { ...COURSE, destination: join(root, "course") };
+  await mkdir(course.destination);
+  const formattedTranscript = join(course.destination, "Lecture.transcript.md");
+  await writeFile(formattedTranscript, "original");
+  const appearance = {
+    recordingId: "one",
+    complete: true,
+    stage: "complete",
+    verdict: "green",
+    transcript: { complete: true, sourceKind: "provider" },
+    formattedSha256: createHash("sha256").update("original").digest("hex"),
+    artifacts: { rawTranscript: "/an/arbitrary/source.json", formattedTranscript },
+    placement: { destination: course.destination, statusPath: "Lecture.media-status.md" },
+  };
+  const options = {
+    statePath: join(root, "state.json"),
+    course,
+    discovery: { complete: true, verdict: "green", queue: [appearance] },
+  };
+  await writeMediaQueue(options);
+  const statusPath = join(course.destination, appearance.placement.statusPath);
+  const declared = await readFile(statusPath, "utf8");
+  assert.match(declared, /State: declared complete \/ integrity pending/);
+  assert.match(declared, /derivative digest checked/);
+  assert.match(declared, /source integrity and speech quality unverified/);
+  assert.match(declared, /Source transcript: declared \/ unverified/);
+  assert.doesNotMatch(declared, /State: ready/);
+  await writeFile(formattedTranscript, "student edits");
+  await writeMediaQueue(options);
+  const changed = await readFile(statusPath, "utf8");
+  assert.match(changed, /State: failed \/ incomplete/);
+  assert.match(changed, /differs from workflow evidence/);
+  assert.equal(await readFile(formattedTranscript, "utf8"), "student edits");
+  const noProof = { ...appearance, formattedSha256: null };
+  await writeMediaRecordingStatus({ appearance: noProof });
+  const unproven = await readFile(statusPath, "utf8");
+  assert.match(unproven, /derivative ownership\/integrity unverified/);
+  assert.doesNotMatch(unproven, /State: ready/);
+});
