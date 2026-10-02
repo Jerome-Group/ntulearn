@@ -32,7 +32,8 @@
     "test": "node --test",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "media:evaluate": "node src/cli.mjs media-evaluate"
   },
   "dependencies": {
     "playwright": "^1.63.0",

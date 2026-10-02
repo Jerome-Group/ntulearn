@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,7 +59,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -198,5 +199,149 @@ test("offline usage failures preserve structured output and nonzero exits", asyn
     assert.equal(result.code, 2);
     assert.equal(result.stderr, "");
     assert.equal(JSON.parse(result.stdout).status, "blocked");
+  }
+});
+
+test("evaluation plan validates private inputs without configuration or runtime", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-evaluation-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(fileURLToPath(new URL("../src", import.meta.url)), join(root, "src"), {
+    recursive: true,
+  });
+  await writeFile(join(root, "audio.wav"), "fixture audio");
+  const manifestPath = join(root, "private-manifest.json");
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      version: 1,
+      budgets: {
+        maxFixtureSeconds: 300,
+        maxInputBytes: 1000,
+        maxOutputBytes: 10000,
+        jobTimeoutMs: 1000,
+        processTimeoutMs: 500,
+      },
+      fixtures: [
+        {
+          audio: {
+            path: "audio.wav",
+            sha256: createHash("sha256").update("fixture audio").digest("hex"),
+          },
+          reference: { kind: "unavailable" },
+        },
+      ],
+    }),
+  );
+  const result = await new Promise((done) => {
+    execFile(
+      process.execPath,
+      [join(root, "src/cli.mjs"), "media-evaluate", "plan", manifestPath],
+      { env: { ...process.env, NTULEARN_CONFIG_PATH: join(root, "absent-secret-config.json") } },
+      (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr }),
+    );
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  const planned = JSON.parse(result.stdout);
+  assert.equal(planned.status, "passed");
+  assert.equal(planned.evidence.execution, "unrun");
+  assert.equal(planned.evidence.acousticQuality, "unrun");
+  assert.doesNotMatch(result.stdout, /private-manifest|audio\.wav|absent-secret-config/);
+});
+
+test("evaluation usage and unreadable manifests report structured outcomes without private paths", async () => {
+  for (const args of [
+    [],
+    ["run", "private-source.json"],
+    ["plan", "private-source.json", "unexpected-output"],
+  ]) {
+    const result = await runCli("media-evaluate", ...args);
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    assert.equal(JSON.parse(result.stdout).status, "blocked");
+  }
+  const invalid = await runCli("media-evaluate", "plan", "private-source.json");
+  assert.equal(invalid.code, 1);
+  assert.equal(invalid.stderr, "");
+  assert.equal(JSON.parse(invalid.stdout).status, "failed");
+  assert.match(JSON.parse(invalid.stdout).checks[0].action, /retry plan/);
+  assert.doesNotMatch(JSON.parse(invalid.stdout).checks[0].action, /output directory|retained/);
+  assert.doesNotMatch(invalid.stdout, /private-source|node_modules|\n\s+at /);
+});
+
+test("evaluation provenance cleanup uncertainty stops before runtime or model work", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-provenance-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(fileURLToPath(new URL("../src", import.meta.url)), join(root, "src"), {
+    recursive: true,
+  });
+  const marker = join(root, "later-evaluation-work");
+  await writeFile(
+    join(root, "src/media/evaluation.mjs"),
+    `import {writeFile} from 'node:fs/promises';
+export async function runMediaEvaluation(){
+  await writeFile(${JSON.stringify(marker)}, 'unexpected runtime/model boundary');
+  return {status:'passed', exitCode:0, checks:[]};
+}
+`,
+  );
+  const configPath = join(root, "courses.json");
+  await writeFile(configPath, JSON.stringify({ courses: [] }));
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "git"),
+    "#!/usr/bin/env node\nprocess.stderr.write('private provenance diagnostic'); setTimeout(()=>{},100);\n",
+    { mode: 0o755 },
+  );
+  const fault = join(root, "group-fault.mjs");
+  await writeFile(
+    fault,
+    `const kill=process.kill.bind(process); let probes=0;
+process.kill=(pid,signal)=>{
+  if(pid<0 && signal===0 && ++probes===Number(process.env.FIXTURE_FAILED_PROBE)){
+    const error=new Error('private cleanup diagnostic'); error.code='EPERM'; throw error;
+  }
+  return kill(pid,signal);
+};
+`,
+  );
+  for (const failedProbe of [1, 2]) {
+    const result = await new Promise((done) => {
+      execFile(
+        process.execPath,
+        [
+          "--import",
+          fault,
+          join(root, "src/cli.mjs"),
+          "media-evaluate",
+          "run",
+          join(root, "private-manifest.json"),
+          join(root, "fresh-output"),
+        ],
+        {
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            NTULEARN_CONFIG_PATH: configPath,
+            FIXTURE_FAILED_PROBE: String(failedProbe),
+          },
+        },
+        (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr }),
+      );
+    });
+    assert.equal(result.code, 1);
+    assert.equal(result.stderr, "");
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.status, "failed");
+    assert.equal(report.checks[0].code, "MEDIA_PROCESS_CLEANUP");
+    assert.match(report.checks[0].action, /stop.*inspect/i);
+    assert.doesNotMatch(result.stdout, /private.*diagnostic|private-manifest|fresh-output|EPERM/);
+    assert.equal(result.stdout.includes(root), false);
+    await assert.rejects(readFile(marker), { code: "ENOENT" });
+    await assert.rejects(readFile(join(root, "fresh-output", "provenance.json")), {
+      code: "ENOENT",
+    });
   }
 });
