@@ -104,6 +104,7 @@ const routes = {
   transcripts: [
     [
       "src/media/job.mjs",
+      "src/media/artifacts.mjs",
       "src/media/native-transcript-safety.mjs",
       "src/media/asr.mjs",
       "src/media/transcript.mjs",
@@ -114,6 +115,7 @@ const routes = {
     ],
     [
       "test/media-job.test.mjs",
+      "test/media-artifacts.test.mjs",
       "test/media-native-transcript-safety.test.mjs",
       "test/media-asr.test.mjs",
       "test/media-transcript.test.mjs",

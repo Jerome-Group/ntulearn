@@ -1,7 +1,7 @@
 import { withCapacityDeadline } from "./capacity-deadline.mjs";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
+import { copyFile, link, lstat, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { markGlobalMediaSafety } from "./errors.mjs";
@@ -26,6 +26,18 @@ export function createMediaStorage({
     checkCapacity
       ? withCapacityDeadline(inspect, { timeoutMs: capacityCheckTimeoutMs })
       : Promise.resolve().then(inspect);
+
+  async function assertCurrentReplacement(path, proof) {
+    const current = await probe(() => read(path)).catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw markGlobalMediaSafety(error);
+    });
+    if (!current || digest(current) !== proof.sha256) {
+      throw new Error(
+        "Formatted transcript replacement proof is stale or the derivative changed. Existing bytes retained; inspect ownership metadata before retrying regeneration.",
+      );
+    }
+  }
 
   return {
     async write({
@@ -53,13 +65,7 @@ export function createMediaStorage({
       );
       if (replaceProof) {
         assertReplacementProof({ kind, target, replaceProof });
-        const current = await probe(() => read(target.path)).catch((error) => {
-          if (error.code === "ENOENT") return null;
-          throw markGlobalMediaSafety(error);
-        });
-        if (!current || digest(current) !== replaceProof.sha256) {
-          throw new Error("Formatted transcript replacement proof is stale.");
-        }
+        await assertCurrentReplacement(target.path, replaceProof);
       }
       let alreadyPresent;
       try {
@@ -79,10 +85,11 @@ export function createMediaStorage({
           await checkCapacity?.({ path: target.path, boundary, bytes });
         });
         await mkdir(dirname(target.path), { recursive: true });
-        if (sourcePath !== undefined || checkCapacity) {
+        if (sourcePath !== undefined || checkCapacity || replaceProof || writeOnce(kind)) {
           await promoteAtomically({
             sourcePath,
             target: target.path,
+            exclusive: writeOnce(kind) && !replaceProof,
             content,
             write,
             beforePromotion: async () => {
@@ -90,6 +97,10 @@ export function createMediaStorage({
                 await assertMediaArtifactPath(target.path, boundary);
                 await checkCapacity?.({ path: target.path, boundary });
               });
+              if (replaceProof) {
+                await probe(() => assertMediaArtifactPath(target.path, boundary));
+                await assertCurrentReplacement(target.path, replaceProof);
+              }
             },
           });
         } else await write(target.path, content);
@@ -117,13 +128,35 @@ export function createMediaStorage({
   };
 }
 
-async function promoteAtomically({ sourcePath, target, content, write, beforePromotion }) {
+async function promoteAtomically({
+  sourcePath,
+  target,
+  exclusive,
+  content,
+  write,
+  beforePromotion,
+}) {
   const partial = `${target}.part-${randomUUID()}`;
   try {
     if (sourcePath !== undefined) await copyFile(sourcePath, partial);
     else await write(partial, content);
     await beforePromotion();
-    await rename(partial, target);
+    if (exclusive) {
+      try {
+        await link(partial, target);
+      } catch (cause) {
+        throw Object.assign(
+          new Error(
+            cause.code === "EEXIST"
+              ? "Media publication target became occupied. Existing bytes retained; inspect the target before retrying."
+              : "Exclusive media publication failed. Retain existing files and retry on a filesystem supporting same-directory hard links.",
+            { cause },
+          ),
+          { code: cause.code },
+        );
+      }
+      await unlink(partial);
+    } else await rename(partial, target);
   } catch (error) {
     await unlink(partial).catch(() => {});
     throw error;

@@ -1144,6 +1144,7 @@ test("replaces a corrupt existing derivative without revisiting its source", asy
       {
         path: "media/transcript.state.json",
         content: JSON.stringify({
+          recordingId: recordingAppearance().recordingId,
           sourceSha256: transcriptDigest(rawContent),
           formattedSha256: transcriptDigest(""),
           artifacts: {
@@ -1713,4 +1714,102 @@ test("provider response limitations remain visible beside an admitted unchanged 
   assert.equal(result.complete, true);
   assert.ok(result.limitations.includes(limitation));
   assert.equal(writes.find(({ kind }) => kind === "provider-transcript").content, body);
+});
+
+test("actual regeneration preserves unowned or edited derivatives and replaces only coherent owned bytes", async (t) => {
+  const { rm } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-regeneration-ownership-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const mode of ["missing-digest", "wrong-recording", "wrong-source", "edited", "owned"]) {
+    const volumeRoot = join(root, mode, "RAID0");
+    const mediaRoot = join(volumeRoot, "Media");
+    const destination = join(root, mode, "course");
+    await mkdir(mediaRoot, { recursive: true });
+    await mkdir(destination);
+    const appearance = {
+      ...recordingAppearance(),
+      placement: {
+        destination,
+        formattedTranscriptPath: "Lecture.transcript.md",
+        statusPath: "Lecture.media-status.md",
+        audioPath: "Lecture.m4a",
+      },
+    };
+    const storage = createMediaStorage({ mediaRoot, volumeRoot });
+    const raw = JSON.stringify({
+      sourceKind: "generated",
+      language: "en",
+      segments: [{ start: 0, end: 10, text: "The value is 4." }],
+    });
+    const original = "The value is 4.";
+    const current = mode === "edited" ? `${original} Student note.` : original;
+    const source = await storage.write({ appearance, kind: "raw-transcript", content: raw });
+    const derivative = await storage.write({
+      appearance,
+      kind: "formatted-transcript",
+      content: current,
+    });
+    const media = await storage.write({
+      appearance,
+      kind: "media",
+      mediaKind: "audio",
+      content: "Synthetic media",
+    });
+    const backup = join(root, `${mode}.before`);
+    await writeFile(backup, current, { flag: "wx" });
+    await storage.write({
+      appearance,
+      kind: "state",
+      content: JSON.stringify({
+        recordingId: mode === "wrong-recording" ? "another-recording" : appearance.recordingId,
+        sourceSha256: transcriptDigest(mode === "wrong-source" ? "another-source" : raw),
+        ...(mode === "missing-digest" ? {} : { formattedSha256: transcriptDigest(original) }),
+        artifacts: {
+          rawTranscript: source.path,
+          formattedTranscript: derivative.path,
+          media: media.path,
+        },
+      }),
+    });
+    await storage.write({
+      appearance,
+      kind: "metadata",
+      content: JSON.stringify({
+        provider: "kaltura",
+        language: "en",
+        sourceKind: "generated",
+        limitations: [],
+        media: {
+          audio: { available: true, path: media.path, audio: true },
+          video: { available: false, path: null, audio: false },
+        },
+      }),
+    });
+    let providerCalls = 0;
+    const result = await runMediaJob({
+      appearance,
+      storage,
+      regenerate: true,
+      provider: {
+        resolve: async () => {
+          providerCalls++;
+          throw new Error("Unexpected provider access");
+        },
+      },
+      formatter: {
+        version: "synthetic",
+        format: async () => ({ markdown: "**The value is 4.**" }),
+      },
+    });
+    assert.equal(providerCalls, 0, mode);
+    assert.equal(result.complete, mode === "owned", mode);
+    assert.equal(
+      await readFile(derivative.path, "utf8"),
+      mode === "owned" ? "**The value is 4.**\n" : current,
+      mode,
+    );
+    assert.equal(await readFile(source.path, "utf8"), raw, mode);
+    assert.equal(await readFile(backup, "utf8"), current, mode);
+    if (mode !== "owned") assert.match(result.limitation, /ownership proof.*retain.*inspect/i);
+  }
 });
