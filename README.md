@@ -194,8 +194,13 @@ a validated source and formatted Markdown derivative exist. Recording completene
 independent of sync and follows [ADR-0014](docs/adr/0014-recordings-use-a-separate-media-workflow.md);
 source provenance and status remain visible with the course artifacts. The routine job never
 replaces a formatted derivative. An agent-led caller must opt into `runMediaJob({ regenerate: true })`;
-the storage proof still requires current workflow ownership and a matching source digest, so a
-manually owned file or preserved source cannot be overwritten.
+replacement requires one ownership record matching the recording identity, source digest and current
+derivative digest. A path alone is insufficient. Storage checks the derivative again after staging
+and capacity checks, immediately before promotion. This catches edits during those steps, but the
+check followed by rename is not atomic compare-and-swap and cannot guarantee protection against every
+concurrent editor. Historical bulk repair must publish fresh exclusive editions and retain originals.
+New write-once artifacts use exclusive hard-link publication; occupied targets are preserved, and a
+filesystem without that support fails with a next action rather than an overwrite fallback.
 
 Kaltura response capture bounds application-retained manifest and caption text, rather than claiming
 a browser-wide RAM or network limit. Playwright may buffer a response internally before exposing

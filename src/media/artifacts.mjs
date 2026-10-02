@@ -37,7 +37,9 @@ export function createMediaArtifacts({ appearance, storage }) {
           : null,
       });
       if (artifact.status === "existing" && !replaceProof) {
-        throw new Error("Formatted transcript exists without workflow ownership proof");
+        throw new Error(
+          "Formatted transcript exists without current workflow ownership proof; retain it and inspect its metadata before retrying regeneration.",
+        );
       }
       return { ...artifact, sha256: transcriptDigest(content) };
     },
@@ -163,18 +165,19 @@ async function readExistingTranscript({ appearance, storage, regenerate }) {
   const formattedSha256 = formattedArtifact
     ? transcriptDigest(textContent(formattedArtifact.content))
     : null;
-  const sourceOwnership = isWorkflowOwnedFormatted({
+  const sourceOwnership = ownedFormattedEvidence({
     artifact: formattedArtifact,
     state,
     metadata: parsedMetadata,
     sourceSha256,
+    recordingId: appearance.recordingId,
   });
   const { formattedTranscript, formattedReplacement, regenerationRequired } =
     validateFormattedArtifact({
       artifact: formattedArtifact,
       segments: checked.transcript.segments,
-      owned: sourceOwnership,
-      expectedSha256: parsedMetadata?.formattedSha256 ?? state?.formattedSha256,
+      owned: Boolean(sourceOwnership),
+      expectedSha256: sourceOwnership?.formattedSha256,
       sourceSha256,
       regenerate,
     });
@@ -266,16 +269,15 @@ function matchesSource(metadata, source, sourceSha256, formattedSha256, appearan
   );
 }
 
-function isWorkflowOwnedFormatted({ artifact, state, metadata, sourceSha256 }) {
-  if (!artifact || !sourceSha256) return false;
+function ownedFormattedEvidence({ artifact, state, metadata, sourceSha256, recordingId }) {
+  if (!artifact || !sourceSha256 || !recordingId) return null;
   const formattedSha256 = transcriptDigest(textContent(artifact.content));
-  const sourceIsCurrent =
-    state?.sourceSha256 === sourceSha256 || metadata?.sourceSha256 === sourceSha256;
-  const derivativeIsOwned =
-    metadata?.formattedSha256 === formattedSha256 ||
-    (state?.artifacts?.formattedTranscript === artifact.path &&
-      (!state.formattedSha256 || state.formattedSha256 === formattedSha256));
-  return sourceIsCurrent && derivativeIsOwned;
+  const matches = (record) =>
+    record?.recordingId === recordingId &&
+    record.sourceSha256 === sourceSha256 &&
+    record.formattedSha256 === formattedSha256;
+  if (matches(metadata)) return metadata;
+  return matches(state) && state.artifacts?.formattedTranscript === artifact.path ? state : null;
 }
 
 function retainedMediaFromEvidence(state, media) {

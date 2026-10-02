@@ -430,3 +430,106 @@ test("bounds unresolved prewrite and promotion guards without replacing held art
   await storage.write({ appearance, kind: "metadata", content: "recovered" });
   assert.equal(await readFile(held.path, "utf8"), "recovered");
 });
+
+test("replacement refuses edits introduced during final capacity checking or staging", async (t) => {
+  const { rm } = await import("node:fs/promises");
+  const { createHash } = await import("node:crypto");
+  const digest = (value) => createHash("sha256").update(value).digest("hex");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-replacement-race-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const mode of ["capacity", "staging"]) {
+    const volumeRoot = join(root, mode, "RAID0");
+    const mediaRoot = join(volumeRoot, "Media");
+    const destination = join(root, mode, "course");
+    await mkdir(mediaRoot, { recursive: true });
+    await mkdir(destination);
+    const target = join(destination, "Lecture.transcript.md");
+    const original = "Original workflow derivative";
+    const edited = "Intervening student edit";
+    await writeFile(target, original);
+    const backup = join(root, `${mode}.before`);
+    await writeFile(backup, original, { flag: "wx" });
+    const appearance = {
+      recordingId: "synthetic",
+      placement: { destination, formattedTranscriptPath: "Lecture.transcript.md" },
+    };
+    let changed = false;
+    const storage = createMediaStorage({
+      mediaRoot,
+      volumeRoot,
+      ...(mode === "capacity"
+        ? {
+            checkCapacity: async ({ bytes }) => {
+              if (bytes === undefined && !changed) {
+                changed = true;
+                await writeFile(target, edited);
+              }
+            },
+          }
+        : {
+            write: async (path, content) => {
+              await writeFile(path, content);
+              if (path.includes(".part-")) {
+                changed = true;
+                await writeFile(target, edited);
+              }
+            },
+          }),
+    });
+    await assert.rejects(
+      storage.write({
+        appearance,
+        kind: "formatted-transcript",
+        content: "New workflow derivative",
+        replaceProof: {
+          path: target,
+          sha256: digest(original),
+          sourceSha256: digest("Synthetic source"),
+        },
+      }),
+      /replacement proof.*stale|replacement.*changed/i,
+    );
+    assert.equal(changed, true, mode);
+    assert.equal(await readFile(target, "utf8"), edited);
+    assert.equal(await readFile(backup, "utf8"), original);
+  }
+});
+
+test("new write-once publication preserves a competing file created during final capacity checking", async (t) => {
+  const { rm, unlink } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-exclusive-publication-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const volumeRoot = join(root, "RAID0");
+  const mediaRoot = join(volumeRoot, "Media");
+  const destination = join(root, "course");
+  await mkdir(mediaRoot, { recursive: true });
+  await mkdir(destination);
+  const target = join(destination, "Lecture.transcript.md");
+  const appearance = {
+    recordingId: "synthetic",
+    placement: { destination, formattedTranscriptPath: "Lecture.transcript.md" },
+  };
+  let compete = true;
+  const storage = createMediaStorage({
+    mediaRoot,
+    volumeRoot,
+    checkCapacity: async ({ bytes }) => {
+      if (bytes === undefined && compete)
+        await writeFile(target, "Competing student file", { flag: "wx" });
+    },
+  });
+  await assert.rejects(
+    storage.write({ appearance, kind: "formatted-transcript", content: "New derivative" }),
+    /occupied|exclusive/i,
+  );
+  assert.equal(await readFile(target, "utf8"), "Competing student file");
+  assert.deepEqual(await readdir(destination), ["Lecture.transcript.md"]);
+  compete = false;
+  await unlink(target);
+  assert.equal(
+    (await storage.write({ appearance, kind: "formatted-transcript", content: "New derivative" }))
+      .status,
+    "written",
+  );
+  assert.equal(await readFile(target, "utf8"), "New derivative");
+});
