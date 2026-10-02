@@ -197,6 +197,13 @@ replaces a formatted derivative. An agent-led caller must opt into `runMediaJob(
 the storage proof still requires current workflow ownership and a matching source digest, so a
 manually owned file or preserved source cannot be overwritten.
 
+Kaltura response capture bounds application-retained manifest and caption text, rather than claiming
+a browser-wide RAM or network limit. Playwright may buffer a response internally before exposing
+its text; announced lengths are checked first, but received-byte rejection cannot undo that
+buffering. Caption capture failures remain visible while local ASR can supply a source. Pending
+browser reads have a logical drain deadline; the production client closes its owned page, without
+claiming physical I/O cancellation or universal process cleanup.
+
 The current formatter changes presentation only: punctuation, paragraph breaks and Markdown
 emphasis or list markers must preserve ordered source words, spelling, case, numbers, symbols and
 code-switching. It leaves recognition errors and spoken mathematics intact rather than inferring
