@@ -181,6 +181,8 @@ test("transient cleanup probe denial never becomes false evidence of cleanup", a
   await assert.rejects(
     run("process.on('SIGTERM',()=>{});setTimeout(()=>process.exit(),1500)", {
       signalProcessGroup(pid, signal) {
+        // Simulate ignored TERM at the signalling boundary, independently of child startup.
+        if (signal === "SIGTERM") return true;
         if (signal === "SIGKILL") forced = true;
         if (forced && signal === 0 && !denied) {
           denied = true;
