@@ -8,7 +8,7 @@ import { runMediaJob } from "../src/media/job.mjs";
 import { createMediaStorage } from "../src/media/storage.mjs";
 import { transcriptDigest } from "../src/media/transcript.mjs";
 
-async function nativeAddressJob(body, { transcriber = null } = {}) {
+async function nativeAddressJob(body, { transcriber = null, resolvedLimitations = [] } = {}) {
   const writes = [];
   const result = await runMediaJob({
     appearance: {
@@ -23,7 +23,7 @@ async function nativeAddressJob(body, { transcriber = null } = {}) {
     },
     provider: {
       name: "kaltura",
-      resolve: async () => ({ duration: 10 }),
+      resolve: async () => ({ duration: 10, limitations: resolvedLimitations }),
       transcript: async () => ({ body, filename: "captions.json" }),
       media: async () => ({ kind: "audio", body: Buffer.from("synthetic audio") }),
     },
@@ -1700,4 +1700,17 @@ test("uncertain subprocess cleanup overrides a concurrently requested checkpoint
     }),
     (error) => error === cleanup,
   );
+});
+
+test("provider response limitations remain visible beside an admitted unchanged native caption", async () => {
+  const limitation =
+    "Kaltura provider captions were unavailable within response capture limits; local ASR may be used.";
+  const body = JSON.stringify({
+    language: "en",
+    segments: [{ start: 0, end: 10, text: "Preserved source words" }],
+  });
+  const { result, writes } = await nativeAddressJob(body, { resolvedLimitations: [limitation] });
+  assert.equal(result.complete, true);
+  assert.ok(result.limitations.includes(limitation));
+  assert.equal(writes.find(({ kind }) => kind === "provider-transcript").content, body);
 });

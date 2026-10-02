@@ -67,6 +67,7 @@ export async function runMediaJob({
     if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
       try {
         resolved = await activeProvider.resolve(appearance, { signal });
+        limitations.push(...mediaLimitations(resolved));
         duration = positiveDuration(resolved?.duration) ?? duration;
         speechDuration = positiveDuration(resolved?.speechDuration) ?? speechDuration;
         throwIfInterrupted(signal);
