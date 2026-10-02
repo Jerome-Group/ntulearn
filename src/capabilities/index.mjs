@@ -125,6 +125,22 @@ const routes = {
       "test/media-production-local.test.mjs",
     ],
   ],
+  "historical-transcripts": [
+    [
+      "src/media/historical.mjs",
+      "src/media/historical-format.mjs",
+      "src/media/historical-files.mjs",
+      "src/media/historical-inventory.mjs",
+      "src/cli.mjs",
+    ],
+    [
+      "test/media-historical.test.mjs",
+      "test/media-historical-format.test.mjs",
+      "test/media-historical-files.test.mjs",
+      "test/media-historical-inventory.test.mjs",
+      "test/cli.test.mjs",
+    ],
+  ],
   "media-evaluation": [
     [
       "src/media/evaluation.mjs",
@@ -348,6 +364,61 @@ const commands = [
       risk: "media-acquisition",
       limitations: [
         "Scheduled mode works only 00:00–03:59 Asia/Singapore; manual mode ignores the overnight boundary.",
+      ],
+    },
+  ),
+  command(
+    "media-format",
+    "media:format",
+    "historical-transcripts",
+    ["configured-courses", "private-manifest-path", "accessible-course-roots"],
+    {
+      reads: ["private-transcripts", "private-provenance", "media-queues"],
+      writes: ["private-plan-for-plan", "exclusive-transcript-editions-and-indexes-for-apply"],
+      ownerOnly: false,
+    },
+    {
+      arguments: ["<plan|apply|verify>", "<private-manifest-path>"],
+      risk: "local-user-storage",
+      output: "capability-result-v1",
+      exitCodes: offlineCodes,
+      operations: {
+        plan: {
+          network: false,
+          browser: false,
+          writes: ["fresh-private-plan"],
+          runtime: false,
+          ownerOnly: false,
+          prerequisites: ["accessible-course-roots", "fresh-private-manifest-path"],
+        },
+        apply: {
+          ownerOnly: true,
+          prerequisites: [
+            "private-historical-manifest",
+            "Owner-apply-authorization",
+            "RAID0-and-reserve",
+            "media-queue-lock",
+          ],
+          network: false,
+          browser: false,
+          writes: [
+            "exclusive-editions",
+            "private-checkpoint-receipts",
+            "course-transcript-indexes",
+          ],
+          runtime: false,
+        },
+        verify: {
+          network: false,
+          browser: false,
+          writes: [],
+          runtime: false,
+          ownerOnly: false,
+          prerequisites: ["private-historical-manifest"],
+        },
+      },
+      limitations: [
+        "Source words preserved; timing failures and suspected source corruption remain separate. No acoustic or complete/ready media claim. Originals and historical queues/state/status are never replaced.",
       ],
     },
   ),

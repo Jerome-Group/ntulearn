@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -276,6 +276,7 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
+  if (name === "media-format") return mediaFormat(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
     return offlineCommand(name, argumentsForCommand);
@@ -286,6 +287,54 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
+}
+
+async function mediaFormat([mode, manifestPath, ...unexpected]) {
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      new Error("Historical formatting interrupted; inspect private receipts and retry apply."),
+    );
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  let result;
+  try {
+    if (!["plan", "apply", "verify"].includes(mode) || !manifestPath || unexpected.length) {
+      result = capabilityResult("media:format", [
+        observation(
+          "arguments",
+          "blocked",
+          "HISTORICAL_FORMAT_USAGE",
+          "Invalid historical formatting arguments.",
+          "Run: npm run media:format -- <plan|apply|verify> <private-manifest-path>",
+        ),
+      ]);
+    } else {
+      const { historicalTranscripts } = await import("./media/historical.mjs");
+      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+      result = await historicalTranscripts({
+        mode,
+        manifestPath: resolve(manifestPath),
+        config,
+        signal: controller.signal,
+      });
+    }
+  } catch {
+    result = capabilityResult("media:format", [
+      observation(
+        "configuration",
+        "failed",
+        "HISTORICAL_FORMAT_FAILED",
+        "Historical formatting did not execute; no raw exception exposed.",
+        "Inspect local configuration and private input evidence, then retry plan.",
+      ),
+    ]);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
 }
 
 async function mediaEvaluate([mode, manifestPath, outputDirectory, ...unexpected]) {
