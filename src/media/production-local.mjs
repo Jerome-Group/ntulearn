@@ -104,7 +104,7 @@ async function format({ prompt, text, segments, signal }, { paths, commands, mod
     try {
       return { markdown: assertFormattedTranscript(markdown, segments) };
     } catch {
-      return fallback(text, "Local formatter output failed transcript guards");
+      return fallback(text, "Local formatter output failed lexical preservation checks");
     }
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -115,5 +115,10 @@ async function format({ prompt, text, segments, signal }, { paths, commands, mod
 }
 
 function fallback(markdown, reason) {
-  return { markdown, limitations: [`${reason}; preserved the ASR transcript text.`] };
+  return {
+    markdown,
+    limitations: [
+      `${reason}; preserved source transcript wording. Semantic equivalence is not proven.`,
+    ],
+  };
 }

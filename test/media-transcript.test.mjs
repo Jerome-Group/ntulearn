@@ -131,7 +131,9 @@ test("rejects formatting that keeps neither timestamps nor protected notation", 
     /code-switched text/,
   );
   assert.equal(
-    assertFormattedTranscript("The value is 2 + 2 = 4.", [{ start: 0, end: 2, text: "2 + 2 = 4" }]),
+    assertFormattedTranscript("The value is 2 + 2 = 4.", [
+      { start: 0, end: 2, text: "The value is 2 + 2 = 4." },
+    ]),
     "The value is 2 + 2 = 4.\n",
   );
 });
@@ -142,4 +144,130 @@ test("allows a genuine spoken sentence that begins like the formatter prompt", (
   assert.doesNotThrow(() =>
     assertFormattedTranscript(sentence, [{ start: 0, end: 10, text: sentence }]),
   );
+});
+
+test("rejects coerced timestamps and measures interval coverage without overlaps", () => {
+  for (const start of [null, undefined, "", " ", false, true, []]) {
+    assert.equal(
+      validateTranscript({ segments: [{ start, end: 10, text: "Speech." }] }, { duration: 10 })
+        .valid,
+      false,
+    );
+  }
+  assert.equal(
+    validateTranscript(
+      { segments: [{ start: 3599, end: 3600, text: "Thank you." }] },
+      { duration: 3600 },
+    ).valid,
+    false,
+  );
+  assert.equal(
+    validateTranscript(
+      {
+        segments: [
+          { start: 0, end: 20, text: "First." },
+          { start: 10, end: 30, text: "Second." },
+        ],
+      },
+      { duration: 100 },
+    ).valid,
+    false,
+  );
+  assert.equal(
+    validateTranscript(
+      {
+        segments: [
+          { start: 0, end: 20, text: "First." },
+          { start: 10, end: 60, text: "Second." },
+        ],
+      },
+      { duration: 100 },
+    ).valid,
+    true,
+  );
+  assert.equal(
+    validateTranscript(
+      { segments: [{ start: 0, end: 10, text: "Speech." }] },
+      { allowMissingDuration: true },
+    ).valid,
+    true,
+  );
+});
+
+test("rejects changed assertions, omissions, additions and lost uncertainty", () => {
+  const source = [
+    { start: 0, end: 10, text: "The theorem is false because the hypothesis may fail." },
+  ];
+  for (const output of [
+    "The theorem is true.",
+    "The theorem is false.",
+    "The theorem is false because the hypothesis may fail. It always converges.",
+    "The theorem is false because the hypothesis fails.",
+  ]) {
+    assert.throws(() => assertFormattedTranscript(output, source), /lexical content/);
+  }
+  assert.equal(
+    assertFormattedTranscript("**The theorem** is false, because the hypothesis may fail.", source),
+    "**The theorem** is false, because the hypothesis may fail.\n",
+  );
+});
+
+test("preserves spoken times and ratios while rejecting added cue prefixes", () => {
+  for (const text of ["The odds are 12:30 for event A.", "12:30 is our meeting time."]) {
+    assert.doesNotThrow(() => assertFormattedTranscript(text, [{ start: 0, end: 10, text }]));
+  }
+  assert.throws(
+    () =>
+      assertFormattedTranscript("[00:00] The theorem is false.", [
+        { start: 0, end: 10, text: "The theorem is false." },
+      ]),
+    /timestamps/,
+  );
+});
+
+test("rejects invented numbers even when every source word survives", () => {
+  assert.throws(
+    () =>
+      assertFormattedTranscript("The estimate may be 2 or 3.", [
+        { start: 0, end: 1, text: "The estimate may be 2 or." },
+      ]),
+    /protected notation/,
+  );
+});
+
+test("rejects added semantic operators and case changes while allowing Markdown structure", () => {
+  for (const [source, output] of [
+    ["x = 2", "x = -2"],
+    ["x = 2", "X = 2"],
+    ["US policy applies.", "us policy applies."],
+    ["x = 2", "x = 2 +"],
+    ["x = 2", "x = 2 *"],
+    ["x_1 = 2", "x1 = 2"],
+    ["x2 = 3", "x 2 = 3"],
+    ["$x$", "$-x$"],
+    ["x != 2", "`x = 2`"],
+    ["if x != y", "if x = y"],
+    ["x % 2", "x 2"],
+  ]) {
+    assert.throws(
+      () => assertFormattedTranscript(output, [{ start: 0, end: 1, text: source }]),
+      /notation|lexical content/,
+    );
+  }
+  assert.doesNotThrow(() =>
+    assertFormattedTranscript("- **x** = *2*", [{ start: 0, end: 1, text: "x = 2" }]),
+  );
+  assert.doesNotThrow(() =>
+    assertFormattedTranscript("The expression is `x = 2 * 3`.", [
+      { start: 0, end: 1, text: "The expression is x = 2 * 3." },
+    ]),
+  );
+});
+
+test("preserves technical identifiers through emphasis and starred list markup", () => {
+  for (const output of ["* __x_1__ != `2`", "**x_1** != 2", "x_1 != 2"]) {
+    assert.doesNotThrow(() =>
+      assertFormattedTranscript(output, [{ start: 0, end: 1, text: "x_1 != 2" }]),
+    );
+  }
 });
