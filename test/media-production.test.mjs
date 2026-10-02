@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { createRuntimeVerification } from "../src/media/runtime-verification.mjs";
 import { runProductionMedia } from "../src/media/production.mjs";
 import { readMediaQueue, writeMediaQueue } from "../src/media/queue.mjs";
 import { runMediaJob } from "../src/media/job.mjs";
@@ -27,7 +28,8 @@ test("runs all enabled courses and providers under one aggregate digest", async 
     signalProcessGroup,
     config: { statePath, courses, media: { mediaRoot } },
     mode: "manual",
-    verifyRuntime: async () => {
+    verifyRuntime: async (_media, composition) => {
+      assert.equal(composition.signalProcessGroup, signalProcessGroup);
       preflights += 1;
       return { runtime: {} };
     },
@@ -161,3 +163,40 @@ async function completeResult({ appearance, mediaRoot, volumeRoot }) {
     formatter: { version: "fixture-1", format: async () => text },
   });
 }
+
+test("expired mandatory verification publishes global red and never composes acquisition", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-preflight-deadline-"));
+  const statePath = join(root, "state.json");
+  const selected = { ...course("AB1001"), destination: join(root, "course") };
+  await queue(statePath, selected, "youtube", "fixture");
+  let acquisitions = 0;
+  let stalled = true;
+  const options = {
+    config: { statePath, courses: [selected], media: {} },
+    mode: "manual",
+    lock: null,
+    verifyRuntime: async () => {
+      const verification = createRuntimeVerification({}, { verificationTimeoutMs: 20 });
+      await verification.read(() => (stalled ? new Promise(() => {}) : Promise.resolve()));
+      return { runtime: {} };
+    },
+    createJobRunner: async () => {
+      acquisitions += 1;
+      return {
+        run: async () => {
+          throw new Error("fixture acquisition reached after responsive retry");
+        },
+      };
+    },
+  };
+  const before = (await readMediaQueue({ statePath, courseKey: selected.key })).record.queue[0];
+  const stopped = await runProductionMedia(options);
+  assert.equal(stopped.digest.verdict, "red");
+  assert.equal(stopped.exitCode, 1);
+  assert.equal(acquisitions, 0);
+  const held = (await readMediaQueue({ statePath, courseKey: selected.key })).record.queue[0];
+  assert.deepEqual(held, before);
+  stalled = false;
+  await runProductionMedia(options);
+  assert.equal(acquisitions, 1);
+});

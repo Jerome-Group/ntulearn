@@ -144,6 +144,14 @@ licence, path and size. Every worker run refuses a missing, replaced or misconfi
 tool and points back to `media:setup`; model weights, caches and working files remain outside this
 repository.
 
+Mandatory worker verification keeps all five full checksums, manifest identities, canonical roots,
+reserve checks and external-tool checks. Read-only verification has a 120-second cumulative logical
+budget; pending OS reads may continue after failure, but cannot advance to acquisition. Each tool
+has a 30-second execution bound plus the existing owned-group cleanup bound and 1 MiB per-output
+limit. The CLI setup and worker supply owned-group cleanup; direct library calls without that
+composition stop only the leader and do not confirm descendant cleanup. Setup copies, downloads
+and promotions remain awaited: these read deadlines do not claim cancellation of setup writes.
+
 The selected runtime and model licences are documented in
 `docs/research/media-runtime.md`. Setup is intentionally not run by CI or by an ordinary sync.
 

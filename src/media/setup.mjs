@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
-import { execFile } from "node:child_process";
 import {
   chmod,
   copyFile,
@@ -18,10 +17,9 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
 import { artifactPath, assertMediaRoot, MEDIA_VOLUME_ROOT, mediaRuntimePaths } from "./paths.mjs";
-
-const execFileAsync = promisify(execFile);
+import { createRuntimeVerification } from "./runtime-verification.mjs";
+import { createRuntimeCommandRunner } from "./runtime-command.mjs";
 const RUNTIME_DIRECTORIES = ["root", "bin", "models", "cache", "temp", "work", "metadata"];
 
 export async function setupMediaRuntime(media, options = {}) {
@@ -78,7 +76,17 @@ export async function verifyMediaRuntime(media, options = {}) {
     );
   }
 
-  const fileSystem = options.fileSystem ?? defaultFileSystem();
+  const verification = createRuntimeVerification(
+    options.fileSystem ?? defaultFileSystem(),
+    options,
+  );
+  const fileSystem = verification.fileSystem;
+  const digestReader = options.digestReader ?? digestFile;
+  options = {
+    ...options,
+    commandRunner: verification.commandRunner,
+    digestFile: (path) => verification.read(() => digestReader(path)),
+  };
   const volumeRoot = options.volumeRoot ?? MEDIA_VOLUME_ROOT;
   const mediaRoot = assertMediaRoot(media.mediaRoot, volumeRoot);
   const runtime = mediaRuntimePaths(mediaRoot);
@@ -90,7 +98,7 @@ export async function verifyMediaRuntime(media, options = {}) {
     fileSystem,
     options,
   });
-  const manifest = await fileSystem.stat(runtime.manifest).catch(() => null);
+  const manifest = await fileSystem.stat(runtime.manifest).catch(unavailableAsNull);
   if (!manifest?.isFile()) {
     throw new Error(
       `Media runtime is not prepared at ${runtime.manifest}. Run: npm run media:setup`,
@@ -100,6 +108,7 @@ export async function verifyMediaRuntime(media, options = {}) {
   const records = await readRuntimeManifest(runtime.manifest, fileSystem);
   await verifyManifestArtifacts({ artifacts, records, runtime, fileSystem, options });
   await verifyExternalTools(media.tools, options);
+  verification.assertActive();
   return { mediaRoot, runtime, manifestPath: runtime.manifest, artifacts: records };
 }
 
@@ -108,6 +117,7 @@ async function readRuntimeManifest(path, fileSystem) {
   try {
     manifest = JSON.parse(await fileSystem.readFile(path, "utf8"));
   } catch (error) {
+    if (error.globalSafety) throw error;
     throw new Error(`Media runtime manifest is unreadable at ${path}. Run: npm run media:setup`, {
       cause: error,
     });
@@ -161,13 +171,13 @@ async function verifyManifestArtifacts({ artifacts, records, runtime, fileSystem
         `${artifact.label} path does not match configured setup. Run: npm run media:setup`,
       );
     }
-    const info = await fileSystem.lstat(target).catch(() => null);
+    const info = await fileSystem.lstat(target).catch(unavailableAsNull);
     if (!info?.isFile() || info.isSymbolicLink()) {
       throw new Error(
         `${artifact.label} is missing or unsafe at ${target}. Run: npm run media:setup`,
       );
     }
-    const actualPath = await fileSystem.realpath(target).catch(() => null);
+    const actualPath = await fileSystem.realpath(target).catch(unavailableAsNull);
     if (!actualPath || !isInside(actualRuntimeRoot, actualPath)) {
       throw new Error(`${artifact.label} path escapes the media runtime. Run: npm run media:setup`);
     }
@@ -176,7 +186,7 @@ async function verifyManifestArtifacts({ artifacts, records, runtime, fileSystem
         `${artifact.label} size does not match the runtime manifest. Run: npm run media:setup`,
       );
     }
-    if ((await digestFile(target)) !== record.sha256) {
+    if ((await options.digestFile(target)) !== record.sha256) {
       throw new Error(
         `${artifact.label} checksum does not match the runtime manifest. Run: npm run media:setup`,
       );
@@ -196,15 +206,15 @@ async function verifyExternalTools(tools = {}, options) {
 }
 
 async function verifyMediaStore({ mediaRoot, runtime, volumeRoot, reserve, fileSystem, options }) {
-  const rootInfo = await fileSystem.stat(mediaRoot).catch(() => null);
+  const rootInfo = await fileSystem.stat(mediaRoot).catch(unavailableAsNull);
   if (!rootInfo?.isDirectory()) {
     throw new Error(
       `Media store is unavailable at ${mediaRoot}. Mount RAID0, then run: npm run media:setup`,
     );
   }
 
-  const actualVolumeRoot = await fileSystem.realpath(resolve(volumeRoot)).catch(() => null);
-  const actualMediaRoot = await fileSystem.realpath(mediaRoot).catch(() => null);
+  const actualVolumeRoot = await fileSystem.realpath(resolve(volumeRoot)).catch(unavailableAsNull);
+  const actualMediaRoot = await fileSystem.realpath(mediaRoot).catch(unavailableAsNull);
   if (!actualVolumeRoot || !actualMediaRoot || !isInside(actualVolumeRoot, actualMediaRoot)) {
     throw new Error(
       `Media store is not on RAID0: ${mediaRoot}. Choose a directory below ${volumeRoot}.`,
@@ -223,7 +233,7 @@ async function verifyMediaStore({ mediaRoot, runtime, volumeRoot, reserve, fileS
 async function rejectSymlinkedRuntime(runtime, actualMediaRoot, fileSystem) {
   for (const key of RUNTIME_DIRECTORIES) {
     const path = runtime[key];
-    const info = await fileSystem.lstat(path).catch(() => null);
+    const info = await fileSystem.lstat(path).catch(unavailableAsNull);
     if (!info) continue;
     if (info.isSymbolicLink()) {
       throw new Error(`Media runtime path is a symlink: ${path}. Move it inside the Media store.`);
@@ -253,7 +263,7 @@ function artifactSpecs(setup) {
 
 async function prepareArtifact({ artifact, runtime, fileSystem, options }) {
   const target = artifactPath(runtime, artifact.kind, artifact.filename);
-  const existingInfo = await fileSystem.lstat(target).catch(() => null);
+  const existingInfo = await fileSystem.lstat(target).catch(unavailableAsNull);
   if (existingInfo?.isSymbolicLink()) {
     throw new Error(`Media artifact path is a symlink: ${target}. Move it inside the Media store.`);
   }
@@ -323,10 +333,13 @@ async function materialize(artifact, temporary, fileSystem, options) {
 }
 
 async function verifyRuntime(path, artifact, options) {
-  const result = await (options.commandRunner ?? runCommand)(path, artifact.verifyArgs);
+  const result = await (options.commandRunner ?? createRuntimeCommandRunner(options))(
+    path,
+    artifact.verifyArgs,
+  );
   if (result.code !== 0) {
     throw new Error(
-      `${artifact.label} did not pass ${artifact.verifyArgs.join(" ")} verification.`,
+      `${artifact.label} did not pass ${artifact.verifyArgs.join(" ")} verification. Check the configured executable, then run: npm run media:setup`,
     );
   }
 }
@@ -337,7 +350,7 @@ async function freeBytesOn(fileSystem, path) {
 }
 
 async function digestIfPresent(path, fileSystem) {
-  const info = await fileSystem.stat(path).catch(() => null);
+  const info = await fileSystem.stat(path).catch(unavailableAsNull);
   return info?.isFile() ? digestFile(path) : null;
 }
 
@@ -358,13 +371,9 @@ async function writeAtomically(path, content, fileSystem) {
   }
 }
 
-async function runCommand(command, argumentsFor) {
-  try {
-    await execFileAsync(command, argumentsFor, { encoding: "utf8", maxBuffer: 1024 * 1024 });
-    return { code: 0 };
-  } catch (error) {
-    return { code: error.code ?? 1 };
-  }
+function unavailableAsNull(error) {
+  if (error.globalSafety) throw error;
+  return null;
 }
 
 function defaultFileSystem() {

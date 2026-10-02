@@ -103,7 +103,9 @@ async function watchdog(config) {
 }
 
 async function mediaSetup(config) {
-  const result = await setupMediaRuntime(config.media);
+  const result = await setupMediaRuntime(config.media, {
+    signalProcessGroup: signalMediaProcessGroup,
+  });
   await writeLine(
     stdout,
     asJson({ manifestPath: result.manifestPath, artifacts: result.artifacts }),
