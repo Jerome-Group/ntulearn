@@ -1,3 +1,4 @@
+import * as fileSystem from "node:fs/promises";
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -290,3 +291,63 @@ async function preparedRuntime() {
 function digest(body) {
   return createHash("sha256").update(body).digest("hex");
 }
+
+test("stalled read-only runtime verification stops before tools and permits responsive retry", async () => {
+  const fixture = await preparedRuntime();
+  let tools = 0;
+  await assert.rejects(
+    Promise.race([
+      verifyMediaRuntime(fixture.media, {
+        ...fixture.verifyOptions,
+        verificationTimeoutMs: 10,
+        fileSystem: { ...fileSystem, stat: () => new Promise(() => {}) },
+        commandRunner: async () => {
+          tools += 1;
+          return { code: 0 };
+        },
+      }),
+      new Promise((_, reject) =>
+        globalThis.setTimeout(() => reject(new Error("fixture bound exceeded")), 150),
+      ),
+    ]),
+    (error) => error.globalSafety === true && error.code === "MEDIA_RUNTIME_TIMEOUT",
+  );
+  assert.equal(tools, 0);
+  const result = await verifyMediaRuntime(fixture.media, fixture.verifyOptions);
+  assert.equal(result.artifacts.length, 5);
+});
+
+test("a stalled full-artifact read consumes late completion and cannot launch tools", async () => {
+  const fixture = await preparedRuntime();
+  let resolveRead;
+  let tools = 0;
+  await assert.rejects(
+    verifyMediaRuntime(fixture.media, {
+      ...fixture.verifyOptions,
+      verificationTimeoutMs: 500,
+      digestReader: () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+      commandRunner: async () => {
+        tools += 1;
+        return { code: 0 };
+      },
+    }),
+    { code: "MEDIA_RUNTIME_TIMEOUT", globalSafety: true },
+  );
+  resolveRead(fixture.media.setup.mediaTool.sha256);
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 5));
+  assert.equal(tools, 0);
+  const reads = [];
+  const verified = await verifyMediaRuntime(fixture.media, {
+    ...fixture.verifyOptions,
+    digestReader: async (path) => {
+      reads.push(path);
+      return digest(await readFile(path));
+    },
+  });
+  assert.equal(reads.length, 5);
+  assert.equal(new Set(reads).size, 5);
+  assert.equal(verified.artifacts.length, 5);
+});

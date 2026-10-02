@@ -126,8 +126,20 @@ const routes = {
     ],
   ],
   "media-runtime": [
-    ["src/media/setup.mjs", "src/media/config.mjs", "src/media/paths.mjs"],
-    ["test/media-setup.test.mjs", "test/config.test.mjs"],
+    [
+      "src/media/setup.mjs",
+      "src/media/config.mjs",
+      "src/media/paths.mjs",
+      "src/media/runtime-command.mjs",
+      "src/media/runtime-verification.mjs",
+    ],
+    [
+      "test/media-setup.test.mjs",
+      "test/media-runtime-command.test.mjs",
+      "test/media-runtime-verification.test.mjs",
+      "test/media-production.test.mjs",
+      "test/config.test.mjs",
+    ],
   ],
   capabilities: [
     [

@@ -25,7 +25,7 @@ export async function runProductionMedia({
   let runtime;
   let runner;
   const preflight = async () => {
-    runtime = await verifyRuntime(config.media);
+    runtime = await verifyRuntime(config.media, { signalProcessGroup });
   };
   const runJob = async (appearance, context) => {
     if (appearance.provider === "unsupported") return unsupportedResult(appearance);
