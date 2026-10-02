@@ -4,6 +4,7 @@ import { isGlobalMediaSafetyFailure } from "./errors.mjs";
 import { createLocalTranscriber } from "./asr.mjs";
 import { cleanLocalFormatterOutput, createLocalFormatter } from "./formatter.mjs";
 import { assertFormattedTranscript } from "./transcript.mjs";
+import { readFormatterAssistant } from "./formatter-output.mjs";
 import { transcriptSegmentTime } from "./production-values.mjs";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -99,10 +100,12 @@ async function format(
 ) {
   const directory = await mkdtemp(join(paths.work, "format-"));
   const promptFile = join(directory, "prompt.txt");
-  await writeFile(promptFile, prompt, "utf8");
+  const outputFile = join(directory, "assistant.txt");
   let cleanupConfirmed = true;
   try {
-    const result = await runProcess(
+    await writeFile(promptFile, prompt, "utf8");
+    await writeFile(outputFile, "", { flag: "wx", mode: 0o600 });
+    await runProcess(
       commands.llama,
       [
         "-m",
@@ -120,6 +123,8 @@ async function format(
         "--reasoning",
         "off",
         "--single-turn",
+        "--output-file",
+        outputFile,
       ],
       {
         signal,
@@ -128,7 +133,8 @@ async function format(
         stdoutMaxBytes: 1024 * 1024,
       },
     );
-    const markdown = cleanLocalFormatterOutput(result.stdout, prompt)
+    const assistant = await readFormatterAssistant(outputFile, { prompt, signal });
+    const markdown = cleanLocalFormatterOutput(assistant)
       .replace(/<think>[\s\S]*?<\/think>/gi, "")
       .trim();
     try {

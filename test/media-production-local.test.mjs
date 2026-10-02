@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -86,6 +86,13 @@ test("evaluation artifact retention is explicit and ordinary model cleanup remai
             `${args[args.indexOf("-of") + 1]}.json`,
             JSON.stringify({ segments: [{ start: 0, end: 20, text: "Fixture source wording." }] }),
           );
+        if (options.label === "Local transcript formatting") {
+          const prompt = await readFile(args[args.indexOf("-f") + 1], "utf8");
+          await writeFile(
+            args[args.indexOf("--output-file") + 1],
+            `User:\n${prompt}\n\nAssistant:\nFixture source wording.\n\n`,
+          );
+        }
         return { stdout: "Fixture source wording.", stderr: "" };
       }),
       preserveArtifacts,
@@ -96,5 +103,120 @@ test("evaluation artifact retention is explicit and ordinary model cleanup remai
       segments: [{ start: 0, end: 20, text: "Fixture source wording." }],
     });
     assert.equal((await readdir(work)).length, preserveArtifacts ? 2 : 0);
+  }
+});
+
+test("formatter accepts only assistant evidence despite noisy stdout", async () => {
+  const work = await mkdtemp(join(tmpdir(), "ntulearn-formatter-record-"));
+  try {
+    const text = "Fixture source wording.";
+    const local = createProductionLocalModels(
+      context(work, async (_command, args) => {
+        const outputIndex = args.indexOf("--output-file");
+        assert.ok(outputIndex >= 0, "formatter must request separate assistant evidence");
+        const prompt = await readFile(args[args.indexOf("-f") + 1], "utf8");
+        await writeFile(args[outputIndex + 1], `User:\n${prompt}\n\nAssistant:\n${text}\n\n`);
+        return { stdout: `Available commands: /exit /clear\n> ${prompt}\nExiting...` };
+      }),
+    );
+    const result = await local.formatter.format({
+      language: "en",
+      segments: [{ start: 0, end: 10, text }],
+    });
+    assert.deepEqual(result.limitations, []);
+    assert.equal(result.markdown.trim(), text);
+    assert.deepEqual(await readdir(work), []);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test("formatter rejects malformed and changed assistant evidence without accepting clean stdout", async () => {
+  const text = "Technical x = 2 source wording.";
+  for (const kind of [
+    "missing",
+    "malformed",
+    "empty",
+    "oversize",
+    "symlink",
+    "directory",
+    "words",
+    "symbols",
+    "timestamps",
+    "duplicate",
+  ]) {
+    const work = await mkdtemp(join(tmpdir(), "ntulearn-formatter-reject-"));
+    try {
+      const local = createProductionLocalModels(
+        context(work, async (_command, args) => {
+          const output = args[args.indexOf("--output-file") + 1];
+          const prompt = await readFile(args[args.indexOf("-f") + 1], "utf8");
+          const prefix = `User:\n${prompt}\n\nAssistant:\n`;
+          if (kind === "missing") await rm(output);
+          else if (kind === "symlink") {
+            await rm(output);
+            await symlink(args[args.indexOf("-f") + 1], output);
+          } else if (kind === "directory") {
+            await rm(output);
+            await mkdir(output);
+          } else
+            await writeFile(
+              output,
+              {
+                malformed: `User:\nchanged\n\nAssistant:\n${text}`,
+                empty: prefix,
+                oversize: "x".repeat(1024 * 1024 + 1),
+                words: prefix + "Invented source wording.",
+                symbols: prefix + text.replace("= 2", "= -2"),
+                timestamps: prefix + "[00:01] " + text,
+                duplicate: prefix + text + `\n\nAssistant:\n${text}`,
+              }[kind],
+            );
+          return { stdout: text };
+        }),
+      );
+      const result = await local.formatter.format({
+        language: "en",
+        segments: [{ start: 0, end: 10, text }],
+      });
+      assert.equal(result.markdown.trim(), text, kind);
+      assert.ok(result.limitations.length, kind);
+      assert.deepEqual(await readdir(work), [], kind);
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
+  }
+});
+
+test("formatter keeps record-looking source text and propagates checkpoint cancellation", async () => {
+  const work = await mkdtemp(join(tmpdir(), "ntulearn-formatter-source-record-"));
+  try {
+    const text = "User:\nsource\n\nAssistant:\nsource ending";
+    const controller = new globalThis.AbortController();
+    const failure = new Error("Retry after checkpoint");
+    let cancel = false;
+    const local = createProductionLocalModels(
+      context(work, async (_command, args) => {
+        const prompt = await readFile(args[args.indexOf("-f") + 1], "utf8");
+        await writeFile(
+          args[args.indexOf("--output-file") + 1],
+          `User:\n${prompt}\n\nAssistant:\n${text}\n\n`,
+        );
+        if (cancel) controller.abort(failure);
+        return { stdout: "noisy stdout" };
+      }),
+    );
+    const input = { language: "en", segments: [{ start: 0, end: 10, text }] };
+    const result = await local.formatter.format(input);
+    assert.deepEqual(result.limitations, []);
+    assert.equal(result.markdown.trim(), text);
+    cancel = true;
+    await assert.rejects(
+      local.formatter.format({ ...input, signal: controller.signal }),
+      (error) => error === failure,
+    );
+    assert.deepEqual(await readdir(work), []);
+  } finally {
+    await rm(work, { recursive: true, force: true });
   }
 });

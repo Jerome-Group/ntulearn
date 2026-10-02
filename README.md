@@ -203,6 +203,10 @@ code-switching. It leaves recognition errors and spoken mathematics intact rathe
 corrections or notation. Unsupported edits fall back to source wording and report the limitation.
 These lexical checks do not prove semantic equivalence or acoustic fidelity; changing the prompt
 alone does not establish improved model quality.
+The pinned formatter CLI mixes its display banner and rendered input into stdout, even when
+prompt display is disabled. Formatting therefore requires a separate assistant record with the
+exact known input prefix; ambiguous or missing records preserve source wording. This separates
+CLI display from candidate acquisition without relaxing transcript checks or proving model quality.
 
 ### Controlled browser-playback fallback
 
