@@ -453,3 +453,108 @@ test("mixed attachments retain independent document and nested media appearances
   assert.equal(new Set(first.map((job) => job.placement.formattedTranscriptPath)).size, 2);
   assert.deepEqual(discover(), first);
 });
+
+test("session path rotation stays private and preserves queue ownership", async (t) => {
+  const { mkdtemp, mkdir, readFile, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { writeMediaQueue, updateMediaQueueJob } = await import("../src/media/queue.mjs");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-session-reference-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [name, address, independent] of [
+    ["entry", (token) => `https://media.kaltura.test/entry_id/stable/ks/${token}/player`, true],
+    ["encoded", (token) => `https://media.kaltura.test/entry_id/stable/%6bs/${token}/player`, true],
+    [
+      "encoded-value",
+      (token) =>
+        `https://media.kaltura.test/entry_id/stable/ks/${token}%2Fsynthetic-private-tail-${token}/player`,
+      true,
+    ],
+    ["path", (token) => `https://media.kaltura.test/api/ks/${token}/player`, false],
+    ["direct", (token) => `https://video.test/api/ks/${token}/lecture.mp4`, false],
+    ["unknown", (token) => `https://tool.test/api/ks/${token}/launch`, false],
+  ]) {
+    const destination = join(root, name);
+    await mkdir(destination);
+    const course = { key: name, courseId: "synthetic-course", destination };
+    const statePath = join(destination, "state.json");
+    const discover = (token) =>
+      discoverContentRecordings({
+        course,
+        snapshot: {
+          items: [
+            {
+              id: "item",
+              position: 0,
+              title: "Lecture",
+              body: { displayText: `<iframe src="${address(token)}"></iframe>` },
+            },
+          ],
+        },
+      });
+    const first = discover("synthetic-private-A");
+    const second = discover("synthetic-private-B");
+    assert.equal(first.length, 1);
+    assert.equal(JSON.stringify(first).includes("synthetic-private"), false, name);
+    assert.equal(first[0].recordingId, second[0].recordingId, name);
+    assert.equal(first[0].candidateReference, second[0].candidateReference, name);
+    assert.equal(first[0].disposition, independent ? "recording" : "unresolved");
+    const publish = (queue) =>
+      writeMediaQueue({
+        statePath,
+        course,
+        discovery: { complete: true, verdict: "green", queue },
+      });
+    const saved = await publish(first);
+    const sourcePath = join(destination, "owned-source.json");
+    await writeFile(sourcePath, "Synthetic preserved source bytes");
+    const editedPath = join(destination, first[0].placement.formattedTranscriptPath);
+    await writeFile(editedPath, "Student-owned edited derivative");
+    const artifacts = { rawTranscript: sourcePath, formattedTranscript: editedPath };
+    const checkpoint = { at: "2026-10-03T00:00:00Z", reason: "Synthetic checkpoint" };
+    await updateMediaQueueJob({
+      statePath,
+      courseKey: name,
+      course,
+      recordingId: first[0].recordingId,
+      update: { stage: "failed", attempts: 3, artifacts, checkpoint },
+    });
+    await publish(second);
+    const queueBytes = await readFile(saved.path, "utf8");
+    const queue = JSON.parse(queueBytes).queue;
+    assert.equal(queue.length, 1);
+    assert.deepEqual(queue[0].artifacts, artifacts);
+    assert.deepEqual(queue[0].checkpoint, checkpoint);
+    assert.equal(queue[0].attempts, 3);
+    assert.deepEqual(queue[0].placement, first[0].placement);
+    assert.equal(await readFile(sourcePath, "utf8"), "Synthetic preserved source bytes");
+    assert.equal(await readFile(editedPath, "utf8"), "Student-owned edited derivative");
+    assert.equal(queueBytes.includes("synthetic-private"), false);
+    assert.equal((await readFile(saved.statusPath, "utf8")).includes("synthetic-private"), false);
+    assert.equal(
+      (await readFile(join(destination, first[0].placement.statusPath), "utf8")).includes(
+        "synthetic-private",
+      ),
+      false,
+    );
+  }
+});
+
+test("a hostname named ks remains a safe direct media authority", () => {
+  const queue = discoverContentRecordings({
+    course: { key: "synthetic", courseId: "course", destination: "/synthetic" },
+    snapshot: {
+      items: [
+        {
+          id: "item",
+          title: "Lecture",
+          position: 0,
+          body: { displayText: '<iframe src="https://ks/lecture.mp4"></iframe>' },
+        },
+      ],
+    },
+  });
+  assert.equal(queue[0].provider, "direct");
+  assert.equal(queue[0].disposition, "recording");
+  assert.equal(queue[0].providerReference, "direct:ks/lecture.mp4");
+});

@@ -1,3 +1,4 @@
+import { sessionPath } from "./session-path.mjs";
 import { absoluteUrl } from "../ntulearn/urls.mjs";
 import {
   acquireRepresentation,
@@ -64,7 +65,7 @@ export function directMediaReferenceOf(value) {
 
   try {
     const parsed = new URL(absoluteUrl(address));
-    const identity = `${parsed.hostname}${parsed.pathname}`.replace(/\/+$/, "");
+    const identity = `${parsed.hostname}${sessionPath(parsed.pathname).value}`.replace(/\/+$/, "");
     return identity ? `direct:${safeIdentity(identity)}` : null;
   } catch {
     return null;
