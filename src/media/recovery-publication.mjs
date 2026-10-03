@@ -137,6 +137,7 @@ async function publishCandidates(
       runtimePins: report.runtimePins,
       assessment: candidate,
       originalPreserved: true,
+      authority: recording.authority,
       canonicalSourceReplacement: false,
       acousticVerification: "unrun",
       mediaReadiness: "unclaimed",
@@ -156,7 +157,7 @@ async function publishCandidates(
       });
     const entries = courseIndexes.get(recording.coursePath) ?? [];
     entries.push(
-      `${link(recording.display.title, edition)} (${escapeText(recording.display.courseKey)}; recording ${key})\n  ${upstreamLink("NTULearn course", recording.display.courseUrl)} · source reference: ${escapeText(recording.display.sourceReference)}\n  ${link("Original", recording.original.path)} · ${link("Original source", recording.source.path)} · ${link("Retained media", recording.media.path)} · ${recording.display.statusPath ? link("Current media status", recording.display.statusPath) : "Current media status unavailable"} · ${link("Candidate source", candidateSource)} · ${link("Native ASR", nativeSource)} · ${link("Provenance and limitations", provenancePath)}`,
+      `${link(recording.display.title, edition)} (${escapeText(recording.display.courseKey)}; recording ${key})\n  ${upstreamLink("NTULearn course", recording.display.courseUrl)} · source reference: ${escapeText(recording.display.sourceReference)}\n  ${recording.original.absent ? "Original derivative absent (pinned)" : link("Original", recording.original.path)} · ${link("Original source", recording.source.path)} · ${link("Retained media", recording.media.path)} · ${recording.display.statusPath ? link("Current media status", recording.display.statusPath) : "Current media status unavailable"} · ${link("Candidate source", candidateSource)} · ${link("Native ASR", nativeSource)} · ${link("Provenance and limitations", provenancePath)}`,
     );
     courseIndexes.set(recording.coursePath, entries);
   }
@@ -167,7 +168,7 @@ async function publishCandidates(
         .filter((entry) => entry.recording.coursePath === coursePath)
         .map(
           ({ recording, candidate }) =>
-            `\n- ${escapeText(recording.display.title)} — unpublished / review: ${escapeText(candidate.flags.join(", ") || "native source or timing failed")}; ${link("Original", recording.original.path)}; ${upstreamLink("NTULearn course", recording.display.courseUrl)}.`,
+            `\n- ${escapeText(recording.display.title)} — unpublished / review: ${escapeText(candidate.flags.join(", ") || "native source or timing failed")}; ${recording.original.absent ? "Original derivative absent (pinned)" : link("Original", recording.original.path)}; ${upstreamLink("NTULearn course", recording.display.courseUrl)}.`,
         )
         .join("\n")}\n`,
       boundary: coursePath,

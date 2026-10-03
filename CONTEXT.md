@@ -228,7 +228,9 @@ _Avoid_: cleaned transcript, corrected transcript — both can imply that the so
 An incomplete transcript state supported by explicit obvious-text flags, such as an empty source,
 payload/banner text or suspicious repetition. Native/source/media bytes remain retained; a flag
 permits neither correction nor deletion and does not establish acoustic error. Routine work does
-not retry or clear this state; independently validated source recovery remains explicit.
+not retry or clear this state; independently validated source recovery remains explicit. An incomplete
+owned source can pin absent metadata/derivative with current state/queue/media proofs; recovery
+publishes separate editions without changing canonical source or queue readiness.
 _Avoid_: repaired source, rejected recording — neither follows from text-only flags
 
 ### What is kept

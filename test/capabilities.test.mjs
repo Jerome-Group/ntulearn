@@ -77,3 +77,15 @@ test("production transcript route exposes zero-model formatting and durable revi
   assert.equal(formatting.reviewRequired.queueOnlyClear, false);
   assert.match(formatting.limitations, /acoustic/);
 });
+
+test("source recovery indexes explicit unformatted authority and absence protections", () => {
+  const route = capabilityIndex("transcript-source-recovery").commands[0];
+  assert.equal(route.manifest.authorities.default, "metadata-owned-original");
+  const variant = route.manifest.authorities["state-owned-unformatted"];
+  assert.ok(variant.fields.includes("authority.state.sha256"));
+  assert.ok(variant.fields.includes("authority.original.absent"));
+  assert.equal(variant.fallback, false);
+  assert.equal(variant.queueReadinessWrites, false);
+  assert.match(variant.limits, /parent/);
+  assert.ok(route.verification.tests.includes("test/media-recovery-incomplete.test.mjs"));
+});
