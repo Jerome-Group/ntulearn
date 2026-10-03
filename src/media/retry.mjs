@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
+import { basename, isAbsolute } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 import { capabilityResult, observation } from "../capabilities/result.mjs";
 import { recordingDisposition } from "./disposition.mjs";
@@ -345,6 +346,7 @@ function assertQueueMetadata(content) {
     return parseCatalogueMetadata(content, {
       limits: QUEUE_METADATA_LIMITS,
       forbiddenKeys: FORBIDDEN_QUEUE_KEYS,
+      allowForbiddenStringKey: isCanonicalStateArtifact,
     });
   } catch (error) {
     throw refusal(
@@ -353,6 +355,22 @@ function assertQueueMetadata(content) {
         : "MEDIA_RETRY_QUEUE_UNSAFE",
     );
   }
+}
+
+function isCanonicalStateArtifact({ path, value }) {
+  return (
+    path.length === 4 &&
+    path[0] === "queue" &&
+    Number.isSafeInteger(path[1]) &&
+    path[2] === "artifacts" &&
+    path[3] === "state" &&
+    isAbsolute(value) &&
+    !value.startsWith("//") &&
+    !value.includes("\0") &&
+    !value.includes("\\") &&
+    !/:\/\//.test(value) &&
+    basename(value) === "transcript.state.json"
+  );
 }
 
 export async function readRetryQueueMetadata(

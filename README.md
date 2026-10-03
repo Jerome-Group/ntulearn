@@ -171,7 +171,10 @@ unresolved/excluded/withdrawn jobs and cleanup safety evidence are refused. Run 
 rearming; retry permission does not prove acquisition, transcription or completion. A specific
 recording ID can replace `failed`, and one configured course can replace `all`.
 Queue metadata is inspected per raw JSON scalar, including overwritten duplicate values;
-aggregate artifact references do not consume one transcript's address budget. Retry queue reads
+aggregate artifact references do not consume one transcript's address budget. The canonical
+`queue[*].artifacts.state` absolute local `transcript.state.json` reference is admitted as a
+filename, not an OAuth state value. Other state locations/types and overwritten unsafe values
+remain refused; session-bound addresses still pass through the native transcript guard. Retry queue reads
 retain their five-second deadline and await bounded owned I/O/descriptor settlement. Unconfirmed
 cleanup may write an admission safety barrier even during plan; retain external containment
 when barrier persistence is unconfirmed. Plan changes no retry permission or student artifacts.

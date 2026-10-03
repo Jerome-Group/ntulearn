@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers";
 import test from "node:test";
 import { EPHEMERAL_MEDIA_JOB_FIELDS, mediaQueuePath } from "../src/media/queue.mjs";
+import { createMediaOutcome } from "../src/media/outcome.mjs";
+import { resultUpdate } from "../src/media/worker-state.mjs";
+import { updateMediaQueueJob } from "../src/media/queue.mjs";
 import { withMediaQueueLock } from "../src/media/lock.mjs";
 import { assertMediaSafetyAdmission, mediaSafetyPath } from "../src/media/safety.mjs";
 import { writeAtomically } from "../src/atomic.mjs";
@@ -44,7 +47,10 @@ async function fixture(context) {
     limitations: ["prior failure"],
     sourceSha256: "a".repeat(64),
     formattedSha256: "b".repeat(64),
-    artifacts: { rawTranscript: join(root, "raw.json") },
+    artifacts: {
+      rawTranscript: join(root, "raw.json"),
+      state: join(root, "transcript.state.json"),
+    },
     placement: { destination: course.destination, statusPath: "fixture.media-status.md" },
   };
   await mkdir(course.destination);
@@ -875,5 +881,125 @@ test("every shared ephemeral queue field refuses retry without publishing privat
     assert.equal(result.evidence.changed, 0);
     assert.deepEqual(await readFile(f.path), before);
     assert.doesNotMatch(JSON.stringify(result), /private fixture credential/);
+  }
+});
+
+test("canonical outcome state artifact survives queue publication and retry", async (context) => {
+  const f = await fixture(context);
+  const at = new Date("2026-10-04T00:00:00.000Z");
+  const result = await createMediaOutcome({
+    appearance: f.job,
+    clock: () => at,
+    storage: {
+      write: async ({ filename }) => ({ path: join(f.root, filename), status: "written" }),
+    },
+  }).persist({
+    providerName: "kaltura",
+    media: { video: { available: false }, audio: { available: false } },
+    source: null,
+    artifacts: {},
+    limitations: ["prior failure"],
+    complete: false,
+    stage: "failed",
+    retryable: false,
+  });
+  await updateMediaQueueJob({
+    statePath: f.config.statePath,
+    courseKey: f.course.key,
+    course: f.course,
+    recordingId: f.job.recordingId,
+    update: resultUpdate(result, at),
+    now: () => at,
+  });
+  const before = await readFile(f.path);
+  const original = JSON.parse(before).queue[0];
+  assert.equal(original.artifacts.state, join(f.root, "transcript.state.json"));
+  const plan = await retryMediaJobs({ ...f.options, mode: "plan" });
+  assert.equal(plan.status, "passed");
+  assert.equal(plan.evidence.selected, 1);
+  assert.deepEqual(await readFile(f.path), before);
+  const apply = await retryMediaJobs({
+    ...f.options,
+    mode: "apply",
+    confirmation: MEDIA_RETRY_CONFIRMATION,
+  });
+  assert.equal(apply.status, "passed");
+  assert.equal(apply.evidence.changed, 1);
+  const next = JSON.parse(await readFile(f.path)).queue[0];
+  assert.deepEqual(next.artifacts, original.artifacts);
+  assert.equal(next.attempts, original.attempts);
+  assert.equal(next.stage, "failed");
+  assert.equal(next.complete, false);
+  assert.equal(next.retryable, true);
+});
+
+test("state artifact exception refuses other contexts, types and overwritten unsafe values", async (context) => {
+  const f = await fixture(context);
+  const path = join(f.root, "transcript.state.json");
+  const safeArtifact = JSON.stringify({ state: path });
+  for (const artifacts of [
+    { state: null },
+    { state: false },
+    { state: 1 },
+    { state: {} },
+    { state: [] },
+    { state: { path } },
+    { state: "transcript.state.json" },
+    { state: join(f.root, "other.json") },
+    { State: path },
+    { state: `${f.root}/bad\0/transcript.state.json` },
+    { state: "https://private.invalid/transcript.state.json" },
+    { state: "//private.invalid/transcript.state.json" },
+    { state: `${f.root}/transcript.state.json?state=secret` },
+  ]) {
+    await f.save([{ ...f.job, artifacts }]);
+    for (const mode of ["plan", "apply"]) {
+      const before = await readFile(f.path);
+      const result = await retryMediaJobs({
+        ...f.options,
+        mode,
+        confirmation: MEDIA_RETRY_CONFIRMATION,
+      });
+      assert.equal(result.status, "blocked");
+      assert.equal(result.checks[0].code, "MEDIA_RETRY_QUEUE_UNSAFE");
+      assert.deepEqual(await readFile(f.path), before);
+      assert.doesNotMatch(JSON.stringify(result), /private.invalid|secret/);
+    }
+  }
+  await f.save([{ ...f.job, artifacts: { state: path } }]);
+  const safe = await readFile(f.path, "utf8");
+  const variants = [
+    safe.replace("{", `{"state":${JSON.stringify(path)},`),
+    safe.replace('"artifacts":', `"state":${JSON.stringify(path)},"artifacts":`),
+    safe.replace('"artifacts":', `"other":{"state":${JSON.stringify(path)}},"artifacts":`),
+    safe.replace(safeArtifact, `{"state":null,"state":${JSON.stringify(path)}}`),
+    safe.replace(safeArtifact, `{"state":"secret","st\\u0061te":${JSON.stringify(path)}}`),
+    safe.replace(safeArtifact, `{"state":{},"state":${JSON.stringify(path)}}`),
+    safe.replace('"artifacts":', '"artifacts":{"state":"secret"},"artifacts":'),
+    safe.replace("{", '{"queue":[{"artifacts":{"state":"secret"}}],'),
+    safe.replace(safeArtifact, `{"state":${JSON.stringify(path)},"token":null}`),
+    safe.replace(
+      safeArtifact,
+      `{"state":${JSON.stringify(path)},"note":"https://private.invalid/?state=secret"}`,
+    ),
+    safe.replace(
+      safeArtifact,
+      `{"state":${JSON.stringify(path)},"note":"https://private.invalid/?st%61te=secret"}`,
+    ),
+    safe.replace(safeArtifact, `{"state":${JSON.stringify(path)},"note":"state&#61;secret"}`),
+  ];
+  for (const body of variants) {
+    assert.notEqual(body, safe);
+    await writeFile(f.path, body);
+    for (const mode of ["plan", "apply"]) {
+      const result = await retryMediaJobs({
+        ...f.options,
+        mode,
+        confirmation: MEDIA_RETRY_CONFIRMATION,
+      });
+      assert.equal(result.status, "blocked");
+      assert.equal(result.checks[0].code, "MEDIA_RETRY_QUEUE_UNSAFE");
+      assert.deepEqual(await readFile(f.path, "utf8"), body);
+    }
   }
 });
