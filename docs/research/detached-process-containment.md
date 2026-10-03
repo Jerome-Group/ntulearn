@@ -49,3 +49,8 @@ warning. Unconfirmed cleanup retains the exact initiating failure in non-enumera
 `originalReason` and preserves independent cleanup `cause`; `MEDIA_PROCESS_CLEANUP` and
 `globalSafety` still prevent normal checkpoint recovery. Do not infer descendant absence from
 the original group's absence or signal other same-user processes to fill missing evidence.
+
+For proposed platform adapters, macOS27 descendant-scoped Endpoint Security changes the
+prerequisite analysis but does not supply a qualified subtree-kill guarantee here. The
+[source-cited design evaluation](platform-containment-design.md) compares it with authority-separated
+Linux containment and records required launch, migration, failure and confirmation evidence.
