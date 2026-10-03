@@ -24,8 +24,10 @@ export async function openLoginWindow(profilePath) {
   return { page, close: () => context.close() };
 }
 
-export async function openSignedInContext(profilePath) {
-  const context = await launchChrome(profilePath, { headless: true });
+export async function openSignedInContext(profilePath, { signalOwner = "browser" } = {}) {
+  if (!["browser", "caller"].includes(signalOwner))
+    throw new Error("Signed-in browser signal ownership must be browser or caller.");
+  const context = await launchChrome(profilePath, { headless: true, signalOwner });
   try {
     const page = context.pages()[0] ?? (await context.newPage());
     const capturedToken = captureXsrfToken(page);
@@ -48,12 +50,22 @@ export async function openSignedInContext(profilePath) {
 
     return { context, token };
   } catch (error) {
-    await context.close();
+    try {
+      await context.close();
+    } catch (cause) {
+      throw Object.assign(
+        new Error(
+          "Signed-in browser startup cleanup is unconfirmed. Inspect the owned session before retrying.",
+          { cause },
+        ),
+        { code: "NTULEARN_BROWSER_CLEANUP" },
+      );
+    }
     throw error;
   }
 }
 
-async function launchChrome(profilePath, { headless }) {
+async function launchChrome(profilePath, { headless, signalOwner = "browser" }) {
   validateProfilePath(profilePath);
   await mkdir(profilePath, { recursive: true });
   await chmod(profilePath, 0o700);
@@ -61,6 +73,7 @@ async function launchChrome(profilePath, { headless }) {
     channel: "chrome",
     headless,
     viewport: headless ? HEADLESS_VIEWPORT : null,
+    ...(signalOwner === "caller" ? { handleSIGINT: false, handleSIGTERM: false } : {}),
   });
 }
 

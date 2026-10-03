@@ -358,3 +358,70 @@ test("production retains queue ownership through browser settlement and marks cl
   assert.equal(blocked.digest.globalStop, true);
   assert.equal(blocked.exitCode, 1);
 });
+
+test("startup abort plus browser-close uncertainty before runner assignment stops all queues with a durable barrier", async (t) => {
+  const { chromium } = await import("playwright");
+  const { openClient } = await import("../src/ntulearn/client.mjs");
+  const { mkdir, rm } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-production-startup-close-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const statePath = join(root, "state.json"),
+    selected = [course("AB1001"), course("AB1002")].map((c) => ({
+      ...c,
+      destination: join(root, c.key),
+    }));
+  for (const c of selected) {
+    await mkdir(c.destination);
+    await queue(statePath, c, "direct", "fixture");
+  }
+  const secondBefore = (await readMediaQueue({ statePath, courseKey: selected[1].key })).record
+    .queue[0];
+  const controller = new globalThis.AbortController();
+  let launches = 0;
+  t.mock.method(chromium, "launchPersistentContext", async () => {
+    launches++;
+    return {
+      pages: () => [
+        {
+          on: () => {},
+          goto: async () => {
+            controller.abort(new Error("Owned fixture startup interruption"));
+            throw new Error("Owned fixture sign-in failure");
+          },
+        },
+      ],
+      close: async () => {
+        throw new Error("Owned fixture startup close uncertainty");
+      },
+    };
+  });
+  const result = await runProductionMedia({
+    config: {
+      statePath,
+      profilePath: join(root, "empty-owned-profile"),
+      courses: selected,
+      media: { mediaRoot: join(root, "media") },
+    },
+    mode: "manual",
+    signal: controller.signal,
+    verifyRuntime: async () => ({ runtime: {} }),
+    createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
+    createJobRunner: async ({ config }) => {
+      await openClient(config.profilePath, { signalOwner: "caller" });
+      assert.fail("startup must fail before runner assignment");
+    },
+  });
+  assert.equal(launches, 1);
+  assert.equal(result.digest.globalStop, true);
+  assert.equal(result.digest.counts.checkpointed, 0);
+  assert.equal(result.exitCode, 1);
+  assert.equal(
+    JSON.parse(await readFile(join(root, "media-safety.json"))).code,
+    "MEDIA_BROWSER_CLEANUP",
+  );
+  const first = (await readMediaQueue({ statePath, courseKey: selected[0].key })).record.queue[0];
+  assert.equal(first.safetyFailure, "MEDIA_BROWSER_CLEANUP");
+  assert.equal(first.retryable, false);
+  const second = (await readMediaQueue({ statePath, courseKey: selected[1].key })).record.queue[0];
+  assert.deepEqual(second, secondBefore);
+});

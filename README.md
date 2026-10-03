@@ -89,6 +89,14 @@ non-zero. `scheduled` is the default and runs only from 00:00 through
 boundary. SIGINT/SIGTERM stop further jobs and await owned cleanup; the digest records
 `interrupted: true`, and an active job records a manual or scheduled interruption checkpoint.
 The run and latest digest retain the sanitized `interruptionReason`.
+The media caller owns browser SIGINT/SIGTERM; Playwright's default SIGINT handler otherwise exits
+Node with code 130 before checkpoint, lock release and final reporting can settle. Media disables
+those two browser handlers and closes its owned context through the existing cleanup boundary.
+Startup context-close failures become durable media cleanup barriers even before runner assignment;
+sign-in failures with confirmed close retain their ordinary error behavior.
+Login and other signed-in reads retain browser defaults. Offline regression fixtures use the
+installed Playwright process launcher with an owned Node child, proving signal settlement without
+opening a browser; they do not certify every descendant or qualify live session behavior.
 This differs from the overnight checkpoint. Inspect the run evidence before retrying; cleanup
 uncertainty remains a global safety failure.
 Unconfirmed process/browser cleanup creates a private, persistent `.data/media-safety.json`

@@ -4,8 +4,8 @@ import { openSignedInContext } from "./session.mjs";
 import { NtulearnReader } from "./reader.mjs";
 import { absoluteUrl } from "./urls.mjs";
 
-export async function openClient(profilePath) {
-  const { context, token } = await openSignedInContext(profilePath);
+export async function openClient(profilePath, options) {
+  const { context, token } = await openSignedInContext(profilePath, options);
   return new NtulearnClient(context, token);
 }
 
