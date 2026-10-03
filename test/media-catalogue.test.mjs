@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import { mkdir, readFile, writeFile, rename, symlink, lstat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { historicalFixture } from "./fixtures/historical.mjs";
 import { historicalTranscripts } from "../src/media/historical.mjs";
-import { transcriptCatalogue } from "../src/media/catalogue.mjs";
+import { transcriptCatalogue, catalogueMarkdown } from "../src/media/catalogue.mjs";
 
 async function fixture(t) {
   const f = await historicalFixture(t);
@@ -55,7 +56,7 @@ test("plan publish verify repeat preserve originals and refuse student-edited st
   assert.equal(await readFile(f.originalPath, "utf8"), f.original);
 });
 
-test("multi-course aggregate plan remains publishable, verifiable and idempotent within the operation read budget", async (t) => {
+test("compact aggregate plan fits the unchanged byte bound and remains publishable, verifiable and idempotent", async (t) => {
   const f = await fixture(t),
     { mediaQueuePath } = await import("../src/media/queue.mjs");
   const courses = [f.config.courses[0]];
@@ -81,7 +82,7 @@ test("multi-course aggregate plan remains publishable, verifiable and idempotent
         courseKey: course.key,
         courseId: course.courseId,
         recordingId: `synthetic-${index}-${row}`,
-        title: `Resource ${row}`,
+        title: `Resource ${row} ${"synthetic wording ".repeat(28)}`,
         providerReference: `https://ntulearn.ntu.edu.sg/ultra/courses/${course.courseId}/outline`,
         placement: { ...f.job.placement, destination: course.destination },
         disposition: "unresolved",
@@ -95,6 +96,19 @@ test("multi-course aggregate plan remains publishable, verifiable and idempotent
   const planned = await transcriptCatalogue({ ...options, mode: "plan" });
   assert.equal(planned.status, "passed", JSON.stringify(planned));
   assert.equal(planned.evidence.unresolved, 2200, JSON.stringify(planned.evidence));
+  const content = await readFile(f.manifestPath, "utf8"),
+    manifest = JSON.parse(content),
+    { id, ...body } = manifest,
+    { historicalDigest, HISTORICAL_LIMITS } = await import("../src/media/historical-files.mjs");
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(manifest, null, 2) + "\n") > HISTORICAL_LIMITS.fileBytes,
+  );
+  assert.ok(Buffer.byteLength(content) <= HISTORICAL_LIMITS.fileBytes);
+  assert.equal(content, JSON.stringify(manifest) + "\n");
+  assert.equal(id, historicalDigest(JSON.stringify(body)).slice(0, 24));
+  const receipt = JSON.parse(await readFile(f.manifestPath + ".catalogue-plan.json", "utf8"));
+  assert.equal(receipt.planId, id);
+  assert.equal(receipt.sha256, historicalDigest(content));
   const published = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
   assert.equal(published.status, "passed", JSON.stringify(published));
   assert.ok(
@@ -108,6 +122,67 @@ test("multi-course aggregate plan remains publishable, verifiable and idempotent
   assert.equal(repeat.evidence.promoted, 0);
   assert.equal(await readFile(f.originalPath, "utf8"), f.original);
   assert.equal(await readFile(f.sourcePath, "utf8"), f.raw);
+
+  const oversized = JSON.parse(JSON.stringify(manifest));
+  for (const course of courses) {
+    const path = mediaQueuePath(f.config.statePath, course.key),
+      queue = JSON.parse(await readFile(path));
+    const unresolved = queue.queue.filter((row) => row.disposition === "unresolved");
+    queue.queue.push(
+      ...unresolved.slice(0, 150).map((row, index) => ({
+        ...row,
+        recordingId: `oversized-${course.key}-${index}`,
+      })),
+    );
+    await writeFile(path, JSON.stringify(queue));
+  }
+  for (const course of oversized.inventory.courses) {
+    course.unresolved.push(...JSON.parse(JSON.stringify(course.unresolved.slice(0, 150))));
+    oversized.targets.find((target) => target.boundary === course.path).content = catalogueMarkdown(
+      course,
+      oversized.inventory.unassociated,
+    );
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify(oversized) + "\n") > HISTORICAL_LIMITS.fileBytes);
+  const manifestPath = join(f.root, "oversized-catalogue.json"),
+    refused = await transcriptCatalogue({ config: f.config, mode: "plan", manifestPath });
+  assert.equal(refused.status, "failed");
+  assert.equal(refused.checks[0].code, "CATALOGUE_LIMIT");
+  for (const path of [manifestPath, manifestPath + ".catalogue-plan.json"])
+    await assert.rejects(lstat(path), { code: "ENOENT" });
+});
+
+test("legacy pretty plans remain publishable and verifiable but compact planning refuses their occupied bytes", async (t) => {
+  const f = await fixture(t),
+    options = { config: f.config, manifestPath: f.manifestPath },
+    { historicalDigest } = await import("../src/media/historical-files.mjs");
+  assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+  const manifest = JSON.parse(await readFile(f.manifestPath)),
+    content = JSON.stringify(manifest, null, 2) + "\n",
+    receiptPath = f.manifestPath + ".catalogue-plan.json",
+    receipt = JSON.parse(await readFile(receiptPath));
+  receipt.sha256 = historicalDigest(content);
+  const proof = JSON.stringify(receipt, null, 2) + "\n";
+  await writeFile(f.manifestPath, content);
+  await writeFile(receiptPath, proof);
+
+  const refused = await transcriptCatalogue({ ...options, mode: "plan" });
+  assert.equal(refused.status, "failed");
+  assert.equal(refused.checks[0].code, "CATALOGUE_EVIDENCE_INVALID");
+  assert.equal(await readFile(f.manifestPath, "utf8"), content);
+  assert.equal(await readFile(receiptPath, "utf8"), proof);
+  const fresh = await transcriptCatalogue({
+    ...options,
+    mode: "plan",
+    manifestPath: join(f.root, "fresh-catalogue.json"),
+  });
+  assert.equal(fresh.status, "passed");
+  assert.equal(fresh.evidence.planId, manifest.id);
+  assert.equal(
+    (await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  assert.equal((await transcriptCatalogue({ ...options, mode: "verify" })).status, "passed");
 });
 
 test("unsafe proposed receipt path is rejected before either private plan file is published", async (t) => {
