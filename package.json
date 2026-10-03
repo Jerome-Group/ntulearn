@@ -36,6 +36,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "media:evaluate": "node src/cli.mjs media-evaluate",
+    "media:catalogue": "node src/cli.mjs media-catalogue",
     "media:format": "node src/cli.mjs media-format"
   },
   "dependencies": {

@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] [RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] [RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -354,6 +354,7 @@ async function eachCourse(config, key, walk) {
 async function main([name, ...argumentsForCommand]) {
   if (name === "media-retry") return mediaRetry(argumentsForCommand);
   if (name === "media-worker") return mediaWorker(argumentsForCommand);
+  if (name === "media-catalogue") return mediaCatalogue(argumentsForCommand);
   if (name === "media-format") return mediaFormat(argumentsForCommand);
   if (name === "media-recover") return mediaRecover(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
@@ -366,6 +367,65 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
+}
+
+async function mediaCatalogue([mode, manifestPath, extra, ...unexpected]) {
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      Object.assign(
+        new Error("Catalogue interrupted; inspect retained journal and retry the same plan."),
+        { code: "CATALOGUE_INTERRUPTED" },
+      ),
+    );
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  let result;
+  try {
+    if (
+      !["inspect", "plan", "publish", "verify"].includes(mode) ||
+      unexpected.length ||
+      (mode === "inspect" ? Boolean(manifestPath || extra) : !manifestPath) ||
+      (mode === "publish"
+        ? extra !== "PUBLISH_TRANSCRIPT_CATALOGUE"
+        : mode !== "plan" && Boolean(extra))
+    ) {
+      result = capabilityResult("media:catalogue", [
+        observation(
+          "arguments",
+          "blocked",
+          "CATALOGUE_ARGUMENTS",
+          "Invalid catalogue arguments or missing explicit publication token.",
+          "Run npm run --silent capabilities -- transcript-catalogue for exact operations.",
+        ),
+      ]);
+    } else {
+      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+      const { transcriptCatalogue } = await import("./media/catalogue.mjs");
+      result = await transcriptCatalogue({
+        mode,
+        config,
+        manifestPath: manifestPath ? resolve(manifestPath) : undefined,
+        selectionPath: mode === "plan" && extra ? resolve(extra) : undefined,
+        signal: controller.signal,
+      });
+    }
+  } catch {
+    result = capabilityResult("media:catalogue", [
+      observation(
+        "configuration",
+        "blocked",
+        "CATALOGUE_CONFIG_UNAVAILABLE",
+        "Private configuration could not be validated; details remain private.",
+        "Repair private configuration and accessible storage, then retry catalogue inspect.",
+      ),
+    ]);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
 }
 
 async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]) {

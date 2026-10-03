@@ -151,6 +151,27 @@ const routes = {
       "test/media-source-production.test.mjs",
     ],
   ],
+  "transcript-catalogue": [
+    [
+      "src/media/catalogue.mjs",
+      "src/media/catalogue-files.mjs",
+      "src/media/catalogue-profile.mjs",
+      "src/media/catalogue-inventory.mjs",
+      "src/media/catalogue-editions.mjs",
+      "src/media/catalogue-publication.mjs",
+      "src/media/recovery-manifest.mjs",
+      "src/media/recovery-files.mjs",
+    ],
+    [
+      "test/media-catalogue.test.mjs",
+      "test/media-catalogue-recovery.test.mjs",
+      "test/media-catalogue-editions.test.mjs",
+      "test/media-catalogue-publication.test.mjs",
+      "test/media-catalogue-cli.test.mjs",
+      "test/media-catalogue-files.test.mjs",
+      "test/media-recovery-files.test.mjs",
+    ],
+  ],
   "historical-transcripts": [
     [
       "src/media/historical.mjs",
@@ -457,6 +478,78 @@ const commands = [
       limitations: [
         "Scheduled mode works only 00:00–03:59 Asia/Singapore; manual mode ignores the overnight boundary.",
         "Manual priority reorders all enabled courses; media owns browser SIGINT/SIGTERM so checkpoint, browser cleanup, queue-lock release and final digest can settle. Login/nonmedia browser defaults remain unchanged; cleanup failure still blocks readiness.",
+      ],
+    },
+  ),
+  command(
+    "media-catalogue",
+    "media:catalogue",
+    "transcript-catalogue",
+    ["configured-courses", "accessible-course-roots", "retained-edition-provenance"],
+    {
+      reads: ["private-queue-and-transcript-evidence"],
+      writes: ["fresh-plan-for-plan", "managed-course-index-and-immutable-history-for-publish"],
+      ownerOnly: false,
+    },
+    {
+      arguments: [
+        "inspect | plan <private-manifest> [private-selection-file] | publish <private-manifest> PUBLISH_TRANSCRIPT_CATALOGUE | verify <private-manifest>",
+      ],
+      risk: "local-user-storage",
+      output: "operation-specific",
+      exitCodes: offlineCodes,
+      operations: {
+        inspect: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: false,
+          writes: [],
+          output: "private-catalogue-metadata-v1",
+          prerequisites: ["accessible-course-roots"],
+        },
+        plan: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: false,
+          writes: ["fresh-exclusive-private-plan"],
+          output: "capability-result-v1",
+          prerequisites: ["fresh-private-manifest-path", "optional-private-digest-selection"],
+        },
+        publish: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: true,
+          writes: [
+            "managed-course-index",
+            "producer-journal",
+            "immutable-index-history-and-beforeimages",
+          ],
+          output: "capability-result-v1",
+          prerequisites: [
+            "unchanged-private-catalogue-plan",
+            "PUBLISH_TRANSCRIPT_CATALOGUE",
+            "RAID0-and-reserve",
+            "media-queue-lock",
+            "positive-managed-index-ownership-or-pinned-absence",
+          ],
+        },
+        verify: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: false,
+          writes: [],
+          output: "capability-result-v1",
+          prerequisites: ["unchanged-private-catalogue-plan"],
+        },
+      },
+      limitations: [
+        "All configured local queue appearances accounted for as recognized recordings, unresolved review or positively classified non-recordings; retained source evidence accounted for; upstream completeness and acoustic verification unrun. Inspect emits private bounded titles/IDs/local links; no transcript/config/profile/log bodies. Plan/publication/verify emit bounded counts/codes only.",
+        "Prefer a unique eligible recovered digest, otherwise unique eligible current-source paragraph digest. Equivalent digests group; distinct candidates require explicit recordingId/sha256 selections. Source flags exclude paragraph preference; unknown recovery timing refuses. Canonical source review/media verdicts remain unchanged.",
+        "Generation candidate proofs stay immutable; current per-recording ownership is independently revalidated without generation-time whole-queue SHA. Publication plans pin the entire current inventory and refuse subsequent input changes. Existing managed index requires positive producer hash/history; user edits refuse. Retry identical plan after journalled interruption; no automatic sync publication or universal external-edit CAS guarantee.",
       ],
     },
   ),
@@ -801,6 +894,12 @@ export function capabilityIndex(selection) {
         "Real course identifiers and storage paths belong in private configuration; never copy session profile contents.",
     },
     outputContracts: {
+      "private-catalogue-metadata-v1": {
+        fields: ["schemaVersion", "command", "status", "exitCode", "catalogue"],
+        privacy:
+          "Private bounded course/recording IDs, titles, source flags and local/provenance links; never transcript bodies, raw configuration, signed URLs, profile contents or raw exceptions. Inspect stdout is a private metadata report.",
+        exitCodes: offlineCodes,
+      },
       "capability-result-v1": {
         fields: ["schemaVersion", "command", "status", "exitCode", "checks", "evidence"],
         statuses: ["passed", "failed", "blocked", "unrun"],

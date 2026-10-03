@@ -14,7 +14,10 @@ export function recoveryFailure(code = "RECOVERY_EVIDENCE_INVALID") {
   );
 }
 
-export function recoveryFile(path, { maximumBytes = 4 * 1024 ** 2, signal, retain = true } = {}) {
+export function recoveryFile(
+  path,
+  { maximumBytes = 4 * 1024 ** 2, signal, retain = true, includeIdentity = false } = {},
+) {
   return withEvaluationRead(
     async (readSignal) => {
       if ((await realpath(path)) !== path) throw recoveryFailure();
@@ -47,13 +50,16 @@ export function recoveryFile(path, { maximumBytes = 4 * 1024 ** 2, signal, retai
           after.mtimeMs !== before.mtimeMs ||
           current.ino !== before.ino ||
           current.dev !== before.dev ||
-          current.mtimeMs !== before.mtimeMs
+          current.mtimeMs !== before.mtimeMs ||
+          (includeIdentity &&
+            (after.ctimeMs !== before.ctimeMs || current.ctimeMs !== before.ctimeMs))
         )
           throw recoveryFailure("RECOVERY_INPUT_CHANGED");
         return {
           path,
           sha256: hash.digest("hex"),
           bytes,
+          ...(includeIdentity ? { identity: fileIdentity(before) } : {}),
           ...(retain ? { content: Buffer.concat(parts) } : {}),
         };
       } finally {
@@ -83,4 +89,44 @@ export async function recoveryDirectoryBytes(path, maximumBytes, signal) {
   }
   await withEvaluationRead(() => walk(path, 0), { signal });
   return bytes;
+}
+
+const fileIdentity = (info) => ({
+  dev: info.dev,
+  ino: info.ino,
+  size: info.size,
+  mtimeMs: info.mtimeMs,
+  ctimeMs: info.ctimeMs,
+});
+
+// Bounded descriptor-bound checks keep a positively hashed media identity current between hashes.
+export async function assertRecoveryFileIdentity({ path, identity }, signal) {
+  return withEvaluationRead(
+    async (readSignal) => {
+      if ((await realpath(path)) !== path) throw recoveryFailure("RECOVERY_INPUT_CHANGED");
+      const handle = await open(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const before = await handle.stat();
+        readSignal.throwIfAborted();
+        const current = await lstat(path),
+          after = await handle.stat();
+        if (
+          !before.isFile() ||
+          current.isSymbolicLink() ||
+          !current.isFile() ||
+          [before, after, current].some(
+            (info) => JSON.stringify(fileIdentity(info)) !== JSON.stringify(identity),
+          ) ||
+          (await realpath(path)) !== path
+        )
+          throw recoveryFailure("RECOVERY_INPUT_CHANGED");
+      } finally {
+        await handle.close();
+      }
+    },
+    { signal },
+  );
 }
