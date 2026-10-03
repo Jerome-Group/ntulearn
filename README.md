@@ -810,10 +810,18 @@ logical deadline and an exact byte/hash limit; this does not establish physical 
 
 VAD run/publication require ASR revision `whisper.cpp-1.9.2-homebrew-wrapper-1`, SHA-256
 `f3aeb2821b159923f5b2066ea80e1395c9676b9c4d98c323a5732f955dd7c1d7`, a bounded exact help-capability
-probe and the prepared companion asset. Missing capabilities or evidence refuse before candidate
+probe and the prepared companion asset. The uniquely parsed wrapper execution target must resolve
+to the canonical binary pinned in private companion receipts, SHA-256
+`40bca494d49af736058eb3f33cbcebaa020eacf6d0087b623f334946e1ab2128`, 658,608 bytes. Wrapper/delegate
+hashes and canonical target resolution are checked before/after the help probe and around each
+process/publication. Changed bytes or same-byte retargets refuse; matching help flags alone cannot
+establish delegate identity. Installed package metadata declares 1.9.2; exact source/build and
+version-output identity remain unproven. Dynamic libraries remain unpinned, so complete execution
+environment identity is unclaimed. Missing capabilities or evidence refuse before candidate
 output creation or ASR. The closed controls are threshold 0.5, minimum speech 250 ms, minimum silence
 100 ms, maximum speech FLT_MAX, padding 30 ms, overlap 0.1 seconds and one processor. No additional
-configuration or arbitrary decoder flags are admitted. Model revision/hash/bytes and exact controls
+configuration or arbitrary decoder flags are admitted. Model revision/hash/bytes, exact controls and
+path-free delegated executable/package declaration
 join the existing runtime/model pins in recovery reports, provenance and edition equivalence.
 See [ADR-0024](docs/adr/0024-optional-vad-recovery-keeps-full-recording-gates.md).
 Unknown policies refuse admission. The selected policy is pinned in the plan, generation, run report
@@ -863,8 +871,10 @@ decoder thresholds and temperature fallback. The nonspeech variant suppresses to
 recognition, never by removing retained tokens or segments. All policies receive complete input,
 without trimming, offsets or post-generation native filtering, and retain earlier failed candidates
 in separate immutable directories. VAD evaluates that input and predicts speech spans before
-recognition; it can omit genuine short or low-confidence speech. Native timestamps remain on the
-original timeline. Coverage remains measured against the full recording duration, never detected
+recognition; it can omit genuine short or low-confidence speech. Original-timeline mapping is inferred
+from tagged source and the installed package declaration;
+source/build equivalence of the pinned binary remains unproven. Native timing checks do not prove
+that implementation inference. Coverage remains measured against the full recording duration, never detected
 speech duration. Empty detections and gapped/invalid output retain the existing refusal gates.
 These are unmeasured mitigations; actual setup/candidate qualification and acoustic fidelity remain
 unrun until separately authorized after merge.

@@ -10,7 +10,7 @@ import { assertRecoveryInputs } from "./recovery-manifest.mjs";
 import { evaluationOutputRoot } from "./evaluation-storage.mjs";
 import { VAD_RECOVERY_POLICY } from "./recovery-policy.mjs";
 import { verifyMediaRuntime } from "./setup.mjs";
-import { verifyRecoveryVad } from "./vad.mjs";
+import { verifyRecoveryVad, assertRecoveryVadInputs } from "./vad.mjs";
 import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
 
 export async function publishRecoveryCandidates(
@@ -79,7 +79,11 @@ async function publishCandidates(
       { runtime, signal },
       { signal, signalProcessGroup },
     );
-    const pins = [...runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 })), vad.pin];
+    const pins = [
+      ...runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 })),
+      vad.pin,
+      vad.delegatePin,
+    ];
     if (JSON.stringify(report.runtimePins) !== JSON.stringify(pins))
       throw recoveryFailure("RECOVERY_VAD_UNPREPARED");
   }
@@ -210,7 +214,7 @@ async function publishCandidates(
         throw recoveryFailure("RECOVERY_CANDIDATE_EDITED");
     }
     await assertRecoveryInputs(manifest, signal, { includeMedia: false });
-    if (vad) await assertRecoveryInputs({ protectedInputs: vad.inputs }, signal);
+    if (vad) await assertRecoveryVadInputs(vad, signal);
   };
   for (const outputFile of outputs) {
     signal?.throwIfAborted();
@@ -232,7 +236,7 @@ async function publishCandidates(
     await dependencies.afterOutput?.({ written: progress.written, existing: progress.existing });
   }
   await assertRecoveryInputs(manifest, signal);
-  if (vad) await assertRecoveryInputs({ protectedInputs: vad.inputs }, signal);
+  if (vad) await assertRecoveryVadInputs(vad, signal);
   return {
     ...progress,
     publication: "candidate-editions",

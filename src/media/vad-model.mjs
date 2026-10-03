@@ -1,7 +1,29 @@
 export const VAD_RUNTIME = Object.freeze({
   revision: "whisper.cpp-1.9.2-homebrew-wrapper-1",
+  bytes: 188,
   sha256: "f3aeb2821b159923f5b2066ea80e1395c9676b9c4d98c323a5732f955dd7c1d7",
 });
+export const VAD_DELEGATE = Object.freeze({
+  key: "asr.delegate",
+  executionPath: "/opt/homebrew/bin/whisper-cli",
+  canonicalPath: "/opt/homebrew/Cellar/whisper.cpp/1.9.2/bin/whisper-cli",
+  sha256: "40bca494d49af736058eb3f33cbcebaa020eacf6d0087b623f334946e1ab2128",
+  bytes: 658608,
+  packageVersion: "1.9.2",
+});
+
+export function vadDelegateRuntimePin(delegate = VAD_DELEGATE) {
+  return {
+    key: delegate.key,
+    sha256: delegate.sha256,
+    bytes: delegate.bytes,
+    packageVersion: delegate.packageVersion,
+    versionEvidence: "installed-package-declaration",
+    sourceBuildVerification: "unrun",
+    environmentIdentity: "unclaimed",
+  };
+}
+
 export const VAD_MODEL = Object.freeze({
   key: "asr.vad",
   revision: "9ffd54a1e1ee413ddf265af9913beaf518d1639b",
@@ -49,6 +71,8 @@ export function validVadRuntimePins(pins) {
   return (
     JSON.stringify(pins.find((pin) => pin.key === VAD_MODEL.key)) ===
       JSON.stringify(vadRuntimePin()) &&
+    JSON.stringify(pins.find((pin) => pin.key === VAD_DELEGATE.key)) ===
+      JSON.stringify(vadDelegateRuntimePin()) &&
     pins.find((pin) => pin.key === "asr.runtime")?.sha256 === VAD_RUNTIME.sha256 &&
     Boolean(pins.find((pin) => pin.key === "asr.model"))
   );

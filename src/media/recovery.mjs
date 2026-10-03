@@ -18,7 +18,7 @@ import { runMediaProcess } from "./process.mjs";
 import { assertMediaArtifactPath } from "./storage.mjs";
 import { isGlobalMediaSafetyFailure } from "./errors.mjs";
 import { VAD_RECOVERY_POLICY } from "./recovery-policy.mjs";
-import { verifyRecoveryVad } from "./vad.mjs";
+import { verifyRecoveryVad, assertRecoveryVadInputs } from "./vad.mjs";
 
 const ACTION =
   "Inspect retained private candidates and ownership/safety evidence, then retry plan with unchanged inputs; publication never replaces originals.";
@@ -167,7 +167,7 @@ async function runCandidates(
         { signalProcessGroup, signal: combined },
       );
     report.runtimePins = runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 }));
-    if (runtime.vad) report.runtimePins.push(runtime.vad.pin);
+    if (runtime.vad) report.runtimePins.push(runtime.vad.pin, runtime.vad.delegatePin);
     const boundary = await evaluationOutputRoot(config.media, config.media.mediaRoot, {
       ...(dependencies.volumeRoot ? { volumeRoot: dependencies.volumeRoot } : {}),
     });
@@ -220,8 +220,7 @@ async function runCandidates(
       stages.push(entry);
       try {
         await budgetCheck();
-        if (runtime.vad)
-          await assertRecoveryInputs({ protectedInputs: runtime.vad.inputs }, combined);
+        if (runtime.vad) await assertRecoveryVadInputs(runtime.vad, combined);
         const result = await (dependencies.runProcess ?? runMediaProcess)(command, args, {
           ...options,
           signal: combined,
@@ -300,7 +299,7 @@ async function runCandidates(
       );
     }
     await assertRecoveryInputs(manifest, combined);
-    if (runtime.vad) await assertRecoveryInputs({ protectedInputs: runtime.vad.inputs }, combined);
+    if (runtime.vad) await assertRecoveryVadInputs(runtime.vad, combined);
   } catch (error) {
     failureError = error;
     report.failureCode = safeCode(error);

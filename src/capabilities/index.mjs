@@ -1,4 +1,4 @@
-import { VAD_MODEL, VAD_CONTROLS, VAD_RUNTIME } from "../media/vad-model.mjs";
+import { VAD_MODEL, VAD_CONTROLS, VAD_RUNTIME, VAD_DELEGATE } from "../media/vad-model.mjs";
 import { RECOVERY_POLICY, RECOVERY_POLICIES } from "../media/recovery-policy.mjs";
 
 const livePrerequisites = ["configured-courses", "Owner-approval", "saved-student-session"];
@@ -466,6 +466,7 @@ const commands = [
         policy: "independent-context-nonspeech-vad-v1",
         model: VAD_MODEL,
         runtime: VAD_RUNTIME,
+        delegate: VAD_DELEGATE,
         controls: VAD_CONTROLS,
         prerequisites: ["prepared-base-runtime", "media-queue-lock", "safe-media-admission"],
         receipt: "separate-immutable-companion",
@@ -776,7 +777,7 @@ const commands = [
         },
       },
       limitations: [
-        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Explicit independent-context policies optionally suppress decoder nonspeech tokens during full-input generation; no post-generation filtering or quality claim. The optional VAD policy requires explicit Owner media:setup vad, trusted ASR SHA/help capabilities and companion model receipt before output/ASR; fixed controls and model pin are retained. VAD predicts spans and can omit speech; full-recording coverage still applies. Recovery never installs assets. Native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
+        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Explicit independent-context policies optionally suppress decoder nonspeech tokens during full-input generation; no post-generation filtering or quality claim. The optional VAD policy requires explicit Owner media:setup vad, trusted wrapper and delegated-executable SHA/bytes/canonical resolution/help capabilities and companion receipt before output/ASR; package version is declared metadata, source/build and dynamic-library identity unproven; fixed controls and model pin are retained. VAD predicts spans and can omit speech; full-recording coverage still applies. Recovery never installs assets. Native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
       ],
     },
   ),

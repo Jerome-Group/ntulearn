@@ -4,7 +4,7 @@ import { readFile, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { recoveryFixture, incompleteRecoveryFixture } from "./fixtures/media-recovery.mjs";
 import { recoverTranscriptSources } from "../src/media/recovery.mjs";
-import { VAD_RUNTIME, vadRuntimePin } from "../src/media/vad-model.mjs";
+import { VAD_RUNTIME, vadRuntimePin, vadDelegateRuntimePin } from "../src/media/vad-model.mjs";
 import { transcriptCatalogue } from "../src/media/catalogue.mjs";
 
 async function published(t, factory = recoveryFixture, policy) {
@@ -23,6 +23,7 @@ async function published(t, factory = recoveryFixture, policy) {
     f.dependencies.verifyVad = async () => ({
       path: join(f.root, "fixture-vad.bin"),
       pin: vadRuntimePin(),
+      delegatePin: vadDelegateRuntimePin(),
       inputs: [],
     });
   }
@@ -171,6 +172,11 @@ for (const factory of [recoveryFixture, incompleteRecoveryFixture])
       "revision",
       "bytes",
       "duplicate",
+      "delegate-missing",
+      "delegate-sha",
+      "delegate-bytes",
+      "delegate-version",
+      "delegate-environment",
     ]) {
       const report = globalThis.structuredClone(originalReport),
         provenance = globalThis.structuredClone(originalProvenance);
@@ -184,6 +190,13 @@ for (const factory of [recoveryFixture, incompleteRecoveryFixture])
       if (kind === "revision") pin.revision = "foreign";
       if (kind === "bytes") pin.bytes++;
       if (kind === "duplicate") report.runtimePins.push({ ...pin });
+      const delegate = report.runtimePins.find((pin) => pin.key === "asr.delegate");
+      if (kind === "delegate-missing")
+        report.runtimePins = report.runtimePins.filter((pin) => pin.key !== "asr.delegate");
+      if (kind === "delegate-sha") delegate.sha256 = "0".repeat(64);
+      if (kind === "delegate-bytes") delegate.bytes++;
+      if (kind === "delegate-version") delegate.packageVersion = "foreign";
+      if (kind === "delegate-environment") delegate.environmentIdentity = "verified";
       provenance.runtimePins = report.runtimePins;
       await writeFile(reportPath, JSON.stringify(report));
       await writeFile(provenancePath, JSON.stringify(provenance));

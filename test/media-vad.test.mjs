@@ -2,13 +2,31 @@ import { Buffer } from "node:buffer";
 import { setTimeout } from "node:timers";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+  realpath,
+  symlink,
+  unlink,
+  chmod,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setupRecoveryVad } from "../src/media/vad-setup.mjs";
+import { createRuntimeCommandRunner } from "../src/media/runtime-command.mjs";
 import { mediaSafetyPath } from "../src/media/safety.mjs";
 import { historicalDigest } from "../src/media/historical-files.mjs";
-import { verifyRecoveryVad, vadPaths, VAD_MODEL, VAD_RUNTIME } from "../src/media/vad.mjs";
+import {
+  verifyRecoveryVad,
+  verifyVadCapabilities,
+  assertRecoveryVadInputs,
+  vadPaths,
+  VAD_MODEL,
+  VAD_RUNTIME,
+} from "../src/media/vad.mjs";
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ntulearn-vad-")));
@@ -25,9 +43,26 @@ async function fixture(t) {
   await writeFile(join(runtime.root, "manifest.json"), "base evidence");
   const body = Buffer.from("synthetic vad model"),
     spec = { ...VAD_MODEL, sha256: historicalDigest(body), bytes: body.length };
-  const executable = Buffer.from("synthetic ASR executable");
+  const delegatePath = join(root, "delegate-bin"),
+    executionPath = join(root, "delegate-link");
+  const delegateBytes = Buffer.from("synthetic delegated ASR binary");
+  await writeFile(delegatePath, delegateBytes);
+  await symlink(delegatePath, executionPath);
+  const delegateSpec = {
+    key: "asr.delegate",
+    executionPath,
+    canonicalPath: delegatePath,
+    sha256: historicalDigest(delegateBytes),
+    bytes: delegateBytes.length,
+    packageVersion: "fixture",
+  };
+  const executable = Buffer.from(`#!/bin/sh\nset -eu\nexec ${executionPath} "$@"\n`);
   await writeFile(join(runtime.root, "bin/whisper"), executable);
-  const runtimePin = { ...VAD_RUNTIME, sha256: historicalDigest(executable) };
+  const runtimePin = {
+    ...VAD_RUNTIME,
+    sha256: historicalDigest(executable),
+    bytes: executable.length,
+  };
   const verified = {
     runtime,
     artifacts: [
@@ -53,6 +88,7 @@ async function fixture(t) {
     deps = {
       spec,
       runtimePin,
+      delegateSpec,
       verifyRuntime: async () => verified,
       volumeRoot: root,
       createCapacity: async () => ({ check: async (r) => requests.push(r) }),
@@ -71,7 +107,17 @@ async function fixture(t) {
         }),
       }),
     };
-  return { root, config, verified, body, deps, requests, paths: vadPaths(runtime) };
+  return {
+    root,
+    config,
+    verified,
+    body,
+    deps,
+    requests,
+    delegatePath,
+    executionPath,
+    paths: vadPaths(runtime),
+  };
 }
 
 test("explicit optional setup keeps base evidence, repeats matching proof, refuses unknown occupied bytes", async (t) => {
@@ -340,4 +386,129 @@ test("optional setup preserves unconfirmed cleanup subtype when the durable barr
   assert.match(result.checks[0].action, /retain external containment/);
   assert.doesNotMatch(JSON.stringify(result), /private fixture|secret|occupied-parent/);
   assert.equal(await readFile(occupied, "utf8"), "preserved fixture file");
+});
+
+test("launched synthetic wrapper cannot hide mutated delegate bytes behind identical capability flags", async (t) => {
+  const f = await fixture(t);
+  const help = (await f.deps.commandRunner()).stdout;
+  const script = Buffer.from(
+    `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(help)});\n`,
+  );
+  await writeFile(f.delegatePath, script);
+  await chmod(f.delegatePath, 0o700);
+  await chmod(join(f.verified.runtime.root, "bin/whisper"), 0o700);
+  const deps = {
+    ...f.deps,
+    delegateSpec: {
+      ...f.deps.delegateSpec,
+      sha256: historicalDigest(script),
+      bytes: script.length,
+    },
+    commandRunner: createRuntimeCommandRunner({ commandTimeoutMs: 1000 }),
+  };
+  const proof = await verifyVadCapabilities(f.verified, undefined, deps);
+  assert.equal(proof.delegate.input.sha256, historicalDigest(script));
+  await writeFile(
+    f.delegatePath,
+    Buffer.concat([script, Buffer.from("// changed build with same help\n")]),
+  );
+  let probes = 0;
+  await assert.rejects(
+    verifyVadCapabilities(f.verified, undefined, {
+      ...deps,
+      commandRunner: async (...args) => {
+        probes++;
+        return deps.commandRunner(...args);
+      },
+    }),
+  );
+  assert.equal(probes, 0);
+});
+
+for (const kind of ["mutate", "retarget"])
+  test(`delegate ${kind} during capabilities refuses despite unchanged help`, async (t) => {
+    const f = await fixture(t),
+      help = f.deps.commandRunner;
+    await assert.rejects(
+      verifyVadCapabilities(f.verified, undefined, {
+        ...f.deps,
+        commandRunner: async (...args) => {
+          if (kind === "mutate")
+            await writeFile(f.delegatePath, Buffer.alloc(f.deps.delegateSpec.bytes));
+          else {
+            const copy = join(f.root, "delegate-copy");
+            await writeFile(copy, await readFile(f.delegatePath));
+            await unlink(f.executionPath);
+            await symlink(copy, f.executionPath);
+          }
+          return help(...args);
+        },
+      }),
+    );
+  });
+
+test("prepared canonical delegate target refuses same-byte retarget during later admission and unchanged setup repeat", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await setupRecoveryVad({ config: f.config }, f.deps)).status, "passed");
+  const proof = await verifyRecoveryVad({ runtime: f.verified }, f.deps);
+  const beforeReceipt = await readFile(f.paths.receipt);
+  const copy = join(f.root, "same-byte-delegate");
+  await writeFile(copy, await readFile(f.delegatePath));
+  await unlink(f.executionPath);
+  await symlink(copy, f.executionPath);
+  await assert.rejects(assertRecoveryVadInputs(proof), { code: "RECOVERY_VAD_UNPREPARED" });
+  assert.equal((await setupRecoveryVad({ config: f.config }, f.deps)).status, "blocked");
+  assert.deepEqual(await readFile(f.paths.receipt), beforeReceipt);
+});
+
+test("unknown wrapper execution target refuses before capability execution or optional writes", async (t) => {
+  const f = await fixture(t),
+    path = join(f.verified.runtime.root, "bin/whisper");
+  const body = Buffer.from('#!/bin/sh\nexec /foreign/fixture "$@"\n');
+  await writeFile(path, body);
+  let probes = 0;
+  const runtimePin = { ...f.deps.runtimePin, sha256: historicalDigest(body), bytes: body.length };
+  f.verified.artifacts[0] = {
+    ...f.verified.artifacts[0],
+    sha256: runtimePin.sha256,
+    bytes: runtimePin.bytes,
+  };
+  assert.equal(
+    (
+      await setupRecoveryVad(
+        { config: f.config },
+        {
+          ...f.deps,
+          runtimePin,
+          commandRunner: async () => {
+            probes++;
+            return { code: 0 };
+          },
+        },
+      )
+    ).status,
+    "blocked",
+  );
+  assert.equal(probes, 0);
+  await assert.rejects(readFile(f.paths.journal), { code: "ENOENT" });
+});
+
+test("foreign delegated resolution refuses before reading unexpected bytes or probing capabilities", async (t) => {
+  const f = await fixture(t),
+    foreign = join(f.root, "foreign-target");
+  await writeFile(foreign, Buffer.alloc(f.deps.delegateSpec.bytes + 1));
+  await unlink(f.executionPath);
+  await symlink(foreign, f.executionPath);
+  let probes = 0;
+  await assert.rejects(
+    verifyVadCapabilities(f.verified, undefined, {
+      ...f.deps,
+      commandRunner: async () => {
+        probes++;
+        return { code: 0 };
+      },
+    }),
+    { code: "RECOVERY_VAD_UNPREPARED" },
+  );
+  assert.equal(probes, 0);
 });

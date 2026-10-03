@@ -1,8 +1,18 @@
+import { realpath } from "node:fs/promises";
+import { withEvaluationRead } from "./evaluation-read.mjs";
+import { assertRecoveryInputs } from "./recovery-manifest.mjs";
 import { join } from "node:path";
 import { createRuntimeCommandRunner } from "./runtime-command.mjs";
 import { recoveryFile, recoveryFailure } from "./recovery-files.mjs";
 
-import { VAD_RUNTIME, VAD_MODEL, VAD_CONTROLS, vadRuntimePin } from "./vad-model.mjs";
+import {
+  VAD_RUNTIME,
+  VAD_MODEL,
+  VAD_CONTROLS,
+  VAD_DELEGATE,
+  vadRuntimePin,
+  vadDelegateRuntimePin,
+} from "./vad-model.mjs";
 export { VAD_RUNTIME, VAD_MODEL, VAD_CONTROLS } from "./vad-model.mjs";
 
 export const vadPaths = (runtime) => ({
@@ -11,13 +21,18 @@ export const vadPaths = (runtime) => ({
   receipt: join(runtime.metadata, "recovery-vad-prepared.json"),
 });
 const fail = () => recoveryFailure("RECOVERY_VAD_UNPREPARED");
-export const vadPreparationBody = (runtime, spec) =>
+export const vadPreparationBody = (runtime, spec, delegate) =>
   JSON.stringify(
     {
       schemaVersion: 1,
       purpose: "optional-recovery-vad",
       model: { ...spec, path: vadPaths(runtime).model },
       runtime: VAD_RUNTIME,
+      delegate: {
+        executionPath: delegate.executionPath,
+        canonicalPath: delegate.canonicalPath,
+        ...delegate.pin,
+      },
     },
     null,
     2,
@@ -37,12 +52,32 @@ export async function verifyVadCapabilities(runtime, signal, dependencies) {
     pin?.sha256 !== expected.sha256 ||
     pin?.revision !== expected.revision ||
     !Number.isSafeInteger(pin.bytes) ||
-    pin.bytes <= 0
+    pin.bytes !== expected.bytes
   )
     throw fail();
   const command = join(runtime.runtime.root, pin.path);
-  const before = await recoveryFile(command, { maximumBytes: pin.bytes, signal, retain: false });
+  const before = await recoveryFile(command, { maximumBytes: pin.bytes, signal, retain: true });
   if (before.sha256 !== expected.sha256 || before.bytes !== pin.bytes) throw fail();
+  const delegated = dependencies.delegateSpec ?? VAD_DELEGATE;
+  const matches = [...before.content.toString("utf8").matchAll(/^exec (\/[^\s"'`]+) "\$@"$/gm)];
+  if (matches.length !== 1 || matches[0][1] !== delegated.executionPath) throw fail();
+  const canonicalPath = await withEvaluationRead(() => realpath(delegated.executionPath), {
+    signal,
+  });
+  if (canonicalPath !== delegated.canonicalPath) throw fail();
+  const binary = await recoveryFile(canonicalPath, {
+    maximumBytes: delegated.bytes,
+    signal,
+    retain: false,
+  });
+  if (binary.sha256 !== delegated.sha256 || binary.bytes !== delegated.bytes) throw fail();
+  const delegate = {
+    executionPath: delegated.executionPath,
+    canonicalPath,
+    pin: vadDelegateRuntimePin(delegated),
+    input: { path: binary.path, sha256: binary.sha256, bytes: binary.bytes },
+  };
+  await assertVadDelegateResolution(delegate, signal);
   const help = await (dependencies.commandRunner ?? createRuntimeCommandRunner(dependencies))(
     command,
     ["--help"],
@@ -66,14 +101,16 @@ export async function verifyVadCapabilities(runtime, signal, dependencies) {
     throw fail();
   const file = await recoveryFile(command, { maximumBytes: pin.bytes, signal, retain: false });
   if (file.sha256 !== expected.sha256 || file.bytes !== pin.bytes) throw fail();
-  return { path: file.path, sha256: file.sha256, bytes: file.bytes };
+  await assertRecoveryInputs({ protectedInputs: [delegate.input] }, signal);
+  await assertVadDelegateResolution(delegate, signal);
+  return { path: file.path, sha256: file.sha256, bytes: file.bytes, delegate };
 }
 export async function verifyRecoveryVad({ runtime, signal }, dependencies = {}) {
   const spec = dependencies.spec ?? VAD_MODEL;
   const executable = await verifyVadCapabilities(runtime, signal, dependencies);
   const paths = vadPaths(runtime.runtime);
-  const expected = vadPreparationBody(runtime.runtime, spec);
-  const inputs = [executable];
+  const expected = vadPreparationBody(runtime.runtime, spec, executable.delegate);
+  const inputs = [executable, executable.delegate.input];
   for (const path of [paths.journal, paths.receipt]) {
     const file = await optionalVadFile(path, signal);
     if (!file) throw fail();
@@ -86,6 +123,19 @@ export async function verifyRecoveryVad({ runtime, signal }, dependencies = {}) 
   return {
     path: paths.model,
     pin: vadRuntimePin(spec),
+    delegatePin: executable.delegate.pin,
+    delegate: executable.delegate,
     inputs: [...inputs, { path: file.path, sha256: file.sha256, bytes: file.bytes }],
   };
+}
+
+async function assertVadDelegateResolution(delegate, signal) {
+  const current = await withEvaluationRead(() => realpath(delegate.executionPath), { signal });
+  if (current !== delegate.canonicalPath) throw fail();
+}
+
+export async function assertRecoveryVadInputs(vad, signal) {
+  if (vad.delegate) await assertVadDelegateResolution(vad.delegate, signal);
+  await assertRecoveryInputs({ protectedInputs: vad.inputs }, signal);
+  if (vad.delegate) await assertVadDelegateResolution(vad.delegate, signal);
 }

@@ -7,11 +7,11 @@ import { historicalReads, historicalDigest, publishHistoricalFile } from "./hist
 import { withMediaQueueLock } from "./lock.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
 import { assertMediaSafetyAdmission, persistMediaSafetyBarrier } from "./safety.mjs";
-import { assertRecoveryInputs } from "./recovery-manifest.mjs";
 import { unconfirmedMediaCleanupCode } from "./errors.mjs";
 import { readMediaQueue } from "./queue.mjs";
 import { VAD_MODEL } from "./vad-model.mjs";
 import {
+  assertRecoveryVadInputs,
   vadPaths,
   vadPreparationBody,
   optionalVadFile,
@@ -80,7 +80,7 @@ export async function setupRecoveryVad({ config, signal, signalProcessGroup }, d
           const executable = await verifyVadCapabilities(runtime, signal, options);
           const spec = dependencies.spec ?? VAD_MODEL,
             paths = vadPaths(runtime.runtime),
-            expected = vadPreparationBody(runtime.runtime, spec);
+            expected = vadPreparationBody(runtime.runtime, spec, executable.delegate);
           const journal = await optionalVadFile(paths.journal, signal),
             receipt = await optionalVadFile(paths.receipt, signal),
             model = await optionalVadFile(paths.model, signal, spec.bytes);
@@ -98,11 +98,13 @@ export async function setupRecoveryVad({ config, signal, signalProcessGroup }, d
           const reads = historicalReads({ signal });
           const inputs = [
             executable,
+            executable.delegate.input,
             ...[journal, receipt, model]
               .filter(Boolean)
               .map(({ path, sha256, bytes }) => ({ path, sha256, bytes })),
           ];
-          const recheck = () => assertRecoveryInputs({ protectedInputs: inputs }, signal);
+          const recheck = () =>
+            assertRecoveryVadInputs({ inputs, delegate: executable.delegate }, signal);
           const put = async (path, body) => {
             await recheck();
             const result = await publishHistoricalFile(path, Buffer.from(body), {
@@ -181,7 +183,7 @@ export async function setupRecoveryVad({ config, signal, signalProcessGroup }, d
         ? "Owner: retain external containment; restore durable safety evidence/storage and verify owned process/browser cessation before any retry."
         : cleanupCode || admissionBlocked
           ? "Owner: retain external containment, verify owned process/browser cessation and inspect preserved evidence before explicitly clearing safety barriers and queue safety markers; do not retry setup automatically."
-          : "Inspect optional model/receipt and restore runtime/reserve; repeat npm run media:setup -- vad unchanged.";
+          : "Inspect optional model/receipt and restore the pinned wrapper/delegate and reserve; repeat npm run media:setup -- vad unchanged.";
     return capabilityResult(
       "media:setup:vad",
       [
