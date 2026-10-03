@@ -4,12 +4,17 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout } from "node:timers";
 import test from "node:test";
 import { EPHEMERAL_MEDIA_JOB_FIELDS, mediaQueuePath } from "../src/media/queue.mjs";
 import { withMediaQueueLock } from "../src/media/lock.mjs";
 import { assertMediaSafetyAdmission, mediaSafetyPath } from "../src/media/safety.mjs";
 import { writeAtomically } from "../src/atomic.mjs";
-import { retryMediaJobs, MEDIA_RETRY_CONFIRMATION } from "../src/media/retry.mjs";
+import {
+  retryMediaJobs,
+  readRetryQueueMetadata,
+  MEDIA_RETRY_CONFIRMATION,
+} from "../src/media/retry.mjs";
 
 async function fixture(context) {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-retry-"));
@@ -110,6 +115,217 @@ test("plan writes nothing; confirmed apply preserves history and originals; repe
     JSON.stringify(applied),
     /private fixture|entry:fixture|_1_1|prior failure|original source/,
   );
+});
+
+test("realistic large queue metadata does not spend one transcript address budget", async (context) => {
+  const f = await fixture(context);
+  await f.save(
+    Array.from({ length: 600 }, (_, index) => ({
+      ...f.job,
+      recordingId: `media-gallery:_1_1:fixture-${index}`,
+      artifacts: {
+        video: "/anonymous/media/lecture.mp4",
+        audio: "/anonymous/media/lecture.wav",
+        rawTranscript: "/anonymous/media/lecture.json",
+        formattedTranscript: "/anonymous/course/lecture.md",
+      },
+    })),
+  );
+  const before = await readFile(f.path);
+  const result = await retryMediaJobs({ ...f.options, mode: "plan" });
+  assert.equal(result.status, "passed");
+  assert.equal(result.evidence.selected, 600);
+  assert.deepEqual(await readFile(f.path), before);
+});
+
+test("raw duplicate unsafe strings and credential keys remain refused after JSON overwrite", async (context) => {
+  const f = await fixture(context);
+  const safe = (await readFile(f.path)).toString();
+  for (const extra of [
+    '"note":"https://private.invalid/?token=secret","note":"safe"',
+    '"note":"signature=secret","note":0',
+    '"token":"secret","token":null',
+    '"access_token":"secret","access_token":false',
+    '"requestHeaders":{"Authorization":"secret"},"requestHeaders":{}',
+  ]) {
+    await writeFile(f.path, safe.replace("{", `{${extra},`));
+    const before = await readFile(f.path);
+    const result = await retryMediaJobs({ ...f.options, mode: "plan" });
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.evidence.changed, 0);
+    assert.doesNotMatch(JSON.stringify(result), /private.invalid|secret|Authorization/);
+    assert.deepEqual(await readFile(f.path), before);
+  }
+});
+
+test("large harmless metadata cannot override incomplete discovery refusal", async (context) => {
+  const f = await fixture(context);
+  await f.save([f.job], { complete: false });
+  const result = await retryMediaJobs({ ...f.options, mode: "plan" });
+  assert.equal(result.checks[0].code, "MEDIA_RETRY_QUEUE_UNAVAILABLE");
+  assert.equal(result.evidence.changed, 0);
+});
+
+for (const stage of ["open", "metadata", "read", "close", "close-failed"]) {
+  test(`retry retains actionable cleanup and restart refusal for ${stage}`, async (context) => {
+    const f = await fixture(context);
+    const body = await readFile(f.path);
+    let release,
+      reads = 0,
+      metadata = 0,
+      closes = 0;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    context.after(() => release());
+    const info = { isFile: () => true, size: body.length, mtimeMs: 1 };
+    const handle = {
+      stat: async () => {
+        metadata++;
+        if (stage === "metadata") await pending;
+        return info;
+      },
+      read: async (buffer) => {
+        reads++;
+        if (stage === "read") await pending;
+        if (reads > 1) return { bytesRead: 0 };
+        body.copy(buffer);
+        return { bytesRead: body.length };
+      },
+      close: async () => {
+        closes++;
+        if (stage === "close") await pending;
+        if (stage === "close-failed") throw Error("private.invalid signature=secret");
+      },
+    };
+    const result = await retryMediaJobs(
+      { ...f.options, mode: "plan" },
+      {
+        read: (path) =>
+          readRetryQueueMetadata(path, {
+            timeoutMs: 20,
+            openQueue: async () => {
+              if (stage === "open") await pending;
+              return handle;
+            },
+          }),
+      },
+    );
+    assert.equal(result.checks[0].code, "MEDIA_FILE_CLEANUP");
+    assert.equal(result.evidence.cleanup, "unconfirmed");
+    assert.equal(result.evidence.safetyUnconfirmed, true);
+    assert.equal(result.evidence.containmentRequired, true);
+    assert.equal(result.evidence.barrierPersistence, "passed");
+    assert.match(result.checks[0].action, /Retain external containment/);
+    assert.doesNotMatch(JSON.stringify(result), /private.invalid|signature=secret/);
+    assert.deepEqual(await readFile(f.path), body);
+    const barrier = JSON.parse(await readFile(mediaSafetyPath(f.config.statePath)));
+    assert.equal(barrier.code, "MEDIA_FILE_CLEANUP");
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(closes, 1);
+    assert.equal(
+      stage === "open"
+        ? metadata
+        : stage === "metadata"
+          ? reads
+          : stage === "read"
+            ? metadata
+            : closes,
+      stage === "open" || stage === "metadata" ? 0 : 1,
+    );
+    const program = `import { retryMediaJobs } from ${JSON.stringify(new URL("../src/media/retry.mjs", import.meta.url).href)}; const result = await retryMediaJobs(${JSON.stringify({ ...f.options, mode: "plan" })}); process.stdout.write(JSON.stringify(result)); process.exitCode = result.exitCode;`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 64 * 1024,
+    });
+    assert.equal(child.status, 2);
+    assert.equal(JSON.parse(child.stdout).checks[0].code, "MEDIA_RETRY_SAFETY_BARRIER");
+    assert.equal(child.stderr, "");
+  });
+}
+
+test("settled expired retry read stays red and admits no later metadata I/O", async (context) => {
+  const f = await fixture(context);
+  let reads = 0,
+    closes = 0;
+  const result = await retryMediaJobs(
+    { ...f.options, mode: "plan" },
+    {
+      read: (path) =>
+        readRetryQueueMetadata(path, {
+          timeoutMs: 20,
+          openQueue: async () => ({
+            stat: async () => {
+              await new Promise((resolve) => setTimeout(resolve, 30));
+              return { isFile: () => true, size: 1, mtimeMs: 1 };
+            },
+            read: async () => {
+              reads++;
+              return { bytesRead: 0 };
+            },
+            close: async () => {
+              closes++;
+            },
+          }),
+        }),
+    },
+  );
+  assert.notEqual(result.status, "passed");
+  assert.equal(result.checks[0].code, "MEDIA_RETRY_READ_TIMEOUT");
+  assert.equal(result.evidence.changed, 0);
+  assert.equal(reads, 0);
+  assert.equal(closes, 1);
+  assert.equal(result.evidence.containmentRequired, undefined);
+});
+
+test("failed cleanup barrier persistence remains explicit external containment", async (context) => {
+  const f = await fixture(context);
+  const result = await retryMediaJobs(
+    { ...f.options, mode: "plan" },
+    {
+      read: (path) =>
+        readRetryQueueMetadata(path, {
+          openQueue: async () => ({
+            stat: async () => ({ isFile: () => true, size: 0, mtimeMs: 1 }),
+            read: async () => ({ bytesRead: 0 }),
+            close: async () => {
+              throw Error("secret close failure");
+            },
+          }),
+        }),
+      persistBarrier: async ({ error }) => {
+        throw Object.assign(Error("private barrier path", { cause: error }), {
+          code: "MEDIA_SAFETY_BARRIER_WRITE",
+        });
+      },
+    },
+  );
+  assert.equal(result.checks[0].code, "MEDIA_SAFETY_BARRIER_WRITE");
+  assert.equal(result.evidence.barrierPersistence, "failed");
+  assert.equal(result.evidence.containmentRequired, true);
+  assert.equal(result.evidence.cleanupCode, "MEDIA_FILE_CLEANUP");
+  assert.doesNotMatch(JSON.stringify(result), /secret close|private barrier path/);
+});
+
+test("retry raw metadata retains byte, scalar-count and nesting limits", async (context) => {
+  const f = await fixture(context);
+  const safe = (await readFile(f.path)).toString();
+  for (const extra of [
+    `"note":${JSON.stringify("x".repeat(4 * 1024 * 1024))}`,
+    `"note":[${Array(100001).fill("0").join(",")}]`,
+    `"note":${"[".repeat(17)}0${"]".repeat(17)}`,
+    '"note":1e999,"note":0',
+    '"access\\u005ftoken":"secret","access_token":null',
+  ]) {
+    await writeFile(f.path, safe.replace("{", `{${extra},`));
+    const before = await readFile(f.path);
+    const result = await retryMediaJobs({ ...f.options, mode: "plan" });
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.evidence.changed, 0);
+    assert.deepEqual(await readFile(f.path), before);
+  }
 });
 
 test("explicit selectors reject unresolved, excluded, withdrawn and completed targets", async (context) => {

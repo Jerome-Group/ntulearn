@@ -722,7 +722,7 @@ const commands = [
     ],
     {
       reads: ["media-queues", "private-media-safety-evidence"],
-      writes: ["retry-permission-and-status-for-apply"],
+      writes: ["retry-permission-and-status-for-apply", "cleanup-safety-barrier-on-uncertainty"],
     },
     {
       arguments: ["<plan|apply>", "<course|all>", "<failed|recordingId>", "[RETRY_FAILED_MEDIA]"],
@@ -730,18 +730,25 @@ const commands = [
       output: "capability-result-v1",
       exitCodes: offlineCodes,
       operations: {
-        plan: { network: false, browser: false, ownerOnly: false, writes: [], runtime: false },
+        plan: {
+          network: false,
+          browser: false,
+          ownerOnly: false,
+          writes: ["cleanup-safety-barrier-on-uncertainty"],
+          runtime: false,
+        },
         apply: {
           network: false,
           browser: false,
           ownerOnly: true,
-          writes: ["media-queues", "course-media-status"],
+          writes: ["media-queues", "course-media-status", "cleanup-safety-barrier-on-uncertainty"],
           runtime: false,
           prerequisites: ["Owner-retry-authorization", "literal-confirmation", "media-queue-lock"],
         },
       },
       limitations: [
         "Permission to retry only; no acquisition, transcription or completeness verdict is changed. Failure history and existing artifacts remain. Cleanup safety barriers and markers cannot be cleared.",
+        "Raw queue JSON keys and scalar values, including overwritten duplicate tokens, retain bounded metadata/session-address inspection without aggregating one transcript's address budget. Queue reads retain4MiB/100000-value/depth16 bounds and5s logical deadline with positive owned I/O/close settlement. Unconfirmed cleanup attempts a durable admission barrier even in plan; failed barrier storage requires retained external containment, never automatic clearing or a physical cancellation claim.",
       ],
     },
   ),
