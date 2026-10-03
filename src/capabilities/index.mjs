@@ -261,6 +261,7 @@ const routes = {
       "src/media/recovery-files.mjs",
       "src/media/recovery-policy.mjs",
       "src/media/recovery-manifest.mjs",
+      "src/media/recovery-authority.mjs",
       "src/media/recovery-candidate.mjs",
       "src/media/recovery-publication.mjs",
       "src/media/production-local.mjs",
@@ -269,6 +270,7 @@ const routes = {
     [
       "test/media-recovery.test.mjs",
       "test/media-recovery-manifest.test.mjs",
+      "test/media-recovery-incomplete.test.mjs",
       "test/media-recovery-candidate.test.mjs",
       "test/media-recovery-policy.test.mjs",
       "test/media-recovery-files.test.mjs",
@@ -555,6 +557,26 @@ const commands = [
         schemaVersion: 1,
         policy: "independent-context-v1",
         maximumRecordings: 64,
+        authorities: {
+          default: "metadata-owned-original",
+          "state-owned-unformatted": {
+            fields: [
+              "authority.kind",
+              "authority.state.path",
+              "authority.state.sha256",
+              "authority.queue.path",
+              "authority.queue.sha256",
+              "authority.metadata.path",
+              "authority.metadata.absent",
+              "authority.original.path",
+              "authority.original.absent",
+            ],
+            fallback: false,
+            queueReadinessWrites: false,
+            limits:
+              "Enabled course and uniquely owned raw/state/current queue/media required; metadata and original derivative must be absent with existing canonical parent identities. Hashes/absence rechecked under lock; no atomic compare-and-swap guarantee against every external editor.",
+          },
+        },
         recordingFields: [
           "courseKey",
           "recordingId",

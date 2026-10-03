@@ -779,6 +779,30 @@ Every recording has `courseKey`, `recordingId`, `source: {path, sha256}` and `me
 Paths are absolute or relative to the manifest directory, and resolve to canonical physical files.
 Sources must be `transcript.raw.json` in the recording's canonical store; current queue, metadata,
 state and original derivative digests must establish unique course/recording/media ownership.
+An incomplete recording can opt in per entry with `authority` below. This requires an enabled
+course, a uniquely recognized current queue claim, exact state/queue SHA-256 pins, and matching
+raw/source and retained media ownership. It never falls back from missing or edited completed-source
+evidence. Metadata and the expected derivative must both be absent, without any formatted digest or
+artifact claim; an occupied derivative remains protected even without ownership metadata.
+
+```json
+{
+  "kind": "state-owned-unformatted",
+  "state": { "path": "/absolute/private/transcript.state.json", "sha256": "<exact SHA-256>" },
+  "queue": { "path": "/absolute/private/course-queue.json", "sha256": "<exact SHA-256>" },
+  "metadata": { "path": "/absolute/private/transcript.metadata.json", "absent": true },
+  "original": { "path": "/absolute/course/lecture.transcript.md", "absent": true }
+}
+```
+
+Absence inputs pin the canonical existing immediate parent directory identity. Missing parents,
+aliases, symlinks, appeared files and replaced parents refuse admission. Under the existing queue
+lock, hashes and absences are checked before/after execution and around each exclusive publication.
+These checks cannot provide an atomic compare-and-swap against every concurrent external editor.
+Fresh editions retain source/media and record the original derivative as absent; recovery writes
+neither the expected original path nor queue/status readiness, and never clears review flags.
+See [ADR-0021](docs/adr/0021-incomplete-source-recovery-pins-absence-and-current-ownership.md).
+
 Budgets are positive integers: `maxRecordingSeconds` (maximum 28,800), `maxInputBytes` and
 `maxOutputBytes` (each maximum 34,359,738,368), `jobTimeoutMs` (maximum 86,400,000) and
 `processTimeoutMs` (maximum 28,800,000 and no greater than the job timeout). Up to 64 recordings

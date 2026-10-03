@@ -7,6 +7,13 @@ import { recordingDisposition } from "./disposition.mjs";
 import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
 import { inspectHistoricalSource } from "./historical-format.mjs";
 import { recoveryFile, recoveryFailure } from "./recovery-files.mjs";
+import {
+  recoveryAuthorityKind,
+  INCOMPLETE_RECOVERY_AUTHORITY,
+  assertIncompleteRecoveryAuthority,
+  pinRecoveryAbsence,
+  assertRecoveryAbsences,
+} from "./recovery-authority.mjs";
 import { RECOVERY_POLICY } from "./recovery-policy.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
 import { mediaRecordingStatus, mediaRecordingStatusPath } from "./status.mjs";
@@ -47,6 +54,8 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   const store = await realpath(config.media.mediaRoot);
   const courses = new Map(),
     jobs = [],
+    queues = new Map(),
+    protectedAbsences = [],
     protectedInputs = [fingerprint(manifestFile)];
   for (const course of config.courses) {
     const destination = await realpath(course.destination);
@@ -55,6 +64,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
     const queuePath = mediaQueuePath(config.statePath, course.key);
     const queueFile = await recoveryFile(queuePath, { signal });
     protectedInputs.push(fingerprint(queueFile));
+    queues.set(course.key, queueFile);
     const loaded = await readMediaQueue({
       statePath: config.statePath,
       courseKey: course.key,
@@ -69,6 +79,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   for (const [index, entry] of manifest.recordings.entries()) {
     safeNativeTranscriptBody(entry);
     const course = courses.get(entry.courseKey);
+    const authority = recoveryAuthorityKind(entry);
     if (
       !course ||
       typeof entry.recordingId !== "string" ||
@@ -102,26 +113,51 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
     if (source.sha256 !== entry.source.sha256) throw recoveryFailure("RECOVERY_INPUT_CHANGED");
     const inspected = inspectHistoricalSource(source.content);
     if (!inspected.valid || !inspected.eligible) throw recoveryFailure("RECOVERY_SOURCE_INVALID");
-    const metadata = await recoveryFile(join(recordingRoot, "transcript.metadata.json"), {
-      signal,
-    });
     const state = await recoveryFile(join(recordingRoot, "transcript.state.json"), { signal });
-    const proof = JSON.parse(metadata.content.toString("utf8")),
-      checkpoint = JSON.parse(state.content.toString("utf8"));
-    safeNativeTranscriptBody(proof);
+    const checkpoint = JSON.parse(state.content.toString("utf8"));
     safeNativeTranscriptBody(checkpoint);
-    if (
-      proof.recordingId !== entry.recordingId ||
-      checkpoint.recordingId !== entry.recordingId ||
-      proof.sourceSha256 !== source.sha256 ||
-      checkpoint.sourceSha256 !== source.sha256
-    )
+    if (checkpoint.recordingId !== entry.recordingId || checkpoint.sourceSha256 !== source.sha256)
       throw recoveryFailure("RECOVERY_SOURCE_UNOWNED");
+    let metadata, proof;
+    if (authority === INCOMPLETE_RECOVERY_AUTHORITY) {
+      if (
+        typeof job.placement?.destination !== "string" ||
+        (await realpath(job.placement.destination)) !== course.destination
+      )
+        throw recoveryFailure("RECOVERY_ASSOCIATION_INVALID");
+      assertIncompleteRecoveryAuthority({
+        entry,
+        manifestPath: path,
+        course,
+        job,
+        checkpoint,
+        state,
+        queue: queues.get(course.key),
+        source,
+      });
+      metadata = await pinRecoveryAbsence(join(recordingRoot, "transcript.metadata.json"), {
+        declared: entry.authority.metadata,
+        manifestPath: path,
+        signal,
+      });
+      proof = checkpoint;
+    } else {
+      metadata = await recoveryFile(join(recordingRoot, "transcript.metadata.json"), { signal });
+      proof = JSON.parse(metadata.content.toString("utf8"));
+      safeNativeTranscriptBody(proof);
+      if (proof.recordingId !== entry.recordingId || proof.sourceSha256 !== source.sha256)
+        throw recoveryFailure("RECOVERY_SOURCE_UNOWNED");
+    }
     if (!entry.media || typeof entry.media.path !== "string" || !SHA.test(entry.media.sha256 ?? ""))
       throw recoveryFailure("RECOVERY_MEDIA_INVALID");
     const mediaPath = resolve(dirname(path), entry.media.path);
     const declared = await ownedMediaPaths(proof.media);
     const checkpointPaths = await ownedMediaPaths(checkpoint.media);
+    if (
+      authority === INCOMPLETE_RECOVERY_AUTHORITY &&
+      !(await ownedMediaPaths(job.media)).includes(mediaPath)
+    )
+      throw recoveryFailure("RECOVERY_MEDIA_UNOWNED");
     if (typeof checkpoint.artifacts?.media === "string")
       checkpointPaths.push(await realpath(checkpoint.artifacts.media));
     if (!declared.includes(mediaPath) || !checkpointPaths.includes(mediaPath))
@@ -158,12 +194,27 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
           originalPath,
     );
     if (competingOriginal) throw recoveryFailure("RECOVERY_ASSOCIATION_AMBIGUOUS");
-    const original = await recoveryFile(originalPath, { signal });
-    if (proof.formattedSha256 !== original.sha256 || checkpoint.formattedSha256 !== original.sha256)
-      throw recoveryFailure("RECOVERY_ORIGINAL_EDITED");
-    inputBytes += source.bytes + media.bytes + original.bytes;
+    let original;
+    if (authority === INCOMPLETE_RECOVERY_AUTHORITY) {
+      original = await pinRecoveryAbsence(originalPath, {
+        declared: entry.authority.original,
+        manifestPath: path,
+        signal,
+      });
+      protectedAbsences.push(metadata, original);
+    } else {
+      original = await recoveryFile(originalPath, { signal });
+      if (
+        proof.formattedSha256 !== original.sha256 ||
+        checkpoint.formattedSha256 !== original.sha256
+      )
+        throw recoveryFailure("RECOVERY_ORIGINAL_EDITED");
+    }
+    inputBytes += source.bytes + media.bytes + (original.bytes ?? 0);
     if (inputBytes > manifest.budgets.maxInputBytes) throw recoveryFailure("RECOVERY_INPUT_BUDGET");
-    protectedInputs.push(...[source, metadata, state, original, media].map(fingerprint));
+    protectedInputs.push(
+      ...[source, metadata, state, original, media].filter((file) => !file.absent).map(fingerprint),
+    );
     const display = mediaRecordingStatus({ appearance: job, job });
     const statusPath = mediaRecordingStatusPath({
       ...job,
@@ -178,8 +229,9 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
       coursePath: course.destination,
       source: fingerprint(source),
       media: fingerprint(media),
-      original: fingerprint(original),
-      metadata: fingerprint(metadata),
+      original: original.absent ? original : fingerprint(original),
+      metadata: metadata.absent ? metadata : fingerprint(metadata),
+      ...(authority === INCOMPLETE_RECOVERY_AUTHORITY ? { authority } : {}),
       state: fingerprint(state),
       sourceFlags: inspected.flags,
       display: {
@@ -195,10 +247,26 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
     Object.keys(RECOVERY_MAXIMUM_BUDGETS).map((key) => [key, manifest.budgets[key]]),
   );
   const id = createHash("sha256")
-    .update(JSON.stringify({ policy: RECOVERY_POLICY, budgets, recordings, protectedInputs }))
+    .update(
+      JSON.stringify({
+        policy: RECOVERY_POLICY,
+        budgets,
+        recordings,
+        protectedInputs,
+        ...(protectedAbsences.length ? { protectedAbsences } : {}),
+      }),
+    )
     .digest("hex")
     .slice(0, 24);
-  return { schemaVersion: 1, id, policy: RECOVERY_POLICY, budgets, recordings, protectedInputs };
+  return {
+    schemaVersion: 1,
+    id,
+    policy: RECOVERY_POLICY,
+    budgets,
+    recordings,
+    protectedInputs,
+    ...(protectedAbsences.length ? { protectedAbsences } : {}),
+  };
 }
 
 async function ownedMediaPaths(media) {
@@ -212,6 +280,7 @@ async function ownedMediaPaths(media) {
 }
 
 export async function assertRecoveryInputs(manifest, signal, { includeMedia = true } = {}) {
+  await assertRecoveryAbsences(manifest.protectedAbsences, signal);
   const mediaPaths = new Set(manifest.recordings?.map((recording) => recording.media.path) ?? []);
   for (const input of manifest.protectedInputs) {
     if (!includeMedia && mediaPaths.has(input.path)) continue;
@@ -223,4 +292,5 @@ export async function assertRecoveryInputs(manifest, signal, { includeMedia = tr
     if (current.sha256 !== input.sha256 || current.bytes !== input.bytes)
       throw recoveryFailure("RECOVERY_INPUT_CHANGED");
   }
+  await assertRecoveryAbsences(manifest.protectedAbsences, signal);
 }

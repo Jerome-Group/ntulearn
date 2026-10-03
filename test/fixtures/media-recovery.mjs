@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mediaQueuePath } from "../../src/media/queue.mjs";
@@ -208,4 +208,37 @@ export async function recoveryFixture(t) {
     addRecording,
     options: { config, manifestPath, outputDirectory },
   };
+}
+
+export async function incompleteRecoveryFixture(t) {
+  const f = await recoveryFixture(t);
+  const state = JSON.parse(await readFile(f.statePath, "utf8"));
+  delete state.formattedSha256;
+  Object.assign(state, {
+    stage: "checkpointed",
+    complete: false,
+    retryable: true,
+    artifacts: { rawTranscript: f.sourcePath, media: f.manifest.recordings[0].media.path },
+  });
+  Object.assign(f.job, {
+    stage: "checkpointed",
+    complete: false,
+    retryable: true,
+    sourceSha256: digest(f.sourceBody),
+    artifacts: { ...state.artifacts },
+    media: state.media,
+  });
+  await rm(f.metadataPath);
+  await rm(f.originalPath);
+  await writeFile(f.statePath, JSON.stringify(state));
+  await f.saveQueue();
+  f.manifest.recordings[0].authority = {
+    kind: "state-owned-unformatted",
+    state: { path: f.statePath, sha256: digest(await readFile(f.statePath)) },
+    queue: { path: f.queuePath, sha256: digest(await readFile(f.queuePath)) },
+    metadata: { path: f.metadataPath, absent: true },
+    original: { path: f.originalPath, absent: true },
+  };
+  await f.saveManifest();
+  return f;
 }

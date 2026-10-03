@@ -85,3 +85,25 @@ test("queue logical authority refuses symlink aliases and late retargeting", asy
   await symlink(f.metadataPath, f.queuePath);
   await assert.rejects(assertRecoveryInputs(before));
 });
+
+test("completed-source authority keeps the original plan fingerprint shape", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const f = await recoveryFixture(t),
+    m = await readRecoveryManifest(f.options);
+  assert.equal(m.recordings[0].authority, undefined);
+  assert.equal(m.protectedAbsences, undefined);
+  assert.equal(
+    m.id,
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          policy: m.policy,
+          budgets: m.budgets,
+          recordings: m.recordings,
+          protectedInputs: m.protectedInputs,
+        }),
+      )
+      .digest("hex")
+      .slice(0, 24),
+  );
+});

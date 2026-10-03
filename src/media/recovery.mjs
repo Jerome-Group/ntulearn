@@ -242,6 +242,9 @@ async function runCandidates(
       ]);
       await assertRecoveryInputs(
         {
+          protectedAbsences: manifest.protectedAbsences?.filter((input) =>
+            recordingPaths.has(input.path),
+          ),
           protectedInputs: manifest.protectedInputs.filter((input) =>
             recordingPaths.has(input.path),
           ),
