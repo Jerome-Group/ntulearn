@@ -985,5 +985,27 @@ linked editions, producer evidence and index history. Actions return bounded str
 plan; input changes require a fresh plan path. Preserve plans, receipts, history and candidate evidence.
 Generation-time recovery queue hashes do not replace current per-recording catalogue ownership checks;
 recovery run/publication keeps its stricter whole-manifest pins. Current media gets full SHA checks at
-admission/final publication and bounded descriptor-bound identity checks between promotions. Historical paragraph links prove retained text/provenance; retained media links remain unproven unless
-independent current recovery ownership supplies positive media evidence. See ADR-0022 for preservation/race limits.
+admission/final publication and bounded descriptor-bound identity checks between promotions. Historical
+paragraph links prove retained text/provenance. Retained media access is independent: a unique current
+recording/course placement must agree with producer queue/checkpoint and metadata-if-present media
+claims. Historical, review and incomplete records may link one owned local file without re-ASR. Access
+also permits positively owned video-only files; it grants no ASR admission.
+Access does not prove recording acquisition/completeness, container validity, acoustic accuracy or upstream
+coverage; canonical source flags and readiness stay unchanged. Missing, foreign, withdrawn, ambiguous
+or unsafe paths remain explicitly unproven. Typed storage and read-bound failures fail the operation.
+
+Access hashes stream regular no-follow files with parent and device/inode/size/mtime/ctime pins. They
+have separate counters and limits: 32 GiB per file, 128 GiB aggregate, 4,096 hashes,
+100,000 descriptor identity checks, 30 s per media I/O operation and
+120 s operation deadline. Timeout/abort allows a further 5 s for positive pending-I/O and descriptor-close
+settlement. Confirmed settlement preserves the original failure; unknown cleanup reports
+`MEDIA_FILE_CLEANUP` and durably blocks admission before publication lock release. This exceptional
+safety-evidence write can occur in any mode. Barrier storage failure requires external containment;
+late I/O settlement never clears it automatically. Metadata retains its 256 MiB/120 s budget; existing recovery validators are
+unchanged. Configured root aliases normalize to their pinned physical roots; profile/runtime paths
+and foreign media paths are excluded before media reads. Full media SHA checks at admission/final
+publication and parent/descriptor identity checks before writes refuse mutation, replacement or
+retargeting. Deadlines bound the operation's result; physical filesystem I/O cancellation and universal
+external-edit CAS are unclaimed. See ADR-0022 for preservation/race limits.
+The access link may name owned video while a recovery edition's immutable ASR provenance names
+separately owned audio; both media inputs retain admission/final hashes and bounded physical pins.

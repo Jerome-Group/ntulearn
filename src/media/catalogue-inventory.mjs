@@ -1,13 +1,14 @@
 import { dirname, basename, join, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
 import { assertCatalogueProfile } from "./catalogue-profile.mjs";
+import { catalogueRetainedMedia } from "./catalogue-media.mjs";
 import { historicalInventory } from "./historical-inventory.mjs";
 import { historicalDigest, insideHistoricalRoot } from "./historical-files.mjs";
 import { readMediaQueue } from "./queue.mjs";
 import { mediaRecordingRoot } from "./storage.mjs";
 import { mediaRecordingStatus } from "./status.mjs";
 import { validateSourceReviewFlags } from "./source-paragraphs.mjs";
-import { publicMediaError } from "./errors.mjs";
+import { publicMediaError, isGlobalMediaSafetyFailure } from "./errors.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
 import { pinRecoveryAbsence } from "./recovery-authority.mjs";
 import {
@@ -95,7 +96,15 @@ export async function catalogueInventory({
       throw catalogueFailure("CATALOGUE_SELECTION_INVALID");
     selected.set(selection.recordingId, selection.sha256);
   }
-  const mediaIdentities = new Map();
+  const retainedMedia = await catalogueRetainedMedia({
+    claims,
+    courses,
+    config,
+    store: historical.roots.find((root) => !root.courseKey).path,
+    reads,
+    profileBinding,
+  });
+  const mediaIdentities = retainedMedia.identities;
   const usedPaths = new Set(),
     records = new Map();
   for (const { course, job } of claims) {
@@ -113,6 +122,15 @@ export async function catalogueInventory({
       statusPath: null,
       editions: [],
       preferred: null,
+      mediaAccess: retainedMedia.proofs.get(id)?.access ?? {
+        status: "unproven",
+        reason: "ownership-unproven",
+        acousticVerification: "unrun",
+        completeness: "unclaimed",
+      },
+      ...(retainedMedia.proofs.get(id)?.access.status === "verified"
+        ? { mediaPath: retainedMedia.proofs.get(id).access.path }
+        : {}),
       reading: "incomplete",
       reason: unique ? "edition-incomplete" : "ambiguous-association",
       sourceReview: {
@@ -241,18 +259,26 @@ export async function catalogueInventory({
       const course = courses.find((course) => course.recordings.includes(record));
       if (proof.recording.courseKey !== course.key || !insideHistoricalRoot(course.path, path))
         throw catalogueFailure();
-      record.editions.push(proof.edition);
-      record.source = proof.recording.source.path;
-      record.original = proof.recording.original.absent ? null : proof.recording.original.path;
-      record.statusPath = proof.ownership.recordings[0].display.statusPath;
-      record.mediaPath = proof.recording.media.path;
-      usedPaths.add(record.source);
-      if (record.original) usedPaths.add(record.original);
-      mediaIdentities.set(proof.ownership.mediaIdentity.path, proof.ownership.mediaIdentity);
       for (const input of proof.ownership.protectedInputs) {
         const prior = reads.files.get(input.path);
         if (prior && prior.sha256 !== input.sha256)
           throw catalogueFailure("CATALOGUE_INPUT_CHANGED");
+      }
+      // Access may link owned video while recovery used separately owned audio.
+      // Complete every proof/pin check before admitting an eligible reading edition.
+      let recoveryMedia = mediaIdentities.get(proof.ownership.mediaIdentity.path);
+      if (!recoveryMedia) {
+        const boundary = historical.roots.find((root) =>
+          insideHistoricalRoot(root.path, proof.ownership.mediaIdentity.path),
+        )?.path;
+        if (!boundary) throw catalogueFailure("CATALOGUE_INPUT_CHANGED");
+        recoveryMedia = await reads.media.read(proof.ownership.mediaIdentity.path, boundary);
+        if (recoveryMedia.sha256 !== proof.recording.media.sha256)
+          throw catalogueFailure("CATALOGUE_INPUT_CHANGED");
+      }
+      mediaIdentities.set(recoveryMedia.path, recoveryMedia);
+      for (const input of proof.ownership.protectedInputs) {
+        const prior = reads.files.get(input.path);
         reads.files.set(input.path, {
           ...input,
           ...(prior?.content ? { content: prior.content } : {}),
@@ -260,7 +286,15 @@ export async function catalogueInventory({
       }
       for (const absence of proof.ownership.protectedAbsences ?? [])
         reads.absences.set(absence.path, absence);
-    } catch {
+      record.source = proof.recording.source.path;
+      record.original = proof.recording.original.absent ? null : proof.recording.original.path;
+      record.statusPath = proof.ownership.recordings[0].display.statusPath;
+      usedPaths.add(record.source);
+      if (record.original) usedPaths.add(record.original);
+      record.editions.push(proof.edition);
+    } catch (error) {
+      if (/^CATALOGUE_MEDIA_/.test(error.code ?? "") || isGlobalMediaSafetyFailure(error))
+        throw error;
       if (record)
         record.editions.push({
           kind: "recovered",
