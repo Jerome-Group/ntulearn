@@ -41,17 +41,23 @@ export async function recordSourceEdition(destination, expected, path, accepted 
   await writeWithoutReplacing(target, body);
 }
 
-export async function provenanceRecords(destination, source) {
+export async function provenanceRecords(destination, source, { inspect = lstat } = {}) {
   const directory = join(destination, PROVENANCE, source.identity);
   await assertDestinationPath(destination, directory);
   const names = await readdir(directory).catch((error) => {
     if (error.code === "ENOENT") return [];
     throw error;
   });
-  if (names.length > 128)
+  if (names.filter((name) => !nativeMetadataName(name)).length > 128)
     throw Error("Source provenance is too large. Inspect source editions before retrying.");
   const records = [];
   for (const name of names.sort()) {
+    if (nativeMetadataName(name)) {
+      const path = join(directory, name);
+      await assertDestinationPath(destination, path);
+      await qualifyNativeMetadata(path, name, inspect);
+      continue;
+    }
     if (/^[a-f0-9]{64}\.json(?:\.part-[a-f0-9-]{36}){1,2}$/.test(name)) continue;
     if (!/^[a-f0-9]{64}\.json$/.test(name))
       throw Error("Source provenance is malformed. Restore its original records before retrying.");
@@ -107,6 +113,59 @@ export async function provenanceRecords(destination, source) {
   }
   return records;
 }
+function nativeMetadataName(name) {
+  return name === "Icon\r" || name === ".DS_Store";
+}
+
+async function qualifyNativeMetadata(path, name, inspect) {
+  const maximum = name === "Icon\r" ? 0 : 1024 * 1024;
+  let file;
+  const refuse = () =>
+    Error(
+      "Native source metadata is unqualified or changed. Inspect the retained metadata before retrying.",
+    );
+  try {
+    const visibleBefore = await inspect(path);
+    if (!visibleBefore.isFile() || visibleBefore.isSymbolicLink()) throw refuse();
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await file.stat();
+    if (!before.isFile() || before.size > maximum || !sameFile(before, visibleBefore))
+      throw refuse();
+    const buffer = Buffer.alloc(maximum + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await file.stat(),
+      visibleAfter = await inspect(path);
+    if (
+      length !== before.size ||
+      length > maximum ||
+      !visibleAfter.isFile() ||
+      visibleAfter.isSymbolicLink() ||
+      !sameFile(before, after) ||
+      !sameFile(before, visibleAfter)
+    )
+      throw refuse();
+    if (
+      name === ".DS_Store" &&
+      !buffer.subarray(0, length).subarray(0, 8).equals(Buffer.from("0000000142756431", "hex"))
+    )
+      throw refuse();
+  } catch {
+    throw refuse();
+  } finally {
+    await file?.close();
+  }
+}
+function sameFile(first, second) {
+  return ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(
+    (field) => first[field] === second[field],
+  );
+}
+
 function validPath(path) {
   return (
     typeof path === "string" &&
