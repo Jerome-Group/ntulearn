@@ -336,12 +336,17 @@ const routes = {
     [
       "src/capabilities/index.mjs",
       "src/capabilities/check.mjs",
+      "src/capabilities/check-capture.mjs",
+      "src/capabilities/check-evidence.mjs",
       "src/capabilities/health.mjs",
       "src/capabilities/status.mjs",
     ],
     [
       "test/capabilities.test.mjs",
       "test/capability-check.test.mjs",
+      "test/capability-check-capture.test.mjs",
+      "test/capability-check-evidence.test.mjs",
+      "test/capability-check-cli.test.mjs",
       "test/capability-health.test.mjs",
       "test/capability-status.test.mjs",
       "test/capability-contracts.test.mjs",
@@ -392,6 +397,35 @@ const live = {
 };
 const courseArgument = ["<course|all>"];
 const offlineCodes = { 0: "passed", 1: "failed", 2: "blocked-or-unrun-or-usage" };
+const CHECK_EVIDENCE = {
+  flag: "--evidence",
+  default: false,
+  namespace: ".scratch/check-evidence-<safe-name>",
+  prerequisites: ["fresh-unoccupied-repo-owned-directory", "canonical-no-follow-parents"],
+  permissions: { directory: "0700", files: "0600" },
+  reference: "requested-private-evidence/<check>-<ordinal>",
+  files: [
+    "<check>-<ordinal>.stdout.log",
+    "<check>-<ordinal>.stderr.log",
+    "<check>-<ordinal>.invocation.json",
+    "run.start.json",
+    "run.result.json",
+  ],
+  bounds: {
+    streamPrefixBytes: 2097152,
+    invocationBytes: 65536,
+    receiptBytes: 131072,
+    files: 17,
+    totalBytes: 22020096,
+    operationMs: 5000,
+    cumulativeIoMs: 30000,
+    settlementMs: 5000,
+  },
+  privacy:
+    "Only fixed anonymous references/files/digests/counts/exit codes leave private storage. Raw output, arguments, paths and exceptions stay private. Prefix truncation has separate bytes/digest from original captured output.",
+  failure:
+    "Original check failure unchanged; evidence refusal or unconfirmed cleanup is a separate blocked/failed observation. Retain partial files, no overwrite/prune/upload. Unconfirmed cleanup stops further checks and all evidence writes.",
+};
 const commands = [
   command(
     "login",
@@ -892,10 +926,18 @@ const commands = [
     "check",
     "capabilities",
     ["supported-Node", "npm-ci-ignore-scripts"],
-    { reads: ["repository", "installed-dependencies"], writes: ["isolated-test-temporary-files"] },
+    {
+      reads: ["repository", "installed-dependencies"],
+      writes: ["isolated-test-temporary-files", "explicit-fresh-private-check-evidence"],
+    },
     {
       kind: "test",
-      arguments: ["[all|syntax|contracts|format|lint|test]"],
+      arguments: [
+        "[all|syntax|contracts|format|lint|test]",
+        "[--evidence .scratch/check-evidence-<safe-name>]",
+      ],
+      risk: "local-private-evidence-if-requested",
+      optionalEvidence: CHECK_EVIDENCE,
       output: "capability-result-v1",
       exitCodes: offlineCodes,
     },
@@ -906,8 +948,18 @@ const commands = [
       `check:${name}`,
       "capabilities",
       ["supported-Node"],
-      { reads: ["repository"] },
-      { kind: "test", output: "capability-result-v1", exitCodes: offlineCodes },
+      { reads: ["repository"], writes: ["explicit-fresh-private-check-evidence"] },
+      {
+        kind: "test",
+        arguments: ["[--evidence .scratch/check-evidence-<safe-name>]"],
+        risk: "local-private-evidence-if-requested",
+        optionalEvidence: CHECK_EVIDENCE,
+        output: "capability-result-v1",
+        exitCodes: offlineCodes,
+        limitations: [
+          "Same optional private evidence contract as check; default behavior unchanged.",
+        ],
+      },
     ),
   ),
   ...["test", "lint", "format:check"].map((name) =>

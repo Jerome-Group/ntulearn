@@ -129,3 +129,19 @@ test("media discovery indexes owned course isolation, safety admission and truth
   assert.ok(route.code.includes("src/media/discover-run.mjs"));
   assert.ok(route.verification.tests.includes("test/media-discover-cli.test.mjs"));
 });
+
+test("indexed check exposes explicit private evidence ownership, bounds and anonymous recovery", () => {
+  const route = capabilityIndex("check").commands[0];
+  assert.ok(route.arguments.includes("[--evidence .scratch/check-evidence-<safe-name>]"));
+  assert.equal(route.optionalEvidence.default, false);
+  assert.equal(route.optionalEvidence.bounds.streamPrefixBytes, 2097152);
+  assert.equal(route.optionalEvidence.bounds.files, 17);
+  assert.equal(route.optionalEvidence.permissions.directory, "0700");
+  assert.equal(route.optionalEvidence.permissions.files, "0600");
+  assert.match(route.optionalEvidence.failure, /Original check failure unchanged/);
+  assert.match(route.optionalEvidence.privacy, /Raw output, arguments, paths/);
+  assert.ok(route.code.includes("src/capabilities/check-evidence.mjs"));
+  assert.ok(route.verification.tests.includes("test/capability-check-cli.test.mjs"));
+  assert.equal(route.effects.network, false);
+  assert.equal(route.effects.browser, false);
+});

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { mkdtemp, readFile, rm, lstat, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runRepositoryChecks } from "../src/capabilities/check.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -52,4 +55,30 @@ test("tool timeout is actionable and never reported as success", async () => {
   assert.equal(check.status, "failed");
   assert.equal(check.code, "CHECK_TIMEOUT");
   assert.ok(check.action);
+});
+
+test("explicit private evidence retains the original failed assertion with an anonymous actionable reference", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ntulearn-check-evidence-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, ".scratch/check-evidence-fixture");
+  const assertion = "AssertionError: original private fixture assertion\n";
+  const result = await runRepositoryChecks({
+    root,
+    selection: "test",
+    node: "private-node-path",
+    evidenceDirectory: directory,
+    run: async () => ({ exitCode: 7, stdout: assertion, stderr: "private fixture stderr" }),
+  });
+  const check = result.checks.find((check) => check.id === "test");
+  assert.equal(result.exitCode, 1);
+  assert.equal(check.code, "CHECK_FAILED");
+  assert.equal(check.evidence.exitCode, 7);
+  assert.match(check.action, /requested private evidence directory/);
+  assert.equal(await readFile(join(directory, "test-001.stdout.log"), "utf8"), assertion);
+  assert.equal((await lstat(directory)).mode & 0o777, 0o700);
+  assert.equal((await lstat(join(directory, "test-001.stdout.log"))).mode & 0o777, 0o600);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /original private fixture assertion|private-node-path|ntulearn-check-evidence-/,
+  );
 });
