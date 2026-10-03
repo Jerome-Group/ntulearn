@@ -131,6 +131,15 @@ non-zero. `scheduled` is the default and runs only from 00:00 through
 boundary. SIGINT/SIGTERM stop further jobs and await owned cleanup; the digest records
 `interrupted: true`, and an active job records a manual or scheduled interruption checkpoint.
 The run and latest digest retain the sanitized `interruptionReason`.
+A current global stop adds `stopFailures: [{code, stage}]` to the run log/latest digest
+and the actually stopped course summary. Codes/stages form closed sets discoverable through
+`npm run --silent capabilities -- media-worker`; untyped/unrecognized causes remain `UNKNOWN`.
+Historical limitations and existing counts/messages stay separate. Admission, preflight and
+runner settlement are run-only evidence; untouched courses inherit no stop failure. Observed
+job, persistence and later runner-settlement triggers remain distinguishable, without raw error
+messages, paths, identifiers or addresses in these new fields. Reporting does not prove cleanup,
+release containment, clear markers or authorize retry. A receipt that could not be persisted
+establishes no successful settlement; older logs with lost causes remain unexplained.
 The media caller owns browser SIGINT/SIGTERM; Playwright's default SIGINT handler otherwise exits
 Node with code 130 before checkpoint, lock release and final reporting can settle. Media disables
 those two browser handlers and closes its owned context through the existing cleanup boundary.

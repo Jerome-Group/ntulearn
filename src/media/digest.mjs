@@ -1,3 +1,4 @@
+import { workerStopEvidence } from "./worker-stop.mjs";
 import { publicMediaError } from "./errors.mjs";
 import { join, relative, dirname, resolve } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
@@ -20,6 +21,7 @@ export async function persistMediaDigest({
   courses,
   counts,
   globalStop,
+  stopFailures,
   stoppedAtBoundary,
   interrupted = false,
   interruptionReason,
@@ -38,6 +40,7 @@ export async function persistMediaDigest({
     finishedAt: finishedAt.toISOString(),
     durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
     globalStop,
+    ...(globalStop ? { stopFailures: workerStopEvidence(stopFailures) } : {}),
     stoppedAtBoundary,
     interrupted,
     ...(interrupted ? { interruptionReason: publicMediaError(interruptionReason) } : {}),
@@ -58,6 +61,7 @@ export async function persistMediaDigest({
     runLog,
     counts: run.counts,
     globalStop,
+    ...(globalStop ? { stopFailures: run.stopFailures } : {}),
     stoppedAtBoundary,
     interrupted,
     ...(interrupted ? { interruptionReason: run.interruptionReason } : {}),

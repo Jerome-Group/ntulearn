@@ -1,3 +1,4 @@
+import { WORKER_STOP_CODES, WORKER_STOP_STAGES } from "../media/worker-stop.mjs";
 import { VAD_MODEL, VAD_CONTROLS, VAD_RUNTIME, VAD_DELEGATE } from "../media/vad-model.mjs";
 import { RECOVERY_POLICY, RECOVERY_POLICIES } from "../media/recovery-policy.mjs";
 
@@ -247,6 +248,8 @@ const routes = {
   "media-worker": [
     [
       "src/media/worker.mjs",
+      "src/media/worker-report.mjs",
+      "src/media/worker-stop.mjs",
       "src/media/production.mjs",
       "src/ntulearn/client.mjs",
       "src/ntulearn/session.mjs",
@@ -265,6 +268,7 @@ const routes = {
     ],
     [
       "test/media-worker.test.mjs",
+      "test/media-worker-stop.test.mjs",
       "test/media-transcript-evidence.test.mjs",
       "test/media-production.test.mjs",
       "test/media-signal-ownership.test.mjs",
@@ -1033,6 +1037,24 @@ export function capabilityIndex(selection) {
               reviewRequired: { complete: false, retryable: false, queueOnlyClear: false },
               limitations:
                 "Source-preserving paragraphs and lexical flags do not establish acoustic accuracy; flagged sources require explicit Owner review or source-preserving recovery.",
+            },
+          }
+        : {}),
+      ...(id === "media-worker"
+        ? {
+            stopEvidence: {
+              field: "stopFailures",
+              fields: ["code", "stage"],
+              codes: WORKER_STOP_CODES,
+              stages: WORKER_STOP_STAGES,
+              unknown:
+                "UNKNOWN code or unknown stage records unavailable current evidence; never infer a cause from historical limitations.",
+              scope:
+                "Only actual stopped course summaries; admission/preflight/runner-settlement are run-only. Final run log and digest retain observed triggers.",
+              privacy:
+                "New evidence has no raw exceptions, paths, identifiers or addresses; existing worker reports remain private.",
+              safety:
+                "Reporting grants no release, retry, marker clearing, source-review override or live qualification.",
             },
           }
         : {}),
