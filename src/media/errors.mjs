@@ -2,6 +2,7 @@ export const GLOBAL_MEDIA_ERROR_CODES = Object.freeze([
   "MEDIA_GLOBAL_SAFETY",
   "MEDIA_PROCESS_CLEANUP",
   "MEDIA_BROWSER_CLEANUP",
+  "MEDIA_FILE_CLEANUP",
   "EACCES",
   "EIO",
   "ENODEV",
@@ -33,6 +34,9 @@ export function markGlobalMediaSafety(error) {
 }
 
 export function unconfirmedMediaCleanupCode(error) {
-  if (["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP"].includes(error?.code)) return error.code;
+  if (
+    ["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP", "MEDIA_FILE_CLEANUP"].includes(error?.code)
+  )
+    return error.code;
   return error?.cause ? unconfirmedMediaCleanupCode(error.cause) : null;
 }

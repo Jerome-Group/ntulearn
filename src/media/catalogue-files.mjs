@@ -2,6 +2,7 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { historicalReads, HISTORICAL_LIMITS } from "./historical-files.mjs";
 import { parseCatalogueMetadata } from "./catalogue-safety.mjs";
+import { createCatalogueMediaReads } from "./catalogue-media-read.mjs";
 
 export const CATALOGUE_POLICY = "verified-reading-v1";
 export const catalogueFailure = (code = "CATALOGUE_EVIDENCE_INVALID") =>
@@ -11,7 +12,7 @@ export const catalogueFailure = (code = "CATALOGUE_EVIDENCE_INVALID") =>
     ),
     { code },
   );
-export function catalogueReads(signal) {
+export function catalogueReads(signal, { media = createCatalogueMediaReads(signal) } = {}) {
   const reads = historicalReads({
     signal,
     limits: { ...HISTORICAL_LIMITS, fileBytes: 16 * 1024 ** 2 },
@@ -20,6 +21,8 @@ export function catalogueReads(signal) {
     absences = new Map();
   return {
     ...reads,
+    media,
+    evidence: () => ({ ...reads.evidence(), media: media.evidence() }),
     files,
     absences,
     async file(path) {

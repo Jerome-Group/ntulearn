@@ -31,8 +31,9 @@ import { recoveryFile, assertRecoveryFileIdentity } from "./recovery-files.mjs";
 import { assertRecoveryAbsences } from "./recovery-authority.mjs";
 import { withMediaQueueLock } from "./lock.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
+import { GLOBAL_MEDIA_ERROR_CODES } from "./errors.mjs";
 import { readMediaQueue } from "./queue.mjs";
-import { assertMediaSafetyAdmission } from "./safety.mjs";
+import { assertMediaSafetyAdmission, persistMediaSafetyBarrier } from "./safety.mjs";
 
 const json = (value) => JSON.stringify(value, null, 2) + "\n";
 const ACTION =
@@ -51,7 +52,9 @@ export async function transcriptCatalogue(
       (selectionPath && mode !== "plan")
     )
       throw catalogueFailure("CATALOGUE_ARGUMENTS");
-    reads = catalogueReads(signal);
+    reads = catalogueReads(signal, {
+      ...(dependencies.mediaReads ? { media: dependencies.mediaReads } : {}),
+    });
     const profileBinding = await catalogueProfileBinding(config.profilePath);
     await assertCatalogueProfile(profileBinding, [
       ...config.courses.map((course) => course.destination),
@@ -69,7 +72,7 @@ export async function transcriptCatalogue(
     };
     if (mode === "inspect") {
       const inventory = await catalogueInventory({ config, reads, signal, profileBinding });
-      await assertSnapshot(inventory, signal);
+      await assertSnapshot(inventory, signal, { mediaReads: reads.media });
       reads.active();
       return {
         schemaVersion: 1,
@@ -77,6 +80,7 @@ export async function transcriptCatalogue(
         status: "passed",
         exitCode: 0,
         catalogue: publicInventory(inventory),
+        evidence: { reads: reads.evidence() },
       };
     }
     const path = resolve(manifestPath);
@@ -127,7 +131,7 @@ export async function transcriptCatalogue(
         sha256: historicalDigest(content),
       });
       catalogueJson({ content: Buffer.from(proof) });
-      await assertSnapshot(inventory, signal);
+      await assertSnapshot(inventory, signal, { mediaReads: reads.media });
       await assertCataloguePrivatePath(profileBinding, path);
       await publishHistoricalFile(path, Buffer.from(content), {
         reads,
@@ -140,7 +144,7 @@ export async function transcriptCatalogue(
         boundary: parent,
         expectedSha256: historicalDigest(proof),
       });
-      return result(mode, inventory, { planId: manifest.id });
+      return result(mode, inventory, { planId: manifest.id, reads: reads.evidence() });
     }
     const retained = await readPrivate(path, { includeIdentity: true }),
       manifest = catalogueJson(retained),
@@ -196,7 +200,10 @@ export async function transcriptCatalogue(
       const check = async (includeMedia = false) => {
         reads.active();
         await capacity?.check({ boundary: config.media.mediaRoot });
-        await assertSnapshot(inventory, signal, { includeMedia: includeMedia === true });
+        await assertSnapshot(inventory, signal, {
+          includeMedia: includeMedia === true,
+          mediaReads: reads.media,
+        });
         for (const pin of [planReceipt, retained]) {
           await assertCataloguePrivatePath(profileBinding, pin.path);
           try {
@@ -241,15 +248,27 @@ export async function transcriptCatalogue(
             courses: config.courses,
             readQueue: readMediaQueue,
           });
-          return execute();
+          try {
+            return await execute();
+          } catch (error) {
+            await persistMediaSafetyBarrier({ statePath: config.statePath, error });
+            throw error;
+          }
         },
       });
     return await execute();
-  } catch (error) {
+  } catch (caught) {
+    let error = caught;
+    try {
+      await persistMediaSafetyBarrier({ statePath: config?.statePath, error });
+    } catch (barrierFailure) {
+      error = barrierFailure;
+    }
     const code =
       error.code === "HISTORICAL_READ_LIMIT"
         ? "CATALOGUE_LIMIT"
-        : /^CATALOGUE_[A-Z_]+$|^MEDIA_[A-Z_]+$/.test(error.code ?? "")
+        : /^CATALOGUE_[A-Z_]+$|^MEDIA_[A-Z_]+$/.test(error.code ?? "") ||
+            GLOBAL_MEDIA_ERROR_CODES.includes(error.code)
           ? error.code
           : signal?.aborted
             ? "CATALOGUE_INTERRUPTED"
@@ -262,7 +281,9 @@ export async function transcriptCatalogue(
           code === "CATALOGUE_ARGUMENTS" || code.startsWith("MEDIA_") ? "blocked" : "failed",
           code,
           "Catalogue stopped; retained files and journal remain. No raw exception exposed.",
-          ACTION,
+          error.code === "MEDIA_FILE_CLEANUP" || error.code === "MEDIA_SAFETY_BARRIER_WRITE"
+            ? "Retain containment and the safety barrier; Owner must confirm pending file I/O and descriptor closure before explicitly clearing safety evidence. Do not retry automatically."
+            : ACTION,
         ),
       ],
       {
@@ -272,13 +293,22 @@ export async function transcriptCatalogue(
         acousticVerification: "unrun",
         mediaReadiness: "unclaimed",
         physicalIoCancellation: "unclaimed",
+        ...(error.code === "MEDIA_FILE_CLEANUP" || error.code === "MEDIA_SAFETY_BARRIER_WRITE"
+          ? {
+              cleanup: "unconfirmed",
+              safetyBarrier:
+                error.code === "MEDIA_FILE_CLEANUP"
+                  ? "retained"
+                  : "write-failed-external-containment-required",
+            }
+          : {}),
         ...(reads ? { reads: reads.evidence() } : {}),
       },
     );
   }
 }
 
-async function assertSnapshot(inventory, signal, { includeMedia = false } = {}) {
+async function assertSnapshot(inventory, signal, { includeMedia = false, mediaReads } = {}) {
   signal?.throwIfAborted();
   await assertCatalogueProfile(
     inventory.profileBinding,
@@ -291,8 +321,17 @@ async function assertSnapshot(inventory, signal, { includeMedia = false } = {}) 
   for (const input of inventory.inputs) {
     const media = inventory.mediaIdentities.find((pin) => pin.path === input.path);
     if (media) {
-      await assertRecoveryFileIdentity(media, signal);
+      await mediaReads.assertIdentity(media);
       if (!includeMedia) continue;
+      const current = await mediaReads.read(
+        input.path,
+        media.boundary ??
+          inventory.bindings.find((binding) => insideHistoricalRoot(binding.canonical, input.path))
+            .canonical,
+      );
+      if (current.sha256 !== input.sha256 || current.bytes !== input.bytes)
+        throw catalogueFailure("CATALOGUE_INPUT_CHANGED");
+      continue;
     }
     const current = await recoveryFile(input.path, {
       maximumBytes: input.bytes,
@@ -348,6 +387,8 @@ function result(mode, inventory, extra) {
       unassociated: inventory.unassociated.length,
       acousticVerification: "unrun",
       mediaReadiness: "unclaimed",
+      retainedMediaAccess: recordings.filter((record) => record.mediaAccess?.status === "verified")
+        .length,
       ...extra,
     },
   );
@@ -377,6 +418,7 @@ export function catalogueMarkdown(course, unassociated) {
       `### ${escape(record.title)}`,
       "",
       `Reading: ${record.reading}${record.reason ? ` (${escape(record.reason)})` : ""}. Media: ${escape(record.media.stage)} / ${escape(record.media.verdict)}; complete: ${record.media.complete}.`,
+      `Retained media access: ${escape(record.mediaAccess?.status ?? "unproven")}; recording completeness: unclaimed by access; acoustic verification: unrun.`,
       `Original source flags: ${record.sourceReview.flags.map(escape).join(", ") || "none observed"}; timing: ${escape(record.sourceReview.timing)}; acoustic: unrun.`,
       `Stable source reference: ${escape(record.sourceReference)}`,
       "",
@@ -392,7 +434,9 @@ export function catalogueMarkdown(course, unassociated) {
           ? link("Original derivative", record.original)
           : "Original derivative absent or unproven",
         record.source ? link("Original raw source", record.source) : "Original raw source unproven",
-        record.mediaPath ? link("Retained media", record.mediaPath) : "Retained media unproven",
+        record.mediaAccess?.status === "verified" && record.mediaPath
+          ? link("Retained media", record.mediaPath)
+          : "Retained media unproven",
         record.statusPath
           ? link("Current media status", record.statusPath)
           : "Current media status unavailable",

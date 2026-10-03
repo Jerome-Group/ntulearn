@@ -6,6 +6,7 @@ import { recoveryFixture, incompleteRecoveryFixture } from "./fixtures/media-rec
 import { recoverTranscriptSources } from "../src/media/recovery.mjs";
 import { VAD_RUNTIME, vadRuntimePin, vadDelegateRuntimePin } from "../src/media/vad-model.mjs";
 import { transcriptCatalogue } from "../src/media/catalogue.mjs";
+import { createCatalogueMediaReads } from "../src/media/catalogue-media-read.mjs";
 
 async function published(t, factory = recoveryFixture, policy) {
   const f = await factory(t);
@@ -37,6 +38,75 @@ async function published(t, factory = recoveryFixture, policy) {
   );
   return f;
 }
+async function dualMedia(t) {
+  const f = await recoveryFixture(t),
+    audio = join(f.course.destination, "lecture.m4a");
+  await writeFile(audio, "separately owned synthetic audio");
+  f.job.placement.audioPath = "lecture.m4a";
+  await f.saveQueue();
+  for (const path of [f.metadataPath, f.statePath]) {
+    const proof = JSON.parse(await readFile(path));
+    proof.media.audio = { available: true, path: audio };
+    if (path === f.statePath) proof.artifacts.media = audio;
+    await writeFile(path, JSON.stringify(proof));
+  }
+  const { createHash } = await import("node:crypto");
+  f.manifest.recordings[0].media = {
+    path: audio,
+    sha256: createHash("sha256")
+      .update(await readFile(audio))
+      .digest("hex"),
+  };
+  await f.saveManifest();
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies)).status,
+    "passed",
+  );
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  return { ...f, audio };
+}
+test("owned video access and separately owned recovery audio coexist with both media pins", async (t) => {
+  const f = await dualMedia(t),
+    manifestPath = join(f.root, "catalogue.json");
+  const result = await transcriptCatalogue({ config: f.config, mode: "inspect" });
+  assert.equal(result.status, "passed");
+  const recording = result.catalogue.courses[0].recordings[0];
+  assert.equal(recording.mediaPath, join(f.course.destination, "lecture.mp4"));
+  assert.equal(recording.preferred?.kind, "recovered");
+  assert.equal(recording.editions.filter((e) => e.kind === "recovered").length, 1);
+  assert.equal(
+    (await transcriptCatalogue({ config: f.config, mode: "plan", manifestPath })).status,
+    "passed",
+  );
+  const plan = JSON.parse(await readFile(manifestPath));
+  for (const path of [recording.mediaPath, f.audio]) {
+    assert.ok(plan.inventory.inputs.some((pin) => pin.path === path));
+    assert.ok(
+      plan.inventory.mediaIdentities.some((pin) => pin.path === path && pin.parents.length),
+    );
+  }
+});
+test("rejected late recovery media proof cannot leave a partly admitted eligible edition", async (t) => {
+  const f = await dualMedia(t),
+    reader = createCatalogueMediaReads(),
+    read = reader.read;
+  reader.read = async (...args) => {
+    const proof = await read(...args);
+    return args[0] === f.audio ? { ...proof, sha256: "0".repeat(64) } : proof;
+  };
+  const result = await transcriptCatalogue(
+    { config: f.config, mode: "inspect" },
+    { mediaReads: reader },
+  );
+  assert.equal(result.status, "passed");
+  const recording = result.catalogue.courses[0].recordings[0];
+  assert.equal(recording.preferred, null);
+  assert.equal(recording.editions.filter((e) => e.kind === "recovered").length, 1);
+  assert.equal(recording.editions.find((e) => e.kind === "recovered").eligible, false);
+});
 for (const factory of [recoveryFixture, incompleteRecoveryFixture])
   test(`catalogue ${factory.name} retains generation proof but admits unrelated current queue progress`, async (t) => {
     const f = await published(t, factory),
@@ -49,6 +119,8 @@ for (const factory of [recoveryFixture, incompleteRecoveryFixture])
     const recording = result.catalogue.courses[0].recordings[0];
     assert.equal(recording.preferred?.kind, "recovered");
     assert.equal(recording.preferred.timing, "passed");
+    assert.equal(recording.mediaAccess.status, "verified");
+    assert.equal(recording.mediaPath, f.manifest.recordings[0].media.path);
     assert.equal(recording.sourceReview.acousticVerification, "unrun");
     assert.deepEqual(await readFile(f.sourcePath), before);
     // Recovery run/publication still refuses its original whole-queue stale pin.

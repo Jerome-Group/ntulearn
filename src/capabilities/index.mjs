@@ -162,6 +162,8 @@ const routes = {
     [
       "src/media/catalogue.mjs",
       "src/media/catalogue-files.mjs",
+      "src/media/catalogue-media.mjs",
+      "src/media/catalogue-media-read.mjs",
       "src/media/catalogue-safety.mjs",
       "src/media/catalogue-profile.mjs",
       "src/media/catalogue-inventory.mjs",
@@ -173,6 +175,7 @@ const routes = {
     ],
     [
       "test/media-catalogue.test.mjs",
+      "test/media-catalogue-media.test.mjs",
       "test/media-catalogue-recovery.test.mjs",
       "test/media-catalogue-editions.test.mjs",
       "test/media-catalogue-publication.test.mjs",
@@ -529,8 +532,12 @@ const commands = [
     "transcript-catalogue",
     ["configured-courses", "accessible-course-roots", "retained-edition-provenance"],
     {
-      reads: ["private-queue-and-transcript-evidence"],
-      writes: ["fresh-plan-for-plan", "managed-course-index-and-immutable-history-for-publish"],
+      reads: ["private-queue-and-transcript-evidence", "positively-owned-local-retained-media"],
+      writes: [
+        "fresh-plan-for-plan",
+        "managed-course-index-and-immutable-history-for-publish",
+        "exceptional-safety-barrier-on-unconfirmed-file-cleanup",
+      ],
       ownerOnly: false,
     },
     {
@@ -548,6 +555,7 @@ const commands = [
           ownerOnly: false,
           writes: [],
           output: "private-catalogue-metadata-v1",
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
           prerequisites: ["accessible-course-roots"],
         },
         plan: {
@@ -558,6 +566,7 @@ const commands = [
           writes: ["fresh-exclusive-private-plan"],
           output: "capability-result-v1",
           prerequisites: ["fresh-private-manifest-path", "optional-private-digest-selection"],
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
         },
         publish: {
           network: false,
@@ -586,10 +595,13 @@ const commands = [
           writes: [],
           output: "capability-result-v1",
           prerequisites: ["unchanged-private-catalogue-plan"],
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
         },
       },
       limitations: [
         "All configured local queue appearances accounted for as recognized recordings, unresolved review or positively classified non-recordings; retained source evidence accounted for; upstream completeness and acoustic verification unrun. Inspect emits private bounded titles/IDs/local links; no transcript/config/profile/log bodies. Plan/publication/verify emit bounded counts/codes only.",
+        "Retained media access independently requires unique current recording/course placement plus queue/checkpoint and metadata-if-present ownership. Historical, review and incomplete reading verdicts may link one positively owned local file; access never clears source review or proves acquisition/completeness/acoustics. Foreign, missing, withdrawn, ambiguous or unsafe paths stay unproven; typed storage/read failures fail closed. Configured root aliases are supported; runtime/profile paths excluded before media content reads.",
+        "New retained-access media streams use separate counters:32GiB per file,128GiB aggregate,4096 hashes,100000 descriptor identity checks,30s per media I/O operation and120s operation deadline, without raising the metadata256MiB/120s budget or relaxing existing recovery verifiers. Regular no-follow descriptor SHA/device/inode/size/mtime/ctime and parent pins checked at admission/final and before writes. Timeout/abort allows5s for positive pending-I/O/descriptor-close settlement; unknown cleanup emitsMEDIA_FILE_CLEANUP and persists an admission barrier before lock release (exceptional safety write in every mode). Failed barrier storage requires external containment. Access may link owned video while immutable recovery provenance names separately owned audio; both stay pinned. No universal filesystem CAS or physical I/O cancellation claim.",
         "Prefer a unique eligible recovered digest, otherwise unique eligible current-source paragraph digest. Equivalent digests group; distinct candidates require explicit recordingId/sha256 selections. Source flags exclude paragraph preference; unknown recovery timing refuses. Canonical source review/media verdicts remain unchanged.",
         "Generation candidate proofs stay immutable; current per-recording ownership is independently revalidated without generation-time whole-queue SHA. Publication plans pin the entire current inventory and refuse subsequent input changes. Existing managed index requires positive producer hash/history; user edits refuse. Retry identical plan after journalled interruption; no automatic sync publication or universal external-edit CAS guarantee.",
         "Catalogue metadata scans every decoded key/value, including overwritten duplicate-key tokens: 16MiB input, 100000 values, depth16, 1MiB per string plus unchanged native address guards. Proposed plans remain capped at4MiB and validate both plan and receipt before any write. Per-operation read budget256MiB/120s remains; private plan/receipt get full hashes at admission/final and descriptor-bound identity checks between writes. Bounded failures retain evidence and emit fixed codes; no native transcript gate is relaxed.",
