@@ -347,6 +347,15 @@ job at a time and supplies the execution context (`course`, `signal`, `mode`, an
 `requestCheckpoint`) to the provider-backed runner. The queue artifact is the durable handoff; its
 independent worker digest never changes `sync` or `verify`'s completeness verdict.
 
+A retained course-root alias is not missing transcript evidence when its physical destination,
+recorded relative placement and recording metadata/state digests all agree with the current
+course and bytes. The worker can reconcile that artifact reference under its queue lock without
+acquiring media or changing originals, history or placement. Foreign/retargeted roots, internal
+symlinks, contradictory references, edited bytes and missing/conflicting proof require review;
+presence alone proves neither ownership nor speech quality. Evidence reads are limited to 32 MiB
+per file and five-second logical deadlines; physical filesystem cancellation and an atomic
+snapshot-to-publication comparison remain unclaimed. Guarded live qualification is separate.
+
 `media:withdraw` is the explicit confirmation route for one queued appearance. It writes a
 withdrawn tombstone into the queue, leaves every existing artifact alone, and never withdraws a
 completed appearance.
