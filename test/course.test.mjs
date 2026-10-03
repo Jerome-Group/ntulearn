@@ -374,7 +374,13 @@ const REORDERED = WEEK_1.map((item) => ({ ...item, position: item.position + 1 }
 const WEEK_1_PPT = "/bbcswebdav/w1";
 // The whole of the destination's root once the course has been synced. Asserted rather than the
 // folder alone, because the failure this is watching for is a *second* `Week 1` beside the first.
-const ROOT = ["01 Week 1", "Course.md", "Last synced.md", "Sync status.json"];
+const ROOT = [
+  "01 Week 1",
+  "Course.md",
+  "Last synced.md",
+  "Sync status.json",
+  "Source editions",
+].sort();
 
 async function again(destination, state, items = WEEK_1) {
   return syncCourse({
@@ -544,7 +550,7 @@ test("does not download again a file whose record was written before the type mo
   assert.equal(again.skipped, 1);
 });
 
-test("refuses ambiguous announcements without changing a legacy or user file", async () => {
+test("publishes distinct announcement editions without changing a legacy or user file", async () => {
   const destination = await mkdtemp(join(tmpdir(), "ntulearn-collision-"));
   const course = { key: "SYNTHETIC", courseId: "synthetic", destination };
   const announcements = [
@@ -574,11 +580,11 @@ test("refuses ambiguous announcements without changing a legacy or user file", a
   for (const order of [announcements, [...announcements].reverse()]) {
     snapshot.announcements = order;
     const result = await syncCourse({ client: reader, course, state: { courses: {} } });
-    assert.equal(result.failures.length, 2);
+    assert.equal(result.failures.length, 0);
     assert.equal(await readFile(legacy, "utf8"), "USER EDIT");
     assert.equal(
       JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
-      "partial",
+      "complete",
     );
   }
   snapshot.announcements = announcements.map((announcement, index) => ({

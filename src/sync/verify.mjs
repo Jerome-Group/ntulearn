@@ -1,5 +1,6 @@
 import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
 import { isFilePresent } from "./files.mjs";
+import { resolveSourceEditions } from "./source-editions.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { assertDestinationPath, safeResolve } from "./paths.mjs";
 
@@ -36,17 +37,20 @@ export async function verifyCourse({ client, course }) {
   const snapshot = await client.readCourse(course.courseId);
   const counted = { attachments: 0, documents: 0 };
   const expected = [];
-  const walked = [];
+  let walked = [];
   const countable = [];
   const missing = [];
   const renumbered = [];
 
   for await (const each of expectedFiles({ client, courseId: course.courseId, snapshot })) {
     walked.push(each);
+  }
+  walked = await resolveSourceEditions({ walked, destination: course.destination, verify: true });
+  for (const each of walked) {
     const number = COUNTED_AS[each.kind];
     if (number) {
-      counted[number] += 1;
-      countable.push(each.placement);
+      counted[number]++;
+      countable.push(each);
     }
     expected.push(each.placement.segments);
   }
@@ -56,15 +60,22 @@ export async function verifyCourse({ client, course }) {
   const numbering = numberingOf(course.destination, expected);
 
   const ambiguous = ambiguousPaths(walked);
-  for (const placement of countable) {
+  for (const each of countable) {
+    const placement = each.placement;
     const { file, trail, path, segments } = placement;
-    if (ambiguous.has(comparablePath(placement))) {
+    if (each.sourceFailure || ambiguous.has(comparablePath(placement, each.sourcePath))) {
       missing.push({ file, trail, path, reason: "ambiguous destination name" });
       continue;
     }
-    const target = safeResolve(course.destination, ...segments);
+    const target = each.sourcePath
+      ? safeResolve(course.destination, ...each.sourcePath.split("/"))
+      : safeResolve(course.destination, ...segments);
     await assertDestinationPath(course.destination, target);
-    if (await isFilePresent(target)) continue;
+    if (await isFilePresent(target)) {
+      if (each.sourcePath && each.sourcePath !== path)
+        renumbered.push({ file, trail, path, onDisk: each.sourcePath });
+      continue;
+    }
 
     const onDisk = await numbering.find(segments);
     if (onDisk) renumbered.push({ file, trail, path, onDisk });

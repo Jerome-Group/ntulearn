@@ -1,5 +1,7 @@
 # Verify is a read of both sides, and it is its own command
 
+**Placement lookup narrowed by [ADR-0019](0019-source-editions-add-distinct-identities-and-announcement-revisions.md):** bounded source-placement provenance may resolve source editions; State and current source contents remain outside verification.
+
 `verify` walks a configured course in NTULearn, resolves every attachment to the path a sync would
 give it, and reports which of those paths hold a file. It downloads nothing, writes nothing and
 deletes nothing, on either side. It is a command of its own — `npm run verify -- <course|all>` —

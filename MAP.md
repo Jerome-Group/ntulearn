@@ -17,7 +17,7 @@ offline operational observations: `npm run health`, `npm run status`.
 | Historical transcript repair | Offline inventory, paragraph formatting, fresh editions and course access indexes | `src/media/historical*.mjs`, `npm run media:format` |
 | Source recovery | Owned retained-media ASR candidates, native validation and exclusive lecture editions | `src/media/recovery*.mjs`, `npm run media:recover` |
 | Transcript evaluation | Bounded offline plan/run, immutable source/reference provenance, separate alignment/timing/formatting verdicts and private evidence | `src/media/evaluation*.mjs`, `npm run media:evaluate` |
-| Sync | Everything that has a destination in hand: the course walk and its portable receipt, occupied-file conflict protection, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |
+| Sync | Everything that has a destination in hand: the course walk and its portable receipt, occupied-file conflict protection, additive identity/revision source editions, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |
 | Scratch destinations | Destinations this repository owns, for trying something against a course without writing into a real one. Ignored, never committed | `.scratch/` (untracked) |
 | Tests | One file per module under test, plus the two that spawn the CLI to check what only a process shows | `test/` |

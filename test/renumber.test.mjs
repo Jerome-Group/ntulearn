@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, lstat, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -66,6 +66,7 @@ test("puts a destination back into the order the course has today", async () => 
     "03 Hand01.pdf",
     "Course.md",
     "Last synced.md",
+    "Source editions",
     "Sync status.json",
   ]);
   assert.deepEqual(result.renamed.map(({ from, to }) => `${from} -> ${to}`).sort(), [
@@ -164,6 +165,7 @@ test("holds a document against the text the walk produced rather than against a 
     "02 Knowledge Check.md",
     "Course.md",
     "Last synced.md",
+    "Source editions",
     "Sync status.json",
   ]);
   assert.equal(result.renamed.length, 1);
@@ -194,6 +196,7 @@ test("renames a folder whose own number moved, and carries its files with it", a
     "02 Week 1",
     "Course.md",
     "Last synced.md",
+    "Source editions",
     "Sync status.json",
   ]);
   assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), ["01 Slides.pdf"]);
@@ -232,6 +235,7 @@ test("leaves a course alone where an empty folder already holds the number it wa
     "02 Week 1",
     "Course.md",
     "Last synced.md",
+    "Source editions",
     "Sync status.json",
   ]);
   assert.deepEqual(await readdir(join(at.destination, "01 Week 1")), ["01 Slides.pdf"]);
@@ -287,13 +291,18 @@ async function reversibleFixture(t) {
 }
 
 async function directoryDigests(destination) {
-  return Object.fromEntries(
-    await Promise.all(
-      (await readdir(destination))
-        .sort()
-        .map(async (name) => [name, await fileDigest(join(destination, name))]),
-    ),
-  );
+  const values = {};
+  async function visit(directory, prefix = "") {
+    for (const name of (await readdir(directory)).sort()) {
+      const path = join(directory, name),
+        key = prefix + name,
+        info = await lstat(path);
+      if (info.isDirectory()) await visit(path, key + "/");
+      else values[key] = await fileDigest(path);
+    }
+  }
+  await visit(destination);
+  return values;
 }
 
 test("original snapshot reverses attachment numbering with distinct bytes, notes and state intact", async (t) => {

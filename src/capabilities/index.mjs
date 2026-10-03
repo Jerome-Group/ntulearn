@@ -29,6 +29,8 @@ const routes = {
       "src/sync/expected.mjs",
       "src/sync/files.mjs",
       "src/sync/state.mjs",
+      "src/sync/source-editions.mjs",
+      "src/sync/source-provenance.mjs",
       "src/sync/markdown.mjs",
       "src/ntulearn/download.mjs",
     ],
@@ -38,13 +40,25 @@ const routes = {
       "test/expected.test.mjs",
       "test/files.test.mjs",
       "test/state.test.mjs",
+      "test/source-editions.test.mjs",
+      "test/source-provenance.test.mjs",
       "test/markdown.test.mjs",
       "test/download.test.mjs",
     ],
   ],
   verification: [
-    ["src/sync/verify.mjs", "src/sync/import-status.mjs"],
-    ["test/verify.test.mjs", "test/import-status.test.mjs"],
+    [
+      "src/sync/verify.mjs",
+      "src/sync/import-status.mjs",
+      "src/sync/source-editions.mjs",
+      "src/sync/source-provenance.mjs",
+    ],
+    [
+      "test/verify.test.mjs",
+      "test/import-status.test.mjs",
+      "test/source-editions.test.mjs",
+      "test/source-provenance.test.mjs",
+    ],
   ],
   renumber: [["src/sync/renumber.mjs"], ["test/renumber.test.mjs"]],
   watchdog: [
@@ -332,7 +346,24 @@ const commands = [
     "sync",
     [...livePrerequisites, "distinct-course-destinations", "Drive-mounted"],
     { ...live, writes: ["course-destinations", "sync-state", "sync-receipts"] },
-    { arguments: courseArgument, risk: "user-storage" },
+    {
+      arguments: courseArgument,
+      risk: "user-storage",
+      sourceEditions: {
+        provenanceDirectory: "Source editions",
+        identity: "SHA-256 of positive upstream identity; ambiguous/missing identities refuse",
+        publication:
+          "Exclusive identity attachment placements and rendered-digest announcement revisions; originals and edits retained",
+        receiptCounts: ["newEditions", "reusedFiles", "unresolvedIdentity", "publicationConflicts"],
+        limits: {
+          provenanceRecordsPerIdentity: 128,
+          provenanceRecordBytes: 65536,
+          suffixedFilenameBytes: 160,
+        },
+        verification:
+          "Shared positive placement metadata, then presence only; State is not consulted",
+      },
+    },
   ),
   command(
     "verify",

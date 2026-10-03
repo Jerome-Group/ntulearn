@@ -3,11 +3,23 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
 import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
-import { isFilePresent, readText, writeAtomically, writeWithoutReplacing } from "./files.mjs";
+import {
+  fileDigest,
+  isFilePresent,
+  readText,
+  writeAtomically,
+  writeWithoutReplacing,
+} from "./files.mjs";
 import { withImportStatus } from "./import-status.mjs";
 import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { assertDestinationPath, safeResolve, safeSegment } from "./paths.mjs";
+import { recordSourceEdition } from "./source-provenance.mjs";
+import {
+  resolveSourceEditions,
+  attachmentStateKey,
+  attachmentFingerprint,
+} from "./source-editions.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 // Alone here rather than beside the other destination filenames in `expected.mjs`, because that
@@ -37,6 +49,10 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     markdownWritten: 0,
     uncopied: 0,
     renumbered: 0,
+    newEditions: 0,
+    reusedFiles: 0,
+    unresolvedIdentity: 0,
+    publicationConflicts: 0,
     failures: [],
   };
   const downloads = {};
@@ -46,7 +62,7 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
   // Read whole before written, because where a file belongs is decided among every name the course
   // expects rather than by that name alone — the sibling `numberingOf` needs and the reason
   // `verify` walks the same way (ADR-0005).
-  const walked = [];
+  let walked = [];
   const attachmentsByItem = new Map();
   for await (const expected of expectedFiles({
     client,
@@ -62,6 +78,7 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     course.mediaMode && course.mediaMode !== "off"
       ? recordingDiscovery({ course, snapshot, attachmentsByItem })
       : [];
+  walked = await resolveSourceEditions({ walked, destination: course.destination, previous });
   const numbering = numberingOf(
     course.destination,
     walked.map((expected) => expected.placement.segments),
@@ -78,7 +95,25 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
   await assertDestinationPath(course.destination, safeResolve(course.destination, SYNC_STAMP));
 
   for (const { expected, place } of placed) {
-    if (expected.kind !== "folder" && ambiguous.has(comparablePath(expected.placement))) {
+    if (expected.sourceFailure) {
+      const { file, trail, path } = expected.placement;
+      const conflict = expected.sourceFailure === "SOURCE_PUBLICATION_CONFLICT";
+      tally[conflict ? "publicationConflicts" : "unresolvedIdentity"]++;
+      tally.failures.push({
+        file,
+        trail,
+        path,
+        code: expected.sourceFailure,
+        error: conflict
+          ? "Source edition has different occupied bytes. Existing edits were retained. Compare the original and its edition before retrying."
+          : "Source identity or placement is missing or ambiguous. Existing files were retained. Report the source identity defect before retrying.",
+      });
+      continue;
+    }
+    if (
+      expected.kind !== "folder" &&
+      ambiguous.has(comparablePath(expected.placement, expected.sourcePath))
+    ) {
       const { file, trail, path } = expected.placement;
       tally.failures.push({
         file,
@@ -89,14 +124,18 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
       });
       continue;
     }
-    if (place.heldAt) tally.renumbered += 1;
+    if (place.heldAt || (place.sourcePinned && place.at !== expected.placement.path))
+      tally.renumbered += 1;
 
     switch (expected.kind) {
       case "folder":
         await mkdir(place.target, { recursive: true });
         break;
       case "document":
-        await writeDocument(place, expected.content, tally, expected.placement);
+        if (
+          await writeDocument(place, expected.content, tally, expected.placement, expected.edition)
+        )
+          await recordSourceEdition(course.destination, expected, place.heldAt ?? place.target);
         break;
       case "uncopied":
         tally.uncopied += 1;
@@ -104,7 +143,10 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
         break;
       case "attachment": {
         const { item, attachment, placement } = expected;
-        const record = previous.downloads?.[attachment.resourceUrl];
+        const record =
+          previous.downloads?.[attachmentStateKey(attachment)] ??
+          previous.downloads?.[attachment.resourceUrl];
+        const beforeDownloads = tally.downloaded;
         const saved = await saveAttachment({
           client,
           place,
@@ -114,7 +156,20 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
           record,
           tally,
         });
-        if (saved) downloads[attachment.resourceUrl] = saved;
+        if (saved) {
+          await recordSourceEdition(
+            course.destination,
+            expected,
+            place.heldAt ?? place.target,
+            saved,
+          );
+          if (expected.edition && tally.downloaded > beforeDownloads) tally.newEditions++;
+          downloads[attachmentStateKey(attachment)] = {
+            ...saved,
+            relativePath: place.sourcePinned ? place.at : saved.relativePath,
+            sourceIdentity: expected.source.identity,
+          };
+        }
         break;
       }
     }
@@ -174,6 +229,13 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
 // file would leave a reordered course split across two directories — the old one holding everything
 // that was there and a new one holding everything since.
 async function placeOf(numbering, destination, expected) {
+  if (expected.sourcePath)
+    return {
+      at: expected.sourcePath,
+      target: resolve(destination, expected.sourcePath),
+      heldAt: null,
+      sourcePinned: true,
+    };
   const { path, segments } = expected.placement;
   if (expected.kind === "folder") {
     return { at: path, target: await directoryFor(numbering, destination, segments), heldAt: null };
@@ -206,20 +268,30 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
   // under it — so an item pushed down the course read as changed and was fetched a second time
   // beside itself, sixty-one of them in one course (#70, ADR-0009). Actual recorded bytes are the
   // skip evidence: upstream fileSize can be wrong, and legacy records without bytes are compared.
-  const known = record?.fingerprint === fingerprint;
+  const known =
+    record?.fingerprint === fingerprint ||
+    record?.fingerprint === attachmentFingerprint(item, attachment, { legacy: true });
 
-  if (known && validByteCount(record?.bytes) && (await isFilePresent(place.target, record.bytes))) {
+  if (
+    known &&
+    validByteCount(record?.bytes) &&
+    /^[a-f0-9]{64}$/.test(record?.sha256 ?? "") &&
+    (await fileDigest(place.target)) === record.sha256
+  ) {
     tally.skipped += 1;
-    return { ...record, relativePath: place.at };
+    tally.reusedFiles += 1;
+    return retainedDownload(record, place.at, fingerprint);
   }
   if (
     known &&
     validByteCount(record?.bytes) &&
+    /^[a-f0-9]{64}$/.test(record?.sha256 ?? "") &&
     place.heldAt !== null &&
-    (await isFilePresent(place.heldAt, record.bytes))
+    (await fileDigest(place.heldAt)) === record.sha256
   ) {
     tally.skipped += 1;
-    return record;
+    tally.reusedFiles += 1;
+    return retainedDownload(record, record.relativePath, fingerprint);
   }
 
   try {
@@ -230,19 +302,24 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
     if (written) {
       tally.downloaded += 1;
       tally.bytes += body.length;
-    } else tally.skipped += 1;
+    } else {
+      tally.skipped += 1;
+      tally.reusedFiles += 1;
+    }
     return {
       fingerprint,
       relativePath: place.heldAt !== null ? place.at : placement.path,
       bytes: body.length,
       sha256: createHash("sha256").update(body).digest("hex"),
       // Written, never read: what a run may consult `State` for is ADR-0005's, not this line's.
-      ...downloadedType(attachment, headers),
+      ...retainedTypes(downloadedType(attachment, headers)),
     };
   } catch (error) {
     // Where it was and where it would have gone, because the item's own title is `ultraDocumentBody`
     // for every embedded document in a course and so names nothing (#21).
+    if (error.code === "SYNC_FILE_CONFLICT") tally.publicationConflicts++;
     tally.failures.push({
+      ...(error.code ? { code: error.code } : {}),
       file: placement.file,
       trail: placement.trail,
       path: placement.path,
@@ -264,24 +341,47 @@ async function writeUncopied(place, content, tally, placement) {
   await writeDocument(place, content, tally, placement);
 }
 
-function attachmentFingerprint(item, attachment) {
-  return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
-}
-
 // Counts describe material accepted by this run; a conflicting occupied path is a failure rather
 // than a successful write. ADR-0016 keeps even marked stand-ins once somebody may have annotated them.
-async function writeDocument(place, content, tally, placement) {
+async function writeDocument(place, content, tally, placement, edition = false) {
   if (!content) return;
   try {
-    if (await writeWithoutReplacing(place.heldAt ?? place.target, content))
+    if (await writeWithoutReplacing(place.heldAt ?? place.target, content)) {
       tally.markdownWritten += 1;
+      if (edition) tally.newEditions++;
+    } else tally.reusedFiles++;
     tally.markdown += 1;
+    return true;
   } catch (error) {
     const { file, trail, path } = placement;
+    if (error.code === "SYNC_FILE_CONFLICT") tally.publicationConflicts++;
     tally.failures.push({ file, trail, path, error: error.message });
   }
 }
 
 function validByteCount(value) {
   return Number.isSafeInteger(value) && value >= 0;
+}
+
+function retainedDownload(record, relativePath, fingerprint) {
+  return {
+    fingerprint,
+    relativePath,
+    bytes: record.bytes,
+    sha256: record.sha256,
+    ...retainedTypes(record),
+  };
+}
+function retainedTypes(record) {
+  return Object.fromEntries(
+    ["mimeType", "claimedMimeType"]
+      .filter((field) => Object.hasOwn(record, field))
+      .map((field) => [
+        field,
+        typeof record[field] === "string" &&
+        /https?:\/\/|[?&](?:ks|token|session|signature|sig)=/i.test(record[field])
+          ? null
+          : record[field],
+      ]),
+  );
 }

@@ -17,6 +17,12 @@ const ROOT_FIELDS = [
   "unread",
 ];
 const COUNT_FIELDS = ["downloaded", "failures", "markdown", "skipped", "uncopied"];
+const SOURCE_COUNT_FIELDS = [
+  "newEditions",
+  "reusedFiles",
+  "unresolvedIdentity",
+  "publicationConflicts",
+];
 const STATUSES = new Set(["running", "complete", "partial", "failed"]);
 const UNREAD_CATEGORIES = new Set(["announcements", "conversations"]);
 const RETRY_OR_REPORT = "Run the same sync again; if it repeats, report an ntulearn defect.";
@@ -86,7 +92,7 @@ export function isValidImportStatus(value, observedAt) {
     return false;
   }
 
-  const zeroCounts = COUNT_FIELDS.every((field) => value.counts[field] === 0);
+  const zeroCounts = Object.values(value.counts).every((count) => count === 0);
   if (value.status === "running") {
     return value.finishedAt === null && zeroCounts && value.unread.length === 0;
   }
@@ -135,6 +141,12 @@ function countsFrom(result) {
     markdown: result.markdown,
     uncopied: result.uncopied,
     failures: result.failures.length,
+    ...Object.fromEntries(
+      SOURCE_COUNT_FIELDS.filter((field) => Object.hasOwn(result, field)).map((field) => [
+        field,
+        result[field],
+      ]),
+    ),
   };
 }
 
@@ -176,8 +188,11 @@ function canonicalNow(clock) {
 function validCounts(value) {
   return (
     isPlainObject(value) &&
-    hasExactFields(value, COUNT_FIELDS) &&
-    COUNT_FIELDS.every((field) => Number.isSafeInteger(value[field]) && value[field] >= 0)
+    COUNT_FIELDS.every((field) => Object.hasOwn(value, field)) &&
+    Object.keys(value).every(
+      (field) => COUNT_FIELDS.includes(field) || SOURCE_COUNT_FIELDS.includes(field),
+    ) &&
+    Object.values(value).every((count) => Number.isSafeInteger(count) && count >= 0)
   );
 }
 

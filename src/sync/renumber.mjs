@@ -3,6 +3,7 @@ import { expectedFiles } from "./expected.mjs";
 import { fileDigest, moveDirectory, readText, relinkFile } from "./files.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { safeResolve, safeSegment, unnumbered } from "./paths.mjs";
+import { attachmentStateKey } from "./source-editions.mjs";
 import { courseState } from "./state.mjs";
 
 // Why something the numbering has moved was left where it is. Said in the report rather than
@@ -105,7 +106,9 @@ async function unproven(expected, from, previous) {
     return (await readText(from)) === expected.content ? null : CHANGED;
   }
 
-  const record = previous.downloads?.[expected.attachment.resourceUrl];
+  const record =
+    previous.downloads?.[attachmentStateKey(expected.attachment)] ??
+    previous.downloads?.[expected.attachment.resourceUrl];
   if (!record?.sha256) return UNRECORDED;
   return (await fileDigest(from)) === record.sha256 ? null : CHANGED;
 }
