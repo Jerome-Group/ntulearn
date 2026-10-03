@@ -402,9 +402,7 @@ test("optional setup preserves unconfirmed cleanup subtype when the durable barr
 test("launched synthetic wrapper cannot hide mutated delegate bytes behind identical capability flags", async (t) => {
   const f = await fixture(t);
   const help = (await f.deps.commandRunner()).stdout;
-  const script = Buffer.from(
-    `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(help)});\n`,
-  );
+  const script = Buffer.from(`#!/bin/sh\nprintf '%s' '${help.replaceAll("'", "'\\''")}'\n`);
   await writeFile(f.delegatePath, script);
   await chmod(f.delegatePath, 0o700);
   await chmod(join(f.verified.runtime.root, "bin/whisper"), 0o700);
@@ -421,7 +419,7 @@ test("launched synthetic wrapper cannot hide mutated delegate bytes behind ident
   assert.equal(proof.delegate.input.sha256, historicalDigest(script));
   await writeFile(
     f.delegatePath,
-    Buffer.concat([script, Buffer.from("// changed build with same help\n")]),
+    Buffer.concat([script, Buffer.from("# changed build with same help\n")]),
   );
   let probes = 0;
   await assert.rejects(
