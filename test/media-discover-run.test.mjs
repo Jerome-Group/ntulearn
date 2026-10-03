@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { setImmediate, setTimeout } from "node:timers";
 import { join } from "node:path";
 import { chromium } from "playwright";
+import { courseAnnouncementFixture } from "./fixtures/course-announcement.mjs";
 let originalLaunch;
 test.before(() => {
   originalLaunch = chromium.launchPersistentContext;
@@ -409,7 +410,9 @@ test("abort closes actual workflow's pending API read and waits its rejection be
     entered = resolve;
   });
   f.deps.discover = undefined;
+  const context = { route: async () => {}, serviceWorkers: () => [] };
   f.deps.open = async () => ({
+    withBrowserPage: async (read) => read({ context: () => context }),
     readCourse: async () => {
       entered();
       return new Promise((_resolve, reject) => {
@@ -612,3 +615,66 @@ test("ordinary canonical startup cleanup retains default pending-close semantics
     chromium.launchPersistentContext = prior;
   }
 });
+
+for (const closeBoundary of ["context", "page"])
+  test(`observed supplied-route discovery cannot publish or open another course after owned ${closeBoundary} close failure`, async (t) => {
+    const f = await fixture(t);
+    f.deps.discover = undefined;
+    let opened = 0,
+      writes = 0;
+    f.deps.open = async () => {
+      opened++;
+      const pageFixture = courseAnnouncementFixture();
+      const url =
+        "https://ntulearn.ntu.edu.sg/webapps/blackboard/execute/blti/launchPlacement?blti_placement_id=placement&content_id=gallery&course_id=A&wrapped=true";
+      pageFixture.page.goto = async (supplied) => {
+        assert.equal(supplied, url);
+        await pageFixture.send("GET", supplied);
+      };
+      pageFixture.page.close = async () => {
+        if (closeBoundary === "page") {
+          await pageFixture.send("POST");
+          throw new Error("Synthetic page closure uncertainty");
+        }
+      };
+      return {
+        withBrowserPage: async (read) => {
+          try {
+            return await read(pageFixture.page);
+          } finally {
+            await pageFixture.page.close();
+          }
+        },
+        readCourse: async () => ({
+          course: { id: "A" },
+          items: [
+            {
+              id: "gallery",
+              title: "Media Gallery",
+              contentDetail: {
+                lti: { launchLink: url, placement: { id: "placement", launchLink: url } },
+              },
+            },
+          ],
+        }),
+        close: async () => {
+          if (closeBoundary === "context") throw new Error("Synthetic uncertain closure");
+        },
+      };
+    };
+    f.deps.writeQueue = async () => {
+      writes++;
+    };
+    const result = await runMediaDiscovery({ config: f.config, key: "all" }, f.deps);
+    assert.equal(result.failureCode, "MEDIA_BROWSER_CLEANUP");
+    assert.equal(result.cleanup, "unconfirmed");
+    assert.equal(result.globalStop, true);
+    assert.equal(result.safetyBarrier, "retained");
+    assert.equal(opened, 1);
+    assert.equal(writes, 0);
+    assert.equal(result.notAttempted.length, 1);
+    assert.equal(
+      JSON.parse(await readFile(mediaSafetyPath(f.config.statePath))).code,
+      "MEDIA_BROWSER_CLEANUP",
+    );
+  });
