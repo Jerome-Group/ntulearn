@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, writeFile, readFile, readdir, rm, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -626,3 +626,183 @@ for (const signalName of ["SIGINT", "SIGTERM"]) {
     }
   });
 }
+
+test("explicit retry rejects extra arguments before loading a configuration", async () => {
+  const result = await runCliWithEnvironment(
+    { ...process.env, NTULEARN_CONFIG_PATH: "/missing-synthetic-config" },
+    "media-retry",
+    "plan",
+    "all",
+    "failed",
+    "unexpected",
+  );
+  assert.equal(result.code, 2);
+  assert.equal(result.stderr, "");
+  assert.equal(JSON.parse(result.stdout).checks[0].code, "MEDIA_RETRY_ARGUMENTS");
+});
+
+test("explicit retry CLI plans, requires confirmation, respects locking and preserves originals", async (t) => {
+  const f = await mediaWriterFixture(t);
+  const original = JSON.parse(await readFile(f.queuePath));
+  original.queue[0] = {
+    ...original.queue[0],
+    recordingId: "content-tree:_fixture_1:synthetic",
+    courseKey: "SYNTHETIC",
+    courseId: "_fixture_1",
+    provider: "direct",
+    providerReference: "direct:fixture.test/lecture.mp4",
+    disposition: "recording",
+    classificationEvidence: "media",
+    stage: "failed",
+    verdict: "red",
+    complete: false,
+    retryable: false,
+    attempts: 3,
+    lastError: "synthetic acquisition failure",
+    limitations: ["synthetic prior failure"],
+  };
+  await writeFile(f.queuePath, JSON.stringify(original));
+  const example = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("../config/courses.example.json", import.meta.url)),
+      "utf8",
+    ),
+  );
+  const unusedArtifact = {
+    name: "synthetic unused asset",
+    source: join(f.root, "unused-asset"),
+    revision: "fixture",
+    sha256: "a".repeat(64),
+    license: "fixture",
+  };
+  await writeFile(
+    join(f.root, "courses.json"),
+    JSON.stringify({
+      ...example,
+      media: {
+        ...example.media,
+        setup: {
+          mediaTool: unusedArtifact,
+          asr: { runtime: unusedArtifact, model: unusedArtifact },
+          formatter: { runtime: unusedArtifact, model: unusedArtifact },
+        },
+      },
+      profilePath: f.profilePath,
+      statePath: f.statePath,
+      courses: [
+        {
+          key: "SYNTHETIC",
+          courseId: "_fixture_1",
+          destination: f.destination,
+          mediaMode: "active",
+        },
+      ],
+    }),
+  );
+  const before = await readFile(f.queuePath);
+  const plan = await runCliWithEnvironment(f.env, "media-retry", "plan", "all", "failed");
+  assert.equal(plan.code, 0, plan.stderr || plan.stdout);
+  assert.equal(JSON.parse(plan.stdout).evidence.selected, 1);
+  assert.deepEqual(await readFile(f.queuePath), before);
+  const unconfirmed = await runCliWithEnvironment(f.env, "media-retry", "apply", "all", "failed");
+  assert.equal(unconfirmed.code, 2);
+  assert.equal(JSON.parse(unconfirmed.stdout).checks[0].code, "MEDIA_RETRY_CONFIRMATION_REQUIRED");
+  await withMediaQueueLock({
+    statePath: f.statePath,
+    run: async () => {
+      const locked = await runCliWithEnvironment(
+        f.env,
+        "media-retry",
+        "apply",
+        "all",
+        "failed",
+        "RETRY_FAILED_MEDIA",
+      );
+      assert.equal(locked.code, 2);
+      assert.equal(JSON.parse(locked.stdout).checks[0].code, "MEDIA_RETRY_LOCK_HELD");
+      assert.deepEqual(await readFile(f.queuePath), before);
+    },
+  });
+  const applied = await runCliWithEnvironment(
+    f.env,
+    "media-retry",
+    "apply",
+    "all",
+    "failed",
+    "RETRY_FAILED_MEDIA",
+  );
+  assert.equal(applied.code, 0);
+  assert.equal(JSON.parse(applied.stdout).evidence.changed, 1);
+  const next = JSON.parse(await readFile(f.queuePath)).queue[0];
+  assert.equal(next.retryable, true);
+  assert.equal(next.stage, "failed");
+  assert.equal(next.attempts, 3);
+  assert.equal(next.lastError, original.queue[0].lastError);
+  assert.deepEqual(next.checkpoint, f.checkpoint);
+  assert.deepEqual(next.artifacts, original.queue[0].artifacts);
+  assert.equal(await readFile(f.artifacts.rawTranscriptPath, "utf8"), "synthetic source evidence");
+  assert.equal(
+    await readFile(join(f.destination, "Synthetic.transcript.md"), "utf8"),
+    "Student annotated transcript",
+  );
+  const saved = await readFile(f.queuePath);
+  const repeated = await runCliWithEnvironment(
+    f.env,
+    "media-retry",
+    "apply",
+    "all",
+    "failed",
+    "RETRY_FAILED_MEDIA",
+  );
+  assert.equal(repeated.code, 0);
+  assert.equal(JSON.parse(repeated.stdout).evidence.changed, 0);
+  assert.deepEqual(await readFile(f.queuePath), saved);
+  assert.doesNotMatch(
+    applied.stdout,
+    /_fixture_1|fixture\.test|synthetic prior failure|Student annotated/,
+  );
+  await assert.rejects(lstat(f.profilePath), { code: "ENOENT" });
+});
+
+test("explicit retry configuration refusals are structured and omit private paths and snippets", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-private-retry-config-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const malformed = join(root, "fixture-secret-malformed.json");
+  await writeFile(malformed, '{"token":"fixture-secret", bad-private-fragment}');
+  const blocked = join(root, "fixture-secret-blocked-root");
+  await writeFile(blocked, "synthetic file blocks directory traversal");
+  const inaccessible = join(root, "inaccessible.json");
+  await writeFile(
+    inaccessible,
+    JSON.stringify({
+      courses: [
+        {
+          key: "FIXTURE",
+          courseId: "fixture",
+          destination: join(blocked, "child"),
+          mediaMode: "off",
+        },
+      ],
+    }),
+  );
+  for (const configPath of [join(root, "fixture-secret-missing.json"), malformed, inaccessible]) {
+    const result = await runCliWithEnvironment(
+      { ...process.env, NTULEARN_CONFIG_PATH: configPath },
+      "media-retry",
+      "plan",
+      "all",
+      "failed",
+    );
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.status, "blocked");
+    assert.equal(report.checks[0].code, "MEDIA_RETRY_CONFIG_UNAVAILABLE");
+    assert.equal(report.evidence.changed, 0);
+    assert.equal(report.evidence.retrySucceeded, "unrun");
+    assert.doesNotMatch(
+      result.stdout,
+      /fixture-secret|bad-private-fragment|ntulearn-private-retry-config|SyntaxError|ENOTDIR/,
+    );
+  }
+});

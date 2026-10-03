@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -178,6 +178,59 @@ async function mediaDiscover(config, key) {
   });
 }
 
+async function mediaRetry([mode, courseKey, selector, confirmation, ...unexpected]) {
+  let result;
+  if (
+    !["plan", "apply"].includes(mode) ||
+    !courseKey ||
+    !selector ||
+    unexpected.length ||
+    (mode === "plan" && confirmation !== undefined)
+  ) {
+    result = capabilityResult("media:retry", [
+      observation(
+        "arguments",
+        "blocked",
+        "MEDIA_RETRY_ARGUMENTS",
+        "Invalid explicit media retry arguments.",
+        "Run: npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA]",
+      ),
+    ]);
+  } else {
+    const { retryMediaJobs } = await import("./media/retry.mjs");
+    let config;
+    try {
+      config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+    } catch {
+      result = capabilityResult(
+        "media:retry",
+        [
+          observation(
+            "configuration",
+            "blocked",
+            "MEDIA_RETRY_CONFIG_UNAVAILABLE",
+            "Private configuration or configured course roots could not be validated.",
+            "Copy config/courses.example.json to the private configuration path, repair its JSON and restore accessible course folders; then run media:retry plan. No private error details exposed.",
+          ),
+        ],
+        {
+          mode,
+          courses: 0,
+          inspected: 0,
+          selected: 0,
+          alreadyRetryable: 0,
+          changed: 0,
+          retrySucceeded: "unrun",
+          mediaCompleteness: "unclaimed",
+        },
+      );
+    }
+    if (config) result = await retryMediaJobs({ mode, config, courseKey, selector, confirmation });
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
+}
+
 async function mediaWithdraw(config, key, recordingId, confirmation) {
   if (!key || key.toLowerCase() === "all" || !recordingId || confirmation !== "confirm") {
     throw new Error("Usage: npm run media:withdraw -- <course> <recordingId> confirm");
@@ -299,6 +352,7 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
+  if (name === "media-retry") return mediaRetry(argumentsForCommand);
   if (name === "media-worker") return mediaWorker(argumentsForCommand);
   if (name === "media-format") return mediaFormat(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);

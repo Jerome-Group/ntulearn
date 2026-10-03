@@ -22,6 +22,10 @@ read/write effects, arguments, implementation and fixture verification routes. I
 configuration or browser installation. Select a command or feature with
 `npm run capabilities -- transcripts`.
 
+Use `npm run --silent capabilities` for JSON without npm's banner. The index describes result
+fields and command-specific effects. `NTULEARN_CONFIG_PATH` selects an absolute or checkout-relative
+private configuration file; relative values inside it still resolve from the checkout root.
+
 ```bash
 npm run health               # offline config/filesystem observations; never opens the session
 npm run status               # offline receipts, queues and digest freshness; no source contents
@@ -56,6 +60,8 @@ npm run media:setup            # Owner-started: prepare and verify the local med
 npm run media:discover -- all  # Owner-started: discover and queue recording appearances
 npm run media:worker -- manual # Owner-started: process every enabled queue now
 npm run media:worker -- manual MH2100 # Prioritize one course; still process all enabled queues
+npm run media:retry -- plan all failed # Inspect explicit retry eligibility without writing
+npm run media:retry -- apply all failed RETRY_FAILED_MEDIA # Owner: rearm eligible failed recordings
 npm run media:worker            # Scheduled semantics: work only from 00:00 through 03:59
 npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # confirm one withdrawal
 ```
@@ -98,6 +104,13 @@ appearance has a sibling `.media-status.md` with provider, source, stage, video/
 transcript provenance, retryability, and limitations. A queued appearance is yellow until its next
 eligible worker window; an attempted incomplete source or derivative is red and records its retry eligibility.
 The status documents and queue remain independent from sync and verify verdicts.
+
+`media:retry` changes retry permission only. Plan is read-only; apply requires explicit Owner
+authorization, the literal confirmation and exclusive queue ownership. It preserves failure
+history, attempts, verdicts and existing artifacts. Disabled courses, incomplete discovery,
+unresolved/excluded/withdrawn jobs and cleanup safety evidence are refused. Run the worker after
+rearming; retry permission does not prove acquisition, transcription or completion. A specific
+recording ID can replace `failed`, and one configured course can replace `all`.
 
 ## Configuration
 

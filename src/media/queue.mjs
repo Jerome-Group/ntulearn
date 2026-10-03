@@ -33,7 +33,7 @@ const JOB_STATE_FIELDS = Object.freeze([
   "finishedAt",
   "lastError",
 ]);
-const EPHEMERAL_JOB_FIELDS = new Set([
+export const EPHEMERAL_MEDIA_JOB_FIELDS = Object.freeze([
   "resolved",
   "resolvedUrl",
   "sourceUrl",
@@ -43,6 +43,7 @@ const EPHEMERAL_JOB_FIELDS = new Set([
   "cookies",
   "requestHeaders",
 ]);
+const EPHEMERAL_JOB_FIELDS = new Set(EPHEMERAL_MEDIA_JOB_FIELDS);
 
 export async function writeMediaQueue({
   statePath,
