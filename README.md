@@ -352,6 +352,16 @@ evidence; successful lexical checks and conditional alignment never turn that bl
 
 ### Kaltura Media Gallery discovery
 
+When the course opens one exact **New Course Announcement** dialog, Gallery discovery may use its
+**Close new announcements modal** control. It never chooses **Mark as read**, uses force, or dismisses
+unknown/consent/authentication/multiple dialogs. Before closing, an owned-context request guard blocks
+non-GET/HEAD NTULearn requests and retains only bounded failure codes. GET/HEAD use route fallback;
+existing route chaining remains intact. Known service workers, unavailable guard APIs and unconfirmed
+close refuse with incomplete discovery. The guard stays for that context's lifetime; it does not cover
+arbitrary other contexts, external page-route overrides or detached/unknown service workers, and changes
+no browser/security setting. Close an affected owned context and inspect the fixed diagnostic before
+retrying. No request URLs, headers, payloads or browser logs are retained in diagnostics.
+
 Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the
 signed-in course surface, exhausts its visible `Load More`/pagination controls, and refuses to
 queue any appearance until the discovered visible count matches the Gallery's displayed total.
