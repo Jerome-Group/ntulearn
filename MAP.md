@@ -26,7 +26,7 @@ offline operational observations: `npm run health`, `npm run status`.
 | Code standards | How code is written and reviewed | `CODING_STANDARDS.md` |
 | Domain language | The glossary — this repository's ubiquitous language | `CONTEXT.md` |
 | Decisions | Architecture decision records | `docs/adr/` |
-| Research | Findings from reading somebody else's documentation, one file per question | `docs/research/` |
+| Research | Findings from primary documentation, one file per question; platform containment design and qualification routes | `docs/research/`, `docs/research/platform-containment-design.md` |
 | Agent skills | The routines an agent follows here, one file per skill | `docs/agents/` |
 | Automation | The workflows that run on a pull request or on a new issue, and dependency updates | `.github/` |
 

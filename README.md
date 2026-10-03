@@ -332,6 +332,8 @@ prove exhaustive orphan recovery. Safely supervising those runtimes requires a s
 execution design; broad process scans or unrelated-process kills are not a recovery mechanism.
 The [platform boundary](docs/research/detached-process-containment.md) records why ancestry polling
 and stock macOS process notifications cannot establish arbitrary-descendant ownership.
+The [containment design evaluation](docs/research/platform-containment-design.md) compares macOS27
+Endpoint Security and Linux cgroups, with explicit prerequisites and unrun qualification routes.
 `node --test test/media-process-boundary.test.mjs` reproduces timeout/checkpoint escapes with closed
 and inherited pipes, while checking original-group cancellation and an unrelated sentinel. Its
 explicit `independentlyDetached: failed/unsupported` evidence keeps that limitation visible; a
