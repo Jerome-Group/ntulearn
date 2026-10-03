@@ -145,3 +145,19 @@ test("indexed check exposes explicit private evidence ownership, bounds and anon
   assert.equal(route.effects.network, false);
   assert.equal(route.effects.browser, false);
 });
+
+test("unassociated review route separates explicit Owner publication from bounded local observation", () => {
+  const entry = capabilityIndex().commands.find(
+    (command) => command.id === "media-format-unassociated",
+  );
+  assert.equal(entry.operations.apply.ownerOnly, true);
+  assert.ok(entry.operations.apply.prerequisites.includes("PUBLISH_UNASSOCIATED_REVIEW_EDITIONS"));
+  assert.deepEqual(entry.operations.verify.writes, []);
+  assert.ok(
+    entry.operations.plan.exceptionalWrites.includes("safety-barrier-on-unconfirmed-file-cleanup"),
+  );
+  assert.match(
+    entry.limitations.join(" "),
+    /Metadata absence does not prove no course association/,
+  );
+});

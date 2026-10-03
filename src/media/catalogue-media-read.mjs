@@ -180,7 +180,7 @@ export function createCatalogueMediaReads(
         }
       });
     },
-    async read(path, boundary) {
+    async read(path, boundary, { retain = false } = {}) {
       active();
       if (
         !isAbsolute(path) ||
@@ -212,6 +212,7 @@ export function createCatalogueMediaReads(
           combined.throwIfAborted();
           const hash = createHash("sha256"),
             buffer = Buffer.alloc(64 * 1024);
+          const parts = retain ? [] : null;
           let received = 0;
           while (true) {
             active();
@@ -222,7 +223,9 @@ export function createCatalogueMediaReads(
             bytes += bytesRead;
             if (received > before.size || bytes > limits.totalBytes)
               throw catalogueFailure("CATALOGUE_MEDIA_LIMIT");
-            hash.update(buffer.subarray(0, bytesRead));
+            const part = buffer.subarray(0, bytesRead);
+            hash.update(part);
+            if (parts) parts.push(Buffer.from(part));
           }
           const after = await handle.stat(),
             current = await inspect(path);
@@ -245,6 +248,7 @@ export function createCatalogueMediaReads(
             identity: identity(before),
             parents: ancestry,
             boundary,
+            ...(parts ? { content: Buffer.concat(parts) } : {}),
           };
         } finally {
           await closeMedia(handle);

@@ -204,6 +204,25 @@ const routes = {
       "test/cli.test.mjs",
     ],
   ],
+  "unassociated-transcripts": [
+    [
+      "src/media/unassociated-format.mjs",
+      "src/media/unassociated-inventory.mjs",
+      "src/media/unassociated-files.mjs",
+      "src/media/historical-format.mjs",
+      "src/media/historical-files.mjs",
+      "src/media/catalogue-media-read.mjs",
+      "src/media/catalogue-profile.mjs",
+      "src/media/catalogue-safety.mjs",
+      "src/cli.mjs",
+    ],
+    [
+      "test/unassociated-format.test.mjs",
+      "test/media-historical-format.test.mjs",
+      "test/media-catalogue-media.test.mjs",
+      "test/capabilities.test.mjs",
+    ],
+  ],
   "media-evaluation": [
     [
       "src/media/evaluation.mjs",
@@ -707,6 +726,69 @@ const commands = [
       },
       limitations: [
         "Source words preserved; timing failures and suspected source corruption remain separate. No acoustic or complete/ready media claim. Originals and historical queues/state/status are never replaced.",
+      ],
+    },
+  ),
+  command(
+    "media-format-unassociated",
+    "media:format-unassociated",
+    "unassociated-transcripts",
+    ["configured-media-root", "accessible-private-raw-sources", "safe-media-admission"],
+    {
+      reads: ["private-raw-transcripts", "metadata-presence-only", "private-plan"],
+      writes: [
+        "private-plan-for-plan",
+        "exclusive-review-editions-for-apply",
+        "cleanup-safety-barrier-on-uncertainty",
+      ],
+      ownerOnly: false,
+    },
+    {
+      arguments: [
+        "<plan|apply|verify>",
+        "<private-plan>",
+        "[PUBLISH_UNASSOCIATED_REVIEW_EDITIONS (apply only)]",
+      ],
+      risk: "local-user-storage",
+      output: "capability-result-v1",
+      exitCodes: offlineCodes,
+      operations: {
+        plan: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: false,
+          prerequisites: ["fresh-private-plan-outside-media-and-profile"],
+          writes: ["exclusive-private-plan"],
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
+        },
+        apply: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: true,
+          prerequisites: [
+            "unchanged-private-plan",
+            "PUBLISH_UNASSOCIATED_REVIEW_EDITIONS",
+            "RAID0-and-reserve",
+            "media-queue-lock",
+          ],
+          writes: ["exclusive-review-reading", "immutable-provenance-and-review-index"],
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
+        },
+        verify: {
+          network: false,
+          browser: false,
+          runtime: false,
+          ownerOnly: false,
+          prerequisites: ["unchanged-private-plan"],
+          writes: [],
+          exceptionalWrites: ["safety-barrier-on-unconfirmed-file-cleanup"],
+        },
+      },
+      limitations: [
+        "Only metadata-absent valid raw sources within configured MediaRoot are admitted. Metadata absence does not prove no course association; every edition labels association unverified/review-only. Metadata-present and invalid sources are accounted but excluded. Never changes original source, course index, queue, status, review flags or user edits.",
+        "Deterministic historical paragraphs preserve source words/math/uncertainty; repetition stays verbatim and flagged. Timing remains unknown without independent duration evidence; no ASR/model, acoustic, upstream or media readiness claim. Immutable opaque IDs/source SHA and parent/descriptor proofs; different occupied outputs refuse. Exact existing-byte reuse rechecks source/plan/parent/leaf pins before any publication mkdir/staging/byte write. Ordinary manifest paths refuse dedicated state/control namespace and physical aliases; exceptional cleanup barriers remain deliberate safety writes. 4MiB/file,256MiB input/output,20000 scanned entries,depth16,120s operation and5s I/O plus5s positive settlement; unknown cleanup retains durable containment, physical I/O cancellation unclaimed.",
       ],
     },
   ),
