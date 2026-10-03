@@ -82,6 +82,15 @@ test("prepares all selected runtimes and models under the Media store", async ()
   });
   assert.deepEqual(await readdir(result.runtime.temp), []);
 
+  const baselineManifest = await readFile(result.manifestPath);
+  await writeFile(
+    join(result.runtime.models, "ggml-silero-v6.2.0.bin"),
+    "synthetic optional model",
+  );
+  await writeFile(
+    join(result.runtime.metadata, "recovery-vad-prepared.json"),
+    "synthetic optional receipt",
+  );
   const verifiedCommands = [];
   const verified = await verifyMediaRuntime(media, {
     volumeRoot,
@@ -92,6 +101,8 @@ test("prepares all selected runtimes and models under the Media store", async ()
     },
   });
   assert.equal(verified.manifestPath, result.manifestPath);
+  assert.equal(verified.artifacts.length, 5);
+  assert.deepEqual(await readFile(result.manifestPath), baselineManifest);
   assert.deepEqual(
     verifiedCommands.map(([command]) => command),
     [

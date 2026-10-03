@@ -4,6 +4,7 @@ import { readFile, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { recoveryFixture, incompleteRecoveryFixture } from "./fixtures/media-recovery.mjs";
 import { recoverTranscriptSources } from "../src/media/recovery.mjs";
+import { VAD_RUNTIME, vadRuntimePin } from "../src/media/vad-model.mjs";
 import { transcriptCatalogue } from "../src/media/catalogue.mjs";
 
 async function published(t, factory = recoveryFixture, policy) {
@@ -11,6 +12,19 @@ async function published(t, factory = recoveryFixture, policy) {
   if (policy) {
     f.manifest.policy = policy;
     await f.saveManifest();
+  }
+  if (policy === "independent-context-nonspeech-vad-v1") {
+    const verifyRuntime = f.dependencies.verifyRuntime;
+    f.dependencies.verifyRuntime = async (...args) => {
+      const runtime = await verifyRuntime(...args);
+      runtime.artifacts.push({ key: "asr.runtime", sha256: VAD_RUNTIME.sha256 });
+      return runtime;
+    };
+    f.dependencies.verifyVad = async () => ({
+      path: join(f.root, "fixture-vad.bin"),
+      pin: vadRuntimePin(),
+      inputs: [],
+    });
   }
   assert.equal(
     (await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies)).status,
@@ -139,3 +153,72 @@ for (const factory of [recoveryFixture, incompleteRecoveryFixture])
     const changed = await transcriptCatalogue({ config: f.config, mode: "inspect" });
     assert.equal(changed.catalogue.courses[0].recordings[0].preferred, null);
   });
+
+for (const factory of [recoveryFixture, incompleteRecoveryFixture])
+  test(`VAD catalogue ${factory.name} retains closed optional evidence and rejects mutually matching foreign pins`, async (t) => {
+    const f = await published(t, factory, "independent-context-nonspeech-vad-v1");
+    const initial = await transcriptCatalogue({ config: f.config, mode: "inspect" });
+    assert.equal(initial.catalogue.courses[0].recordings[0].preferred?.policy, f.manifest.policy);
+    const provenancePath = initial.catalogue.courses[0].recordings[0].preferred.provenance;
+    const reportPath = join(f.outputDirectory, "recovery.json");
+    const originalReport = JSON.parse(await readFile(reportPath)),
+      originalProvenance = JSON.parse(await readFile(provenancePath));
+    for (const kind of [
+      "missing",
+      "model",
+      "runtime",
+      "controls",
+      "revision",
+      "bytes",
+      "duplicate",
+    ]) {
+      const report = globalThis.structuredClone(originalReport),
+        provenance = globalThis.structuredClone(originalProvenance);
+      const pin = report.runtimePins.find((pin) => pin.key === "asr.vad");
+      if (kind === "missing")
+        report.runtimePins = report.runtimePins.filter((pin) => pin.key !== "asr.vad");
+      if (kind === "model") pin.sha256 = "0".repeat(64);
+      if (kind === "runtime")
+        report.runtimePins.find((pin) => pin.key === "asr.runtime").sha256 = "0".repeat(64);
+      if (kind === "controls") pin.controls[1] = "0.9";
+      if (kind === "revision") pin.revision = "foreign";
+      if (kind === "bytes") pin.bytes++;
+      if (kind === "duplicate") report.runtimePins.push({ ...pin });
+      provenance.runtimePins = report.runtimePins;
+      await writeFile(reportPath, JSON.stringify(report));
+      await writeFile(provenancePath, JSON.stringify(provenance));
+      const changed = await transcriptCatalogue({ config: f.config, mode: "inspect" });
+      assert.equal(changed.catalogue.courses[0].recordings[0].preferred, null, kind);
+    }
+    assert.equal(await readFile(f.sourcePath, "utf8"), f.sourceBody);
+  });
+
+test("VAD and earlier-policy editions with identical prose require explicit catalogue selection", async (t) => {
+  const f = await published(t, recoveryFixture, "independent-context-nonspeech-vad-v1");
+  f.manifest.policy = "independent-context-nonspeech-v1";
+  await f.saveManifest();
+  const options = {
+    ...f.options,
+    outputDirectory: join(f.config.media.mediaRoot, "earlier-policy-candidate"),
+  };
+  assert.equal(
+    (await recoverTranscriptSources({ ...options, mode: "run" }, f.dependencies)).status,
+    "passed",
+  );
+  assert.equal(
+    (await recoverTranscriptSources({ ...options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  const inspected = await transcriptCatalogue({ config: f.config, mode: "inspect" });
+  const recording = inspected.catalogue.courses[0].recordings[0];
+  assert.equal(recording.preferred, null);
+  assert.equal(recording.reason, "ambiguous-eligible-editions");
+  assert.equal(
+    new Set(
+      recording.editions
+        .filter((edition) => edition.eligible)
+        .map((edition) => edition.equivalence),
+    ).size,
+    2,
+  );
+});

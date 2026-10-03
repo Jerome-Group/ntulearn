@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] [RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] [RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -103,7 +103,33 @@ async function watchdog(config) {
   return result.exitCode;
 }
 
-async function mediaSetup(config) {
+async function mediaSetup(config, optional, ...unexpected) {
+  if (optional === "vad" && !unexpected.length) {
+    const { setupRecoveryVad } = await import("./media/vad-setup.mjs");
+    const controller = new globalThis.AbortController();
+    const interrupt = () =>
+      controller.abort(
+        Object.assign(new Error("Optional setup interrupted."), { code: "MEDIA_INTERRUPTED" }),
+      );
+    process.on("SIGINT", interrupt);
+    process.on("SIGTERM", interrupt);
+    try {
+      const result = await setupRecoveryVad({
+        config,
+        signal: controller.signal,
+        signalProcessGroup: signalMediaProcessGroup,
+      });
+      await writeLine(stdout, asJson(result));
+      return result.exitCode;
+    } finally {
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
+    }
+  }
+  if (optional || unexpected.length) {
+    await writeLine(stderr, USAGE);
+    return 2;
+  }
   const result = await setupMediaRuntime(config.media, {
     signalProcessGroup: signalMediaProcessGroup,
   });

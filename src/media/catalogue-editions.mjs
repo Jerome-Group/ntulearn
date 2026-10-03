@@ -3,7 +3,8 @@ import { historicalDigest } from "./historical-files.mjs";
 import { HISTORICAL_FORMAT_VERSION } from "./historical-format.mjs";
 import { assessRecoveryTranscript } from "./recovery-candidate.mjs";
 import { readCurrentRecoveryOwnership } from "./recovery-manifest.mjs";
-import { RECOVERY_POLICIES } from "./recovery-policy.mjs";
+import { validVadRuntimePins } from "./vad-model.mjs";
+import { VAD_RECOVERY_POLICY, RECOVERY_POLICIES } from "./recovery-policy.mjs";
 import { catalogueFailure, catalogueJson } from "./catalogue-files.mjs";
 
 export async function catalogueParagraph({ path, item, reads }) {
@@ -79,6 +80,7 @@ export async function catalogueRecovery({ path, reports, config, reads, signal }
     report.schemaVersion !== 1 ||
     report.failureCode ||
     !RECOVERY_POLICIES.includes(plan.policy) ||
+    (plan.policy === VAD_RECOVERY_POLICY && !validVadRuntimePins(report.runtimePins)) ||
     JSON.stringify(plan) !== JSON.stringify(report.manifest)
   )
     throw catalogueFailure();

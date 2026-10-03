@@ -17,6 +17,8 @@ import { evaluationOutputRoot } from "./evaluation-storage.mjs";
 import { runMediaProcess } from "./process.mjs";
 import { assertMediaArtifactPath } from "./storage.mjs";
 import { isGlobalMediaSafetyFailure } from "./errors.mjs";
+import { VAD_RECOVERY_POLICY } from "./recovery-policy.mjs";
+import { verifyRecoveryVad } from "./vad.mjs";
 
 const ACTION =
   "Inspect retained private candidates and ownership/safety evidence, then retry plan with unchanged inputs; publication never replaces originals.";
@@ -83,7 +85,7 @@ export async function recoverTranscriptSources(
               Object.assign(
                 evidence,
                 await publishRecoveryCandidates(
-                  { manifest, outputDirectory, config, signal },
+                  { manifest, outputDirectory, config, signalProcessGroup, signal },
                   dependencies,
                 ),
               );
@@ -159,7 +161,13 @@ async function runCandidates(
       signalProcessGroup,
       signal: combined,
     });
+    if (manifest.policy === VAD_RECOVERY_POLICY)
+      runtime.vad = await (dependencies.verifyVad ?? verifyRecoveryVad)(
+        { runtime, signal: combined },
+        { signalProcessGroup, signal: combined },
+      );
     report.runtimePins = runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 }));
+    if (runtime.vad) report.runtimePins.push(runtime.vad.pin);
     const boundary = await evaluationOutputRoot(config.media, config.media.mediaRoot, {
       ...(dependencies.volumeRoot ? { volumeRoot: dependencies.volumeRoot } : {}),
     });
@@ -212,6 +220,8 @@ async function runCandidates(
       stages.push(entry);
       try {
         await budgetCheck();
+        if (runtime.vad)
+          await assertRecoveryInputs({ protectedInputs: runtime.vad.inputs }, combined);
         const result = await (dependencies.runProcess ?? runMediaProcess)(command, args, {
           ...options,
           signal: combined,
@@ -290,6 +300,7 @@ async function runCandidates(
       );
     }
     await assertRecoveryInputs(manifest, combined);
+    if (runtime.vad) await assertRecoveryInputs({ protectedInputs: runtime.vad.inputs }, combined);
   } catch (error) {
     failureError = error;
     report.failureCode = safeCode(error);
@@ -342,9 +353,13 @@ function failure(error) {
   const code = safeCode(error);
   return observation(
     "execution",
-    code === "RECOVERY_ARGUMENTS" || code.startsWith("MEDIA_") ? "blocked" : "failed",
+    code === "RECOVERY_ARGUMENTS" || code === "RECOVERY_VAD_UNPREPARED" || code.startsWith("MEDIA_")
+      ? "blocked"
+      : "failed",
     code,
     "Recovery stopped; private evidence and originals remain. No raw exception is exposed.",
-    ACTION,
+    code === "RECOVERY_VAD_UNPREPARED"
+      ? "Owner: run npm run media:setup -- vad with the pinned compatible runtime; retry unchanged inputs in a fresh candidate directory."
+      : ACTION,
   );
 }

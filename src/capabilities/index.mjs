@@ -1,3 +1,4 @@
+import { VAD_MODEL, VAD_CONTROLS, VAD_RUNTIME } from "../media/vad-model.mjs";
 import { RECOVERY_POLICY, RECOVERY_POLICIES } from "../media/recovery-policy.mjs";
 
 const livePrerequisites = ["configured-courses", "Owner-approval", "saved-student-session"];
@@ -159,6 +160,7 @@ const routes = {
       "src/media/catalogue-profile.mjs",
       "src/media/catalogue-inventory.mjs",
       "src/media/catalogue-editions.mjs",
+      "src/media/vad-model.mjs",
       "src/media/catalogue-publication.mjs",
       "src/media/recovery-manifest.mjs",
       "src/media/recovery-files.mjs",
@@ -269,6 +271,9 @@ const routes = {
   "media-runtime": [
     [
       "src/media/setup.mjs",
+      "src/media/vad-setup.mjs",
+      "src/media/vad.mjs",
+      "src/media/vad-model.mjs",
       "src/media/config.mjs",
       "src/media/paths.mjs",
       "src/media/runtime-command.mjs",
@@ -276,6 +281,7 @@ const routes = {
     ],
     [
       "test/media-setup.test.mjs",
+      "test/media-vad.test.mjs",
       "test/media-runtime-command.test.mjs",
       "test/media-runtime-verification.test.mjs",
       "test/media-production.test.mjs",
@@ -291,6 +297,9 @@ const routes = {
       "src/media/recovery.mjs",
       "src/media/recovery-files.mjs",
       "src/media/recovery-policy.mjs",
+      "src/media/vad.mjs",
+      "src/media/vad-setup.mjs",
+      "src/media/vad-model.mjs",
       "src/media/recovery-manifest.mjs",
       "src/media/recovery-authority.mjs",
       "src/media/recovery-candidate.mjs",
@@ -304,6 +313,8 @@ const routes = {
       "test/media-recovery-incomplete.test.mjs",
       "test/media-recovery-candidate.test.mjs",
       "test/media-recovery-policy.test.mjs",
+      "test/media-vad.test.mjs",
+      "test/media-runtime-command.test.mjs",
       "test/media-recovery-files.test.mjs",
       "test/media-recovery-publication.test.mjs",
       "test/cli.test.mjs",
@@ -448,7 +459,24 @@ const commands = [
       writes: ["media-runtime"],
       ownerOnly: true,
     },
-    { risk: "runtime-install" },
+    {
+      risk: "runtime-install",
+      arguments: ["[vad]"],
+      optionalVad: {
+        policy: "independent-context-nonspeech-vad-v1",
+        model: VAD_MODEL,
+        runtime: VAD_RUNTIME,
+        controls: VAD_CONTROLS,
+        prerequisites: ["prepared-base-runtime", "media-queue-lock", "safe-media-admission"],
+        receipt: "separate-immutable-companion",
+        baseManifestWrites: false,
+        output: "capability-result-v1",
+        exitCodes: offlineCodes,
+        repeat: "Repeat npm run media:setup -- vad unchanged; foreign occupied evidence refuses.",
+        limits:
+          "Only explicit Owner setup downloads the pinned optional model. Matching repeats skip. Neither setup nor policy proves acoustic fidelity; VAD can omit speech. Logical download deadline does not guarantee physical network settlement.",
+      },
+    },
   ),
   command(
     "media-discover",
@@ -736,6 +764,8 @@ const commands = [
           browser: false,
           writes: ["exclusive-lecture-editions", "course-recovery-indexes"],
           runtime: false,
+          optionalVadRuntime:
+            "Verified prepared asset and bounded ASR help probe for VAD policy only",
           prerequisites: [
             "Owner-publication-authorization",
             "unchanged-private-candidates",
@@ -746,7 +776,7 @@ const commands = [
         },
       },
       limitations: [
-        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Explicit independent-context policies optionally suppress decoder nonspeech tokens during full-input generation; no post-generation filtering, VAD installation or quality claim. Native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
+        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Explicit independent-context policies optionally suppress decoder nonspeech tokens during full-input generation; no post-generation filtering or quality claim. The optional VAD policy requires explicit Owner media:setup vad, trusted ASR SHA/help capabilities and companion model receipt before output/ASR; fixed controls and model pin are retained. VAD predicts spans and can omit speech; full-recording coverage still applies. Recovery never installs assets. Native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
       ],
     },
   ),

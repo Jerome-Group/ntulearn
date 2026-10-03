@@ -29,7 +29,7 @@ export function createProductionLocalModels(context) {
 
 async function transcribe(
   { media, signal },
-  { paths, commands, models, runProcess, preserveArtifacts = false, asrPolicy = null },
+  { paths, commands, models, runProcess, preserveArtifacts = false, asrPolicy = null, vadModel },
 ) {
   const directory = await mkdtemp(join(paths.work, "asr-"));
   const audio = join(directory, "audio.flac");
@@ -67,7 +67,7 @@ async function transcribe(
         "-np",
         "-l",
         "auto",
-        ...asrPolicyArguments(asrPolicy),
+        ...asrPolicyArguments(asrPolicy, { vadModel }),
       ],
       { signal, timeoutMs: 8 * HOUR_MS, label: "Whisper transcription" },
     );
