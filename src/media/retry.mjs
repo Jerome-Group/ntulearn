@@ -266,6 +266,7 @@ function assertTarget(job, course) {
   )
     throw refusal("MEDIA_RETRY_TARGET_INELIGIBLE");
   if (unsafeEvidence(job)) throw refusal("MEDIA_RETRY_SAFETY_UNCONFIRMED");
+  if (job.transcript?.reviewRequired === true) throw refusal("MEDIA_RETRY_SOURCE_REVIEW_REQUIRED");
 }
 
 function unsafeEvidence(job) {
@@ -324,6 +325,8 @@ function outcome(status, code, counts, mode, safety = {}) {
 }
 
 function retryAction(code) {
+  if (code === "MEDIA_RETRY_SOURCE_REVIEW_REQUIRED")
+    return "Retained transcript source review blocks retry permission. Inspect retained source evidence and use explicit source-preserving media:recover; preserve originals and queue/source review flags.";
   if (code === "MEDIA_FILE_CLEANUP" || code === "MEDIA_SAFETY_BARRIER_WRITE")
     return "Retain external containment and preserved safety evidence. Confirm owned pending file I/O and descriptor closure before any new admission; a barrier write failure requires continued external containment. Do not retry or clear safety evidence automatically.";
   if (code === "MEDIA_RETRY_SAFETY_BARRIER")

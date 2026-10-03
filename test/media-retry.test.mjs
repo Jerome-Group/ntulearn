@@ -933,6 +933,82 @@ test("canonical outcome state artifact survives queue publication and retry", as
   assert.equal(next.retryable, true);
 });
 
+for (const mode of ["plan", "apply"])
+  test(`canonical retained source review explicitly refuses retry ${mode} without changing evidence`, async (context) => {
+    const f = await fixture(context),
+      at = new Date("2026-10-04T00:00:00.000Z");
+    const produced = await createMediaOutcome({
+      appearance: f.job,
+      clock: () => at,
+      storage: {
+        write: async ({ filename, content }) => {
+          const path = join(f.root, filename);
+          await writeFile(path, content);
+          return { path, status: "written" };
+        },
+      },
+    }).persist({
+      providerName: "kaltura",
+      media: { video: { available: false }, audio: { available: false } },
+      source: { sourceKind: "provider", language: "en" },
+      sourceSha256: f.job.sourceSha256,
+      sourceReview: ["suspicious-repetition"],
+      artifacts: { rawTranscript: { path: f.job.artifacts.rawTranscript } },
+      limitations: ["Retained source requires review"],
+      complete: false,
+      stage: "failed",
+      retryable: false,
+    });
+    await updateMediaQueueJob({
+      statePath: f.config.statePath,
+      courseKey: f.course.key,
+      course: f.course,
+      recordingId: f.job.recordingId,
+      update: resultUpdate(produced, at),
+      now: () => at,
+    });
+    const before = await readFile(f.path),
+      retained = JSON.parse(before).queue[0],
+      state = await readFile(retained.artifacts.state);
+    assert.equal(retained.transcript.reviewRequired, true);
+    assert.deepEqual(retained.transcript.flags, ["suspicious-repetition"]);
+    assert.equal(retained.retryable, false);
+    await assert.rejects(
+      updateMediaQueueJob({
+        statePath: f.config.statePath,
+        courseKey: f.course.key,
+        course: f.course,
+        recordingId: f.job.recordingId,
+        update: { retryable: true },
+      }),
+      /Retained transcript source review cannot be cleared or resumed/,
+    );
+    for (const selector of ["failed", f.job.recordingId]) {
+      const result = await retryMediaJobs({
+        ...f.options,
+        selector,
+        mode,
+        confirmation: MEDIA_RETRY_CONFIRMATION,
+      });
+      assert.equal(result.status, "blocked");
+      assert.equal(result.checks[0].code, "MEDIA_RETRY_SOURCE_REVIEW_REQUIRED");
+      assert.match(result.checks[0].action, /source-preserving.*media:recover/);
+      assert.equal(result.evidence.changed, 0);
+      assert.equal(result.evidence.retrySucceeded, "unrun");
+      assert.deepEqual(await readFile(f.path), before);
+      assert.deepEqual(await readFile(retained.artifacts.state), state);
+      assert.equal(await readFile(f.job.artifacts.rawTranscript, "utf8"), "original source");
+      assert.equal(
+        await readFile(join(f.course.destination, "student.md"), "utf8"),
+        "student edit",
+      );
+      assert.doesNotMatch(
+        JSON.stringify(result),
+        /private fixture|entry:fixture|_1_1|original source/,
+      );
+    }
+  });
+
 test("state artifact exception refuses other contexts, types and overwritten unsafe values", async (context) => {
   const f = await fixture(context);
   const path = join(f.root, "transcript.state.json");
