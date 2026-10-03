@@ -12,6 +12,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
       complete,
       stage,
       retryable,
+      sourceReview = [],
       formatterVersion,
       transcriber,
       existingMetadata,
@@ -29,6 +30,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         complete,
         stage,
         retryable,
+        sourceReview,
         duration,
         speechDuration,
       });
@@ -42,6 +44,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         stage: result.stage,
         complete: result.complete,
         retryable: result.retryable,
+        transcript: result.transcript,
         limitations: result.limitations,
         formatterVersion,
         transcriber,
@@ -60,6 +63,7 @@ export function createMediaOutcome({ appearance, storage, clock }) {
         stage: result.stage,
         verdict: result.verdict,
         retryable: result.retryable,
+        sourceReview,
         formatterVersion,
         duration,
         speechDuration,
@@ -83,13 +87,14 @@ function mediaResult({
   complete,
   stage,
   retryable,
+  sourceReview,
   duration,
   speechDuration,
 }) {
   const finalLimitations = unique(limitations);
-  const transcriptComplete = Boolean(
-    source && sourceSha256 && artifacts.rawTranscript && artifacts.formattedTranscript,
-  );
+  const transcriptComplete =
+    !sourceReview.length &&
+    Boolean(source && sourceSha256 && artifacts.rawTranscript && artifacts.formattedTranscript);
   const workflowComplete = complete && transcriptComplete;
   const verdict = workflowComplete ? (finalLimitations.length ? "yellow" : "green") : "red";
 
@@ -106,6 +111,14 @@ function mediaResult({
       complete: transcriptComplete,
       sourceKind: source?.sourceKind ?? null,
       language: source?.language ?? null,
+      ...(sourceReview.length
+        ? {
+            reviewRequired: true,
+            flags: sourceReview,
+            sourceRetained: Boolean(artifacts.rawTranscript || artifacts.providerTranscript),
+            formattedReady: false,
+          }
+        : {}),
     },
     media,
     artifacts,
@@ -127,6 +140,7 @@ async function writeStatus({
   stage,
   verdict,
   retryable,
+  sourceReview,
   formatterVersion,
   duration,
   speechDuration,
@@ -146,6 +160,7 @@ async function writeStatus({
       stage,
       verdict,
       retryable,
+      sourceReview,
       formatterVersion: formatterVersion ?? "not configured",
       duration,
       speechDuration,
@@ -165,6 +180,7 @@ async function writeState({
   stage,
   complete,
   retryable,
+  transcript,
   limitations,
   formatterVersion,
   transcriber,
@@ -187,6 +203,7 @@ async function writeState({
           stage,
           complete,
           retryable,
+          ...(transcript.reviewRequired ? { transcript } : {}),
           ...(positiveDuration(duration) ? { duration } : {}),
           ...(positiveDuration(speechDuration) ? { speechDuration } : {}),
           sourceKind: source?.sourceKind ?? null,
@@ -221,6 +238,7 @@ function statusMarkdown({
   stage,
   verdict,
   retryable,
+  sourceReview,
   formatterVersion,
   duration,
   speechDuration,
@@ -248,6 +266,11 @@ function statusMarkdown({
     `- Stage: ${stage}`,
     `- Verdict: ${verdict}`,
     `- Retryable: ${retryable ? "yes" : "no"}`,
+    ...(sourceReview.length
+      ? [
+          `- Source review: required (${sourceReview.join(", ")}); formatted transcript is not ready.`,
+        ]
+      : []),
     `- Limitations: ${limitations.length ? limitations.join(" ") : "None"}`,
     `- Updated: ${updatedAt}`,
     "",

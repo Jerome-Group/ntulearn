@@ -3,6 +3,9 @@
 [ADR-0017](0017-transcript-formatting-preserves-source-wording.md) partially supersedes the
 formatting allowance for error correction and notation conversion; the separate workflow,
 source preservation, local models and storage decisions remain unchanged.
+[ADR-0020](0020-production-transcript-paragraphs-require-source-review.md) partially supersedes
+model-based production formatting and adds retained source-review states; local ASR, explicit model
+evaluation, setup restrictions, source preservation and the separate workflow remain unchanged.
 
 `sync` stays the bounded additive walk it is. A separate media workflow discovers *recordings*
 through that same course walk and through each course's *Media Gallery*, then acquires media and

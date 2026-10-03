@@ -6,6 +6,7 @@ import { writeAtomically } from "../atomic.mjs";
 import { publicMediaError, markGlobalMediaSafety } from "./errors.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 import { positiveDuration } from "./duration.mjs";
+import { validateSourceReviewFlags } from "./source-paragraphs.mjs";
 import { writeMediaCourseStatus, writeMediaRecordingStatus } from "./status.mjs";
 
 const QUEUE_VERSION = 1;
@@ -188,6 +189,20 @@ export async function updateMediaQueueJob({
     const durableJob = stripEphemeralFields(job);
     if (jobIndex !== index) return durableJob;
     if (
+      durableJob.transcript?.reviewRequired === true &&
+      (safeUpdate.complete === true ||
+        safeUpdate.retryable === true ||
+        (safeUpdate.stage !== undefined && !["failed", "withdrawn"].includes(safeUpdate.stage)) ||
+        (safeUpdate.transcript &&
+          (safeUpdate.transcript.reviewRequired !== true ||
+            !durableJob.transcript.flags.every((flag) =>
+              safeUpdate.transcript.flags?.includes(flag),
+            ))))
+    )
+      throw new Error(
+        "Retained transcript source review cannot be cleared or resumed by a queue-only change. Inspect source evidence and use explicit source-preserving recovery.",
+      );
+    if (
       durableJob.safetyFailure !== undefined &&
       (safeUpdate.complete === true ||
         safeUpdate.retryable === true ||
@@ -276,6 +291,8 @@ function mergeQueue(previousQueue, discoveredQueue, boundary) {
       disposition === "recording" &&
       (recordingDisposition(old) !== "recording" || old.provider !== appearance.provider) &&
       !isMediaJobComplete(old) &&
+      old.transcript?.reviewRequired !== true &&
+      !old.transcript?.flags?.length &&
       !old.withdrawn &&
       old.safetyFailure === undefined
     ) {
@@ -426,12 +443,23 @@ function safeTranscript(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Media queue transcript state must be an object.");
   }
+  const flags = Object.hasOwn(value, "flags") ? validateSourceReviewFlags(value.flags) : [];
+  if (
+    (value.reviewRequired === true && !flags.length) ||
+    (flags.length &&
+      (value.reviewRequired !== true || value.complete === true || value.formattedReady === true))
+  )
+    throw new Error("Transcript source review evidence must remain explicit and incomplete.");
   return {
     ...(typeof value.complete === "boolean" ? { complete: value.complete } : {}),
     ...(typeof value.sourceKind === "string"
       ? { sourceKind: publicMediaError(value.sourceKind) }
       : {}),
     ...(typeof value.language === "string" ? { language: publicMediaError(value.language) } : {}),
+    ...(typeof value.reviewRequired === "boolean" ? { reviewRequired: value.reviewRequired } : {}),
+    ...(Object.hasOwn(value, "flags") ? { flags: validateSourceReviewFlags(value.flags) } : {}),
+    ...(typeof value.sourceRetained === "boolean" ? { sourceRetained: value.sourceRetained } : {}),
+    ...(typeof value.formattedReady === "boolean" ? { formattedReady: value.formattedReady } : {}),
   };
 }
 

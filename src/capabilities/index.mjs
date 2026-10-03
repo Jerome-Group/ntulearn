@@ -130,6 +130,7 @@ const routes = {
       "src/media/formatter.mjs",
       "src/media/formatter-output.mjs",
       "src/media/production-local.mjs",
+      "src/media/source-paragraphs.mjs",
     ],
     [
       "test/media-job.test.mjs",
@@ -141,6 +142,9 @@ const routes = {
       "test/media-formatter.test.mjs",
       "test/media-formatter-output.test.mjs",
       "test/media-production-local.test.mjs",
+      "test/media-source-paragraphs.test.mjs",
+      "test/media-source-review.test.mjs",
+      "test/media-source-production.test.mjs",
     ],
   ],
   "historical-transcripts": [
@@ -772,6 +776,17 @@ export function capabilityIndex(selection) {
     features: selectedFeatures.map(([id, [code, tests]]) => ({
       id,
       code,
+      ...(id === "transcripts"
+        ? {
+            formatting: {
+              version: "source-paragraphs-v1",
+              modelCalls: 0,
+              reviewRequired: { complete: false, retryable: false, queueOnlyClear: false },
+              limitations:
+                "Source-preserving paragraphs and lexical flags do not establish acoustic accuracy; flagged sources require explicit Owner review or source-preserving recovery.",
+            },
+          }
+        : {}),
       verification: { command: "npm run check", tests },
       actions: commands
         .filter(

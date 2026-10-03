@@ -221,7 +221,15 @@ presentation while preserving ordered source words, spelling, case, numbers, sym
 code-switching. Recognition errors and spoken mathematics remain as source wording. It carries no
 segment timestamps; those remain in the transcript it derives from. Lexical preservation does not
 prove semantic equivalence or acoustic fidelity.
+Ordinary production uses deterministic source paragraphs; explicit model evaluation remains separate.
 _Avoid_: cleaned transcript, corrected transcript — both can imply that the source is replaced
+
+**Source review**:
+An incomplete transcript state supported by explicit obvious-text flags, such as an empty source,
+payload/banner text or suspicious repetition. Native/source/media bytes remain retained; a flag
+permits neither correction nor deletion and does not establish acoustic error. Routine work does
+not retry or clear this state; independently validated source recovery remains explicit.
+_Avoid_: repaired source, rejected recording — neither follows from text-only flags
 
 ### What is kept
 

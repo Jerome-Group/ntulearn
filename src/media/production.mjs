@@ -8,6 +8,7 @@ import { openClient } from "../ntulearn/client.mjs";
 import { runMediaProcess } from "./process.mjs";
 import { runMediaJob } from "./job.mjs";
 import { createProductionLocalModels } from "./production-local.mjs";
+import { createSourceParagraphFormatter } from "./source-paragraphs.mjs";
 import { createProductionProviders } from "./production-providers.mjs";
 import { verifyMediaRuntime } from "./setup.mjs";
 import { createMediaStorage } from "./storage.mjs";
@@ -129,6 +130,7 @@ export async function createProductionJobRunner({
   capacityCheckTimeoutMs,
   signalProcessGroup,
   open = openClient,
+  createStorage = createMediaStorage,
 }) {
   if (!runtime?.runtime) {
     throw new Error(
@@ -138,7 +140,8 @@ export async function createProductionJobRunner({
   const context = productionContext(config, runtime.runtime, signalProcessGroup);
   const providers = createProductionProviders(context);
   const local = createProductionLocalModels(context);
-  const storage = createMediaStorage({
+  const formatter = createSourceParagraphFormatter();
+  const storage = createStorage({
     mediaRoot: config.media.mediaRoot,
     checkCapacity: capacity.check,
     capacityCheckTimeoutMs,
@@ -154,7 +157,7 @@ export async function createProductionJobRunner({
           appearance,
           provider,
           storage,
-          formatter: local.formatter,
+          formatter,
           transcriber: local.transcriber,
           signal: jobContext.signal,
           clock: jobContext.now,

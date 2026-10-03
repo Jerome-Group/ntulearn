@@ -146,7 +146,11 @@ export function mediaRecordingStatus({ appearance = {}, job = {}, now = () => ne
     stage,
     verdict,
     complete,
-    retryable: disposition === "recording" && !withdrawn && job.retryable !== false,
+    retryable:
+      disposition === "recording" &&
+      !withdrawn &&
+      !transcript.reviewRequired &&
+      job.retryable !== false,
     transcript,
     media,
     ...durationFields(job),
@@ -207,13 +211,16 @@ function courseVerdict({ course, discovery, recordings, counts }) {
 }
 
 function normalizedTranscript(value) {
-  const complete = value?.complete === true;
+  const flags = value?.flags === undefined ? [] : validateSourceReviewFlags(value.flags);
+  const reviewRequired = value?.reviewRequired === true || flags.length > 0;
+  const complete = !reviewRequired && value?.complete === true;
   const sourceKind = typeof value?.sourceKind === "string" ? cleanText(value.sourceKind) : null;
   const language = typeof value?.language === "string" ? cleanText(value.language) : null;
   return {
     complete,
     sourceKind,
     language,
+    ...(reviewRequired ? { reviewRequired: true, flags } : {}),
     provenance: complete
       ? `${sourceKind ?? "unknown"} source + formatted Markdown`
       : sourceKind
@@ -311,6 +318,11 @@ function recordingFields(recording) {
       : []),
     `- Transcript provenance: ${recording.transcript.provenance}`,
     `- Retryable: ${recording.retryable ? "yes" : "no"}`,
+    ...(recording.transcript.reviewRequired
+      ? [
+          `- Source review: required (${recording.transcript.flags.join(", ")}); formatted transcript is not ready.`,
+        ]
+      : []),
     `- Attempts: ${recording.attempts}`,
     `- Limitations: ${recording.limitations.length ? recording.limitations.join(" ") : "None"}`,
     ...(recording.lastError ? [`- Last error: ${recording.lastError}`] : []),
@@ -502,3 +514,4 @@ async function checkArtifactAvailability(job, { course, mediaRoot } = {}) {
       : {}),
   };
 }
+import { validateSourceReviewFlags } from "./source-paragraphs.mjs";
