@@ -14,7 +14,11 @@ const failure = (code) =>
 
 export function parseCatalogueMetadata(
   content,
-  { limits = CATALOGUE_METADATA_LIMITS, forbiddenKeys = [] } = {},
+  {
+    limits = CATALOGUE_METADATA_LIMITS,
+    forbiddenKeys = [],
+    allowForbiddenStringKey = () => false,
+  } = {},
 ) {
   if (!Buffer.isBuffer(content)) throw failure("CATALOGUE_METADATA_INVALID");
   if (content.length > limits.bytes) throw failure("CATALOGUE_METADATA_LIMIT");
@@ -39,6 +43,7 @@ export function parseCatalogueMetadata(
   };
   // Inspect original tokens too: JSON.parse discards overwritten duplicate-key values.
   // Valid JSON has already been established; quoted strings consume their embedded digits.
+  const containers = [];
   let tokens = 0,
     rawDepth = 0,
     rawValues = 0;
@@ -50,13 +55,30 @@ export function parseCatalogueMetadata(
       key = token[0] === '"' && /^\s*:/.test(text.slice(match.index + token.length));
     if (token[0] === '"') {
       const string = JSON.parse(token);
-      if (key && forbiddenKeys.some((field) => field.toLowerCase() === string.toLowerCase()))
-        throw failure("CATALOGUE_METADATA_UNSAFE");
+      if (key && forbiddenKeys.some((field) => field.toLowerCase() === string.toLowerCase())) {
+        const scalar = /^\s*:\s*("(?:[^"\\]|\\.)*")/s.exec(text.slice(match.index + token.length));
+        if (
+          !scalar ||
+          !allowForbiddenStringKey({
+            path: [...(containers.at(-1)?.path ?? []), string],
+            value: JSON.parse(scalar[1]),
+          })
+        )
+          throw failure("CATALOGUE_METADATA_UNSAFE");
+      }
+      if (key) containers.at(-1).key = string;
       checkString(string);
     } else if (/^-?\d/.test(token) && !Number.isFinite(Number(token)))
       throw failure("CATALOGUE_METADATA_INVALID");
-    if (token === "]" || token === "}") rawDepth--;
-    else if (!key && token !== "," && token !== ":") {
+    if (token === "]" || token === "}") {
+      rawDepth--;
+      containers.pop();
+    } else if (!key && token !== "," && token !== ":") {
+      const parent = containers.at(-1);
+      const path = parent ? [...parent.path, parent.array ? parent.index++ : parent.key] : [];
+      if (parent) parent.key = null;
+      if (token === "[" || token === "{")
+        containers.push({ path, array: token === "[", index: 0, key: null });
       if (++rawValues > limits.values || rawDepth > limits.depth)
         throw failure("CATALOGUE_METADATA_LIMIT");
       if (token === "[" || token === "{") rawDepth++;
