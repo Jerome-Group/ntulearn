@@ -39,12 +39,12 @@ test("historical route distinguishes plan creation from Owner apply and read-onl
   assert.deepEqual(route.operations.verify.writes, []);
 });
 
-test("explicit retry exposes read-only plan and confirmed Owner state mutation separately", () => {
+test("explicit retry separates exceptional cleanup barriers from confirmed Owner retry mutation", () => {
   const route = capabilityIndex("media-retry").commands[0];
   assert.equal(route.effects.network, false);
   assert.equal(route.effects.browser, false);
   assert.equal(route.operations.plan.ownerOnly, false);
-  assert.deepEqual(route.operations.plan.writes, []);
+  assert.deepEqual(route.operations.plan.writes, ["cleanup-safety-barrier-on-uncertainty"]);
   assert.equal(route.operations.apply.ownerOnly, true);
   assert.ok(route.operations.apply.prerequisites.includes("literal-confirmation"));
   assert.ok(route.operations.apply.prerequisites.includes("media-queue-lock"));

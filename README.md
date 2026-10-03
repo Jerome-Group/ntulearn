@@ -170,6 +170,11 @@ history, attempts, verdicts and existing artifacts. Disabled courses, incomplete
 unresolved/excluded/withdrawn jobs and cleanup safety evidence are refused. Run the worker after
 rearming; retry permission does not prove acquisition, transcription or completion. A specific
 recording ID can replace `failed`, and one configured course can replace `all`.
+Queue metadata is inspected per raw JSON scalar, including overwritten duplicate values;
+aggregate artifact references do not consume one transcript's address budget. Retry queue reads
+retain their five-second deadline and await bounded owned I/O/descriptor settlement. Unconfirmed
+cleanup may write an admission safety barrier even during plan; retain external containment
+when barrier persistence is unconfirmed. Plan changes no retry permission or student artifacts.
 
 ## Configuration
 

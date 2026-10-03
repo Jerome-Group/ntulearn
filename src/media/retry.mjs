@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
-import { setTimeout, clearTimeout } from "node:timers";
 import { writeAtomically } from "../atomic.mjs";
 import { capabilityResult, observation } from "../capabilities/result.mjs";
 import { recordingDisposition } from "./disposition.mjs";
@@ -9,8 +8,9 @@ import {
   isGlobalMediaSafetyFailure,
   publicMediaError,
   GLOBAL_MEDIA_ERROR_CODES,
+  unconfirmedMediaCleanupCode,
 } from "./errors.mjs";
-import { assertMediaSafetyAdmission } from "./safety.mjs";
+import { assertMediaSafetyAdmission, persistMediaSafetyBarrier } from "./safety.mjs";
 import { withMediaQueueLock } from "./lock.mjs";
 import {
   EPHEMERAL_MEDIA_JOB_FIELDS,
@@ -18,10 +18,26 @@ import {
   readMediaQueue,
   updateMediaQueueJob,
 } from "./queue.mjs";
-import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
+import { CATALOGUE_METADATA_LIMITS, parseCatalogueMetadata } from "./catalogue-safety.mjs";
+import { closeMediaProbeHandle, withMediaProbeSettlement } from "./probe-settlement.mjs";
 
 export const MEDIA_RETRY_CONFIRMATION = "RETRY_FAILED_MEDIA";
 const LIMITS = { courses: 256, jobs: 20_000, queueBytes: 4 * 1024 * 1024, readMs: 5_000 };
+const QUEUE_METADATA_LIMITS = Object.freeze({
+  ...CATALOGUE_METADATA_LIMITS,
+  bytes: LIMITS.queueBytes,
+});
+const FORBIDDEN_QUEUE_KEYS = Object.freeze([
+  ...EPHEMERAL_MEDIA_JOB_FIELDS,
+  "ks",
+  "access_token",
+  "id_token",
+  "launch_token",
+  "launch",
+  "cookie",
+  "state",
+  "sig",
+]);
 const ACTION =
   "Inspect the selected failed recordings, course boundaries and private safety evidence; resolve uncertain cleanup before explicitly retrying. Existing artifacts and failure history are retained.";
 
@@ -33,11 +49,13 @@ export async function retryMediaJobs(
     updateJob = updateMediaQueueJob,
     lock = withMediaQueueLock,
     now = () => new Date(),
-    read = boundedQueueRead,
+    read = readRetryQueueMetadata,
     write = writeAtomically,
+    persistBarrier = persistMediaSafetyBarrier,
   } = {},
 ) {
   const counts = { courses: 0, inspected: 0, selected: 0, alreadyRetryable: 0, changed: 0 };
+  let executionCleanupCode = null;
   try {
     if (
       !["plan", "apply"].includes(mode) ||
@@ -135,7 +153,8 @@ export async function retryMediaJobs(
               },
             });
           } catch (error) {
-            if (durable) throw refusal("MEDIA_RETRY_PUBLICATION_PARTIAL");
+            if (durable)
+              throw Object.assign(refusal("MEDIA_RETRY_PUBLICATION_PARTIAL"), { cause: error });
             throw error;
           }
         }
@@ -147,18 +166,52 @@ export async function retryMediaJobs(
         mode,
       );
     };
+    const executeWithCleanupEvidence = async () => {
+      try {
+        return await execute();
+      } catch (error) {
+        // Lock barrier-storage failure can replace the thrown error; retain its closed cleanup code.
+        executionCleanupCode = unconfirmedMediaCleanupCode(error);
+        throw error;
+      }
+    };
     return mode === "apply"
-      ? await lock({ statePath: config.statePath, run: execute })
-      : await execute();
-  } catch (error) {
+      ? await lock({ statePath: config.statePath, run: executeWithCleanupEvidence })
+      : await executeWithCleanupEvidence();
+  } catch (caught) {
+    let error = caught;
+    const cleanupCode = unconfirmedMediaCleanupCode(error) ?? executionCleanupCode;
+    let barrierPersistence = error?.code === "MEDIA_SAFETY_BARRIER_WRITE" ? "failed" : "unrun";
+    if (cleanupCode && barrierPersistence !== "failed") {
+      try {
+        await persistBarrier({ statePath: config.statePath, error, now });
+        barrierPersistence = "passed";
+      } catch (barrierError) {
+        error = barrierError;
+        barrierPersistence = "failed";
+      }
+    }
     const code =
-      error?.retryCode ??
+      (error?.code === "MEDIA_SAFETY_BARRIER_WRITE"
+        ? error.code
+        : (cleanupCode ?? retryRefusalCode(error))) ??
       (error?.code === "MEDIA_SAFETY_BARRIER"
         ? "MEDIA_RETRY_SAFETY_BARRIER"
         : error?.code === "MEDIA_QUEUE_LOCK_HELD"
           ? "MEDIA_RETRY_LOCK_HELD"
           : "MEDIA_RETRY_EVIDENCE_UNAVAILABLE");
-    return outcome(counts.changed ? "failed" : "blocked", code, counts, mode);
+    return outcome(counts.changed ? "failed" : "blocked", code, counts, mode, {
+      ...(cleanupCode || error?.code === "MEDIA_SAFETY_BARRIER_WRITE"
+        ? {
+            cleanup: "unconfirmed",
+            cleanupCode,
+            safetyUnconfirmed: true,
+            containmentRequired: true,
+            barrierPersistence,
+            physicalIoCancellation: "unclaimed",
+          }
+        : {}),
+    });
   }
 }
 
@@ -174,7 +227,7 @@ function assertQueue(record, course) {
     record.queue.length > LIMITS.jobs
   )
     throw refusal("MEDIA_RETRY_QUEUE_UNAVAILABLE");
-  safeNativeTranscriptBody(record);
+  assertQueueMetadata(Buffer.from(JSON.stringify(record)));
   const ids = new Set();
   for (const job of record.queue) {
     if (
@@ -241,7 +294,11 @@ function refusal(code) {
   return Object.assign(new Error(ACTION), { retryCode: code });
 }
 
-function outcome(status, code, counts, mode) {
+function retryRefusalCode(error) {
+  return error?.retryCode ?? (error?.cause ? retryRefusalCode(error.cause) : undefined);
+}
+
+function outcome(status, code, counts, mode, safety = {}) {
   return capabilityResult(
     "media:retry",
     [
@@ -260,11 +317,14 @@ function outcome(status, code, counts, mode) {
       mode: mode === "apply" ? "apply" : "plan",
       retrySucceeded: "unrun",
       mediaCompleteness: "unclaimed",
+      ...safety,
     },
   );
 }
 
 function retryAction(code) {
+  if (code === "MEDIA_FILE_CLEANUP" || code === "MEDIA_SAFETY_BARRIER_WRITE")
+    return "Retain external containment and preserved safety evidence. Confirm owned pending file I/O and descriptor closure before any new admission; a barrier write failure requires continued external containment. Do not retry or clear safety evidence automatically.";
   if (code === "MEDIA_RETRY_SAFETY_BARRIER")
     return "Retained or unreadable safety evidence blocks all retry admission. The Owner must verify owned process/browser cessation and inspect evidence before explicitly clearing the barrier and queue safety markers; do not automatically retry.";
   if (code === "MEDIA_RETRY_CONFIRMATION_REQUIRED")
@@ -280,46 +340,64 @@ function retryAction(code) {
   return ACTION;
 }
 
-async function boundedQueueRead(path) {
-  let timer;
-  const operation = async () => {
-    const handle = await open(
-      path,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    try {
-      const before = await handle.stat();
-      if (!before.isFile() || before.size > LIMITS.queueBytes)
-        throw refusal("MEDIA_RETRY_QUEUE_BOUND");
-      const parts = [],
-        buffer = Buffer.alloc(64 * 1024);
-      let bytes = 0;
-      while (true) {
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (!bytesRead) break;
-        bytes += bytesRead;
-        if (bytes > before.size || bytes > LIMITS.queueBytes)
-          throw refusal("MEDIA_RETRY_QUEUE_BOUND");
-        parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
-      }
-      const after = await handle.stat();
-      if (bytes !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs)
-        throw refusal("MEDIA_RETRY_QUEUE_CHANGED");
-      const content = Buffer.concat(parts);
-      safeNativeTranscriptBody(content);
-      return content;
-    } finally {
-      await handle.close();
-    }
-  };
+function assertQueueMetadata(content) {
   try {
-    return await Promise.race([
-      operation(),
-      new Promise((_resolve, reject) => {
-        timer = setTimeout(() => reject(refusal("MEDIA_RETRY_READ_TIMEOUT")), LIMITS.readMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
+    return parseCatalogueMetadata(content, {
+      limits: QUEUE_METADATA_LIMITS,
+      forbiddenKeys: FORBIDDEN_QUEUE_KEYS,
+    });
+  } catch (error) {
+    throw refusal(
+      error.code === "CATALOGUE_METADATA_LIMIT"
+        ? "MEDIA_RETRY_QUEUE_BOUND"
+        : "MEDIA_RETRY_QUEUE_UNSAFE",
+    );
   }
+}
+
+export async function readRetryQueueMetadata(
+  path,
+  { openQueue = open, timeoutMs = LIMITS.readMs } = {},
+) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.readMs)
+    throw refusal("MEDIA_RETRY_READ_TIMEOUT");
+  return withMediaProbeSettlement(
+    async (active) => {
+      active();
+      const handle = await openQueue(
+        path,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        active();
+        const before = await handle.stat();
+        active();
+        if (!before.isFile() || before.size > LIMITS.queueBytes)
+          throw refusal("MEDIA_RETRY_QUEUE_BOUND");
+        const parts = [],
+          buffer = Buffer.alloc(64 * 1024);
+        let bytes = 0;
+        while (true) {
+          active();
+          const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+          active();
+          if (!bytesRead) break;
+          bytes += bytesRead;
+          if (bytes > before.size || bytes > LIMITS.queueBytes)
+            throw refusal("MEDIA_RETRY_QUEUE_BOUND");
+          parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
+        }
+        const after = await handle.stat();
+        active();
+        if (bytes !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs)
+          throw refusal("MEDIA_RETRY_QUEUE_CHANGED");
+        const content = Buffer.concat(parts);
+        assertQueueMetadata(content);
+        return content;
+      } finally {
+        await closeMediaProbeHandle(handle);
+      }
+    },
+    { timeoutMs, timeoutError: refusal("MEDIA_RETRY_READ_TIMEOUT") },
+  );
 }
