@@ -80,6 +80,7 @@ const routes = {
       "src/media/gallery.mjs",
       "src/media/gallery-browser.mjs",
       "src/media/gallery-diagnostic.mjs",
+      "src/media/course-announcement.mjs",
       "src/media/workflow.mjs",
     ],
     [
@@ -94,6 +95,7 @@ const routes = {
       "test/media-gallery.test.mjs",
       "test/media-gallery-browser.test.mjs",
       "test/media-gallery-diagnostic.test.mjs",
+      "test/media-course-announcement.test.mjs",
       "test/media-workflow.test.mjs",
     ],
   ],
@@ -432,7 +434,13 @@ const commands = [
     "media-discovery",
     [...livePrerequisites, "media-queue-lock"],
     { ...live, writes: ["media-queues", "course-media-status"] },
-    { arguments: courseArgument, risk: "live-session" },
+    {
+      arguments: courseArgument,
+      risk: "live-session",
+      limitations: [
+        "Gallery may close only one exact New Course Announcement with dedicated Close, under a retained owned-context NTULearn GET/HEAD request guard. Known service workers, unknown/auth/consent/multiple dialogs and unconfirmed guard/close refuse; no force or Mark as read. Read requests use fallback to preserve existing route chaining; no request URLs/headers/payloads retained. No completeness claim for media acquisition/transcript quality or arbitrary contexts/service workers.",
+      ],
+    },
   ),
   command(
     "media-worker",

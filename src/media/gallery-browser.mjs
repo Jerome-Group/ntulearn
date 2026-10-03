@@ -1,6 +1,7 @@
 import { courseUrl, isSignInUrl } from "../ntulearn/urls.mjs";
 import { discoverMediaGallery, isMediaCourseEnabled } from "./gallery.mjs";
 import { setTimeout, clearTimeout } from "node:timers";
+import { closeCourseAnnouncement, assertCourseAnnouncementGuard } from "./course-announcement.mjs";
 import { galleryFailure, GALLERY_WAIT_LIMITS } from "./gallery-diagnostic.mjs";
 
 const MAX_GALLERY_PAGES = 100;
@@ -34,7 +35,10 @@ export async function readKalturaMediaGallery({ page, course }) {
   let stage = "opening";
   try {
     const surface = await openGallerySurface(page, course.courseId);
-    if (!surface) return absentGallery();
+    if (!surface) {
+      await assertCourseAnnouncementGuard(page);
+      return absentGallery();
+    }
     stage = "catalogue";
     await waitForGalleryCatalogue(surface);
     const pages = await collectMediaGalleryPages({
@@ -47,6 +51,7 @@ export async function readKalturaMediaGallery({ page, course }) {
       pages,
       baseUrl: typeof surface.url === "function" ? surface.url() : null,
     });
+    await assertCourseAnnouncementGuard(page);
     return discoverMediaGallery({ course, pages: enrichedPages });
   } catch (error) {
     const failure = galleryFailure(publicErrorCode(error, page), { ...error?.diagnostic, stage });
@@ -163,13 +168,16 @@ async function openGallerySurface(page, courseId) {
   if (!page || typeof page.goto !== "function") {
     throw new Error("Media Gallery needs the signed-in browser page.");
   }
+  await assertCourseAnnouncementGuard(page);
   await page.goto(courseUrl(courseId), { waitUntil: "domcontentloaded" });
   if (typeof page.waitForLoadState === "function") {
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
   }
   await waitForCourseContent(page);
+  await closeCourseAnnouncement(page);
   await loadLazyCourseContent(page);
 
+  await assertCourseAnnouncementGuard(page);
   const trigger = await findGalleryTrigger(page);
   if (!trigger) return (await courseContentIsExhausted(page)) ? null : missingGallerySurface();
 
