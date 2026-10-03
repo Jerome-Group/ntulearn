@@ -286,3 +286,105 @@ test("mixed batch publishes valid subset and records review without promoting lo
     assert.ok(index.includes(label));
   assert.equal(index.includes("ks="), false);
 });
+
+test("nonspeech policy is selected at generation and retained through plan/report/provenance without replacing failed candidates", async (t) => {
+  const f = await recoveryFixture(t),
+    queueBefore = await readFile(f.queuePath);
+  f.native.segments[0].text = "[BLANK_AUDIO] ".repeat(12).trim();
+  const failed = await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies);
+  assert.equal(failed.status, "blocked");
+  const failedNativePath = join(f.outputDirectory, "recording-1.native-asr.json"),
+    failedBefore = await readFile(failedNativePath);
+  f.manifest.policy = "independent-context-nonspeech-v1";
+  await f.saveManifest();
+  const outputDirectory = join(f.config.media.mediaRoot, "fresh-nonspeech-candidate"),
+    options = { ...f.options, outputDirectory };
+  const runProcess = f.dependencies.runProcess;
+  const dependencies = {
+    ...f.dependencies,
+    runProcess: async (command, args, processOptions) => {
+      if (processOptions.label === "Whisper transcription" && args.includes("--suppress-nst")) {
+        f.calls.push({ command, args, options: processOptions });
+        await writeFile(
+          args[args.indexOf("-of") + 1] + ".json",
+          JSON.stringify({
+            language: "en",
+            segments: [{ start: 0, end: 20, text: "Let x equal minus two." }],
+          }),
+        );
+        return { stdout: "", stderr: "" };
+      }
+      return runProcess(command, args, processOptions);
+    },
+  };
+  const plan = await recoverTranscriptSources(
+    { ...options, outputDirectory: undefined, mode: "plan" },
+    dependencies,
+  );
+  assert.equal(plan.status, "passed");
+  assert.equal(plan.evidence.policy, f.manifest.policy);
+  const run = await recoverTranscriptSources({ ...options, mode: "run" }, dependencies);
+  assert.equal(run.status, "passed");
+  const calls = f.calls.filter((call) => call.options?.label === "Whisper transcription");
+  assert.equal(calls[0].args.includes("--suppress-nst"), false);
+  assert.equal(calls[1].args.includes("--suppress-nst"), true);
+  for (const flag of ["--vad", "--offset-t", "--duration", "--suppress-regex"])
+    assert.equal(calls[1].args.includes(flag), false);
+  const retainedPlan = JSON.parse(await readFile(join(outputDirectory, "plan.json"))),
+    report = JSON.parse(await readFile(join(outputDirectory, "recovery.json")));
+  assert.equal(retainedPlan.policy, f.manifest.policy);
+  assert.equal(report.manifest.policy, f.manifest.policy);
+  assert.equal(
+    (await recoverTranscriptSources({ ...options, mode: "publish" }, dependencies)).status,
+    "passed",
+  );
+  const provenanceName = (await readdir(f.course.destination)).find((name) =>
+    name.endsWith(".provenance.json"),
+  );
+  assert.equal(
+    JSON.parse(await readFile(join(f.course.destination, provenanceName))).policy,
+    f.manifest.policy,
+  );
+  assert.deepEqual(await readFile(failedNativePath), failedBefore);
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.sourceBody);
+  assert.deepEqual(await readFile(f.queuePath), queueBefore);
+});
+
+for (const text of ["[NON SPEECH]", "I."])
+  test(`selected nonspeech generation still retains and refuses zero-duration native ${text.startsWith("[") ? "annotation" : "lexical"} row`, async (t) => {
+    const f = await recoveryFixture(t);
+    f.manifest.policy = "independent-context-nonspeech-v1";
+    await f.saveManifest();
+    f.native.segments.push({ start: 20, end: 20, text });
+    const run = await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies);
+    assert.equal(run.status, "blocked");
+    const call = f.calls.find((call) => call.options?.label === "Whisper transcription");
+    assert.equal(call.args.includes("--suppress-nst"), true);
+    const native = JSON.parse(
+        await readFile(join(f.outputDirectory, "recording-1.native-asr.json")),
+      ),
+      source = JSON.parse(await readFile(join(f.outputDirectory, "recording-1.source.json"))),
+      assessed = JSON.parse(await readFile(join(f.outputDirectory, "recording-1.assessment.json")));
+    assert.deepEqual(native, f.native);
+    assert.equal(source.segments.length, 1);
+    assert.equal(assessed.sourceStructure, "failed");
+    assert.equal(assessed.timing, "failed");
+    assert.equal(assessed.eligible, false);
+    assert.equal(
+      (await recoverTranscriptSources({ ...f.options, mode: "publish" }, f.dependencies)).status,
+      "blocked",
+    );
+    assert.deepEqual(await readdir(f.course.destination), ["lecture.mp4", "lecture.transcript.md"]);
+  });
+
+test("unknown recovery policy refuses before runtime or output creation", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-v2";
+  await f.saveManifest();
+  const result = await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies);
+  assert.notEqual(result.status, "passed");
+  assert.equal(f.calls.length, 0);
+  await assert.rejects(lstat(f.outputDirectory), { code: "ENOENT" });
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+});

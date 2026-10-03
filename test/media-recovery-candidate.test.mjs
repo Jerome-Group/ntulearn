@@ -70,3 +70,32 @@ test("banner/empty and impossible timing do not bless a candidate", () => {
     "failed",
   );
 });
+
+test("nonspeech repetition and zero-duration annotation or lexical native rows stay review-only", () => {
+  const repeated = source("[BLANK_AUDIO] ".repeat(12).trim());
+  const assessed = assessRecoveryTranscript({
+    native: repeated,
+    source: repeated,
+    duration: 20,
+    id: "recording-1",
+  });
+  assert.equal(assessed.candidate.eligible, false);
+  assert.deepEqual(assessed.candidate.flags, ["suspicious-repetition"]);
+  assert.equal(assessed.markdown.trim(), repeated.segments[0].text);
+  for (const text of ["[NON SPEECH]", "I."]) {
+    const native = source("Let x equal minus two.");
+    native.segments.push({ start: 20, end: 20, text });
+    for (const parsed of [native, source("Let x equal minus two.")]) {
+      const result = assessRecoveryTranscript({
+        native,
+        source: parsed,
+        duration: 20,
+        id: "recording-1",
+      });
+      assert.equal(result.candidate.eligible, false);
+      assert.equal(result.candidate.timing, "failed");
+      assert.equal(result.candidate.sourceStructure, "failed");
+      assert.equal(result.markdown, null);
+    }
+  }
+});

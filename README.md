@@ -782,7 +782,11 @@ npm run --silent media:recover -- run /absolute/private/recovery.json /absolute/
 npm run --silent media:recover -- publish /absolute/private/recovery.json /absolute/Media/fresh-candidates
 ```
 
-The manifest has `schemaVersion: 1`, `policy: "independent-context-v1"`, `recordings` and `budgets`.
+The manifest has `schemaVersion: 1`, an explicit `policy`, `recordings` and `budgets`.
+`independent-context-v1` preserves the existing recovery decoder behavior;
+`independent-context-nonspeech-v1` adds decoder nonspeech-token suppression (`--suppress-nst`).
+Unknown policies refuse admission. The selected policy is pinned in the plan, generation, run report
+and edition provenance; ordinary production defaults remain unchanged.
 Every recording has `courseKey`, `recordingId`, `source: {path, sha256}` and `media: {path, sha256}`.
 Paths are absolute or relative to the manifest directory, and resolve to canonical physical files.
 Sources must be `transcript.raw.json` in the recording's canonical store; current queue, metadata,
@@ -824,10 +828,14 @@ directory. Interrupts await owned process settlement; unconfirmed cleanup retain
 that blocks later recovery. No browser, upstream access, download or new model asset is involved.
 
 The explicit candidate policy sets Whisper's retained text context to zero while preserving its
-decoder thresholds and temperature fallback. This is an unmeasured mitigation, not a quality claim.
+decoder thresholds and temperature fallback. The nonspeech variant suppresses tokens during new
+recognition, never by removing retained tokens or segments. Both process the complete media input
+without trimming or installing VAD assets, and keep earlier failed candidates in separate immutable
+directories. These are unmeasured mitigations, not quality claims.
 Native malformed or dropped segments, payload/banner text, empty output, suspicious repetition and
 failed timing prevent publication. Repeated words remain in review candidates; they are never
-silently stripped. Acoustic verification remains unrun and media readiness remains unclaimed.
+silently stripped. Zero-duration annotation and lexical native rows still refuse, even if the
+ordinary parser omits them. Acoustic verification remains unrun and media readiness remains unclaimed.
 
 Publish rechecks every original and candidate hash, copies only the validated eligible subset's source/native/provenance files beside
 fresh lecture paragraph editions and creates a course index under `Transcript editions/asr-recovery-v1-<run-id>/`.

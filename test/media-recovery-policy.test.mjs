@@ -11,3 +11,14 @@ test("ordinary production preserves its defaults; recovery permits only an expli
   assert.equal(args.includes("--vad"), false);
   assert.throws(() => asrPolicyArguments(["--suppress-regex", ".*"]), /indexed recovery policy/);
 });
+
+test("nonspeech recovery extends only the explicit independent-context decoder policy", () => {
+  const original = asrPolicyArguments(RECOVERY_POLICY);
+  assert.equal(original.includes("--suppress-nst"), false);
+  assert.deepEqual(asrPolicyArguments("independent-context-nonspeech-v1"), [
+    ...original,
+    "--suppress-nst",
+  ]);
+  for (const unknown of [undefined, "independent-context-nonspeech-v2", "", {}, ["--suppress-nst"]])
+    assert.throws(() => asrPolicyArguments(unknown), /indexed recovery policy/);
+});
