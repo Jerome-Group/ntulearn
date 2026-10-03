@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers";
@@ -308,6 +308,79 @@ test("failed cleanup barrier persistence remains explicit external containment",
   assert.equal(result.evidence.cleanupCode, "MEDIA_FILE_CLEANUP");
   assert.doesNotMatch(JSON.stringify(result), /secret close|private barrier path/);
 });
+
+for (const barrierWritable of [true, false]) {
+  test(`durable retry publication retains cleanup when barrier storage is ${barrierWritable ? "available" : "refused"}`, async (context) => {
+    const f = await fixture(context);
+    const originalSource = await readFile(f.job.artifacts.rawTranscript);
+    const original = JSON.parse(await readFile(f.path));
+    let result;
+    try {
+      result = await retryMediaJobs(
+        {
+          ...f.options,
+          mode: "apply",
+          confirmation: MEDIA_RETRY_CONFIRMATION,
+        },
+        {
+          updateJob: async ({ write }) => {
+            await write(
+              f.path,
+              JSON.stringify({ ...original, queue: [{ ...f.job, retryable: true }] }),
+            );
+            if (!barrierWritable) await chmod(f.root, 0o500);
+            throw Object.assign(Error("private.invalid token=secret"), {
+              code: "MEDIA_FILE_CLEANUP",
+              globalSafety: true,
+            });
+          },
+        },
+      );
+    } finally {
+      await chmod(f.root, 0o700);
+    }
+    assert.equal(result.status, "failed");
+    assert.equal(result.evidence.changed, 1);
+    assert.equal(
+      result.checks[0].code,
+      barrierWritable ? "MEDIA_FILE_CLEANUP" : "MEDIA_SAFETY_BARRIER_WRITE",
+    );
+    assert.equal(result.evidence.containmentRequired, true);
+    assert.equal(result.evidence.cleanupCode, "MEDIA_FILE_CLEANUP");
+    assert.equal(result.evidence.barrierPersistence, barrierWritable ? "passed" : "failed");
+    assert.doesNotMatch(JSON.stringify(result), /private.invalid|token=secret/);
+    assert.equal(JSON.parse(await readFile(f.path)).queue[0].retryable, true);
+    assert.deepEqual(await readFile(f.job.artifacts.rawTranscript), originalSource);
+    let owner;
+    if (barrierWritable)
+      assert.equal(
+        JSON.parse(await readFile(mediaSafetyPath(f.config.statePath))).code,
+        "MEDIA_FILE_CLEANUP",
+      );
+    else {
+      owner = await readFile(join(f.root, "media-queue.lock", "owner.json"));
+      assert.equal(
+        await readFile(join(f.root, "media-queue.lock", "safety-armed"), "utf8"),
+        "v1\n",
+      );
+    }
+    const options = { ...f.options, mode: "apply", confirmation: MEDIA_RETRY_CONFIRMATION };
+    const program = `import { retryMediaJobs } from ${JSON.stringify(new URL("../src/media/retry.mjs", import.meta.url).href)}; const result = await retryMediaJobs(${JSON.stringify(options)}); process.stdout.write(JSON.stringify(result)); process.exitCode = result.exitCode;`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", program], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: 64 * 1024,
+    });
+    assert.equal(child.status, 2);
+    assert.equal(
+      JSON.parse(child.stdout).checks[0].code,
+      barrierWritable ? "MEDIA_RETRY_SAFETY_BARRIER" : "MEDIA_RETRY_LOCK_HELD",
+    );
+    assert.equal(child.stderr, "");
+    if (owner)
+      assert.deepEqual(await readFile(join(f.root, "media-queue.lock", "owner.json")), owner);
+  });
+}
 
 test("retry raw metadata retains byte, scalar-count and nesting limits", async (context) => {
   const f = await fixture(context);

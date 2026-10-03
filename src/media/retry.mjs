@@ -55,6 +55,7 @@ export async function retryMediaJobs(
   } = {},
 ) {
   const counts = { courses: 0, inspected: 0, selected: 0, alreadyRetryable: 0, changed: 0 };
+  let executionCleanupCode = null;
   try {
     if (
       !["plan", "apply"].includes(mode) ||
@@ -152,7 +153,8 @@ export async function retryMediaJobs(
               },
             });
           } catch (error) {
-            if (durable) throw refusal("MEDIA_RETRY_PUBLICATION_PARTIAL");
+            if (durable)
+              throw Object.assign(refusal("MEDIA_RETRY_PUBLICATION_PARTIAL"), { cause: error });
             throw error;
           }
         }
@@ -164,12 +166,21 @@ export async function retryMediaJobs(
         mode,
       );
     };
+    const executeWithCleanupEvidence = async () => {
+      try {
+        return await execute();
+      } catch (error) {
+        // Lock barrier-storage failure can replace the thrown error; retain its closed cleanup code.
+        executionCleanupCode = unconfirmedMediaCleanupCode(error);
+        throw error;
+      }
+    };
     return mode === "apply"
-      ? await lock({ statePath: config.statePath, run: execute })
-      : await execute();
+      ? await lock({ statePath: config.statePath, run: executeWithCleanupEvidence })
+      : await executeWithCleanupEvidence();
   } catch (caught) {
     let error = caught;
-    const cleanupCode = unconfirmedMediaCleanupCode(error);
+    const cleanupCode = unconfirmedMediaCleanupCode(error) ?? executionCleanupCode;
     let barrierPersistence = error?.code === "MEDIA_SAFETY_BARRIER_WRITE" ? "failed" : "unrun";
     if (cleanupCode && barrierPersistence !== "failed") {
       try {
