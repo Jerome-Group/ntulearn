@@ -247,26 +247,43 @@ for (const boundary of ["stat", "close", "parent"])
   });
 test("close rejection remains cleanup failure even when another I/O deadline expires", async (t) => {
   const f = await fixture(t);
-  const result = await invoke(f, {
-    ioMs: 10,
-    settleMs: 40,
+  let entered;
+  const started = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const resultPromise = invoke(f, {
+    ioMs: 250,
+    settleMs: 250,
     openFile: async (...args) => {
-      const handle = await open(...args);
+      const handle = await open(...args),
+        affected = args[0].endsWith("test-001.stdout.log");
       return {
         stat: () => handle.stat(),
         read: (...a) => handle.read(...a),
         writeFile: (...a) => handle.writeFile(...a),
         sync: () => handle.sync(),
         close: async () => {
-          await setTimeout(15);
+          if (affected) {
+            entered();
+            await setTimeout(300);
+          }
           await handle.close();
-          throw new Error("private cleanup failure");
+          if (affected) throw new Error("private cleanup failure");
         },
       };
     },
   });
+  await Promise.race([
+    started,
+    resultPromise.then(() => assert.fail("fixture did not reach the owned close boundary")),
+  ]);
+  const result = await resultPromise;
   assert.equal(result.exitCode, 1);
-  assert.equal(result.checks[0].code, "CHECK_EVIDENCE_CLEANUP");
+  assert.equal(result.checks.find((c) => c.id === "test").evidence.exitCode, 9);
+  assert.equal(
+    result.checks.find((c) => c.id === "private-evidence").code,
+    "CHECK_EVIDENCE_CLEANUP",
+  );
   assert.doesNotMatch(JSON.stringify(result), /private cleanup failure/);
 });
 test("directory replacement before failed-output write refuses bytes in the foreign directory", async (t) => {
