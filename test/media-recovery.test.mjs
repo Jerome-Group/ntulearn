@@ -1,11 +1,13 @@
+import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
-import { readFile, writeFile, readdir, lstat } from "node:fs/promises";
+import { readFile, writeFile, readdir, lstat, symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout } from "node:timers";
 import { recoverTranscriptSources } from "../src/media/recovery.mjs";
+import { VAD_MODEL, vadRuntimePin, vadDelegateRuntimePin } from "../src/media/vad-model.mjs";
 import { mediaSafetyPath } from "../src/media/safety.mjs";
-import { recoveryFixture } from "./fixtures/media-recovery.mjs";
+import { recoveryFixture, digest } from "./fixtures/media-recovery.mjs";
 
 test("plan writes nothing; serial run retains native policy evidence; publication repeats without replacing originals", async (t) => {
   const f = await recoveryFixture(t);
@@ -387,4 +389,234 @@ test("unknown recovery policy refuses before runtime or output creation", async 
   assert.equal(f.calls.length, 0);
   await assert.rejects(lstat(f.outputDirectory), { code: "ENOENT" });
   assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+});
+
+test("VAD admission refuses absent preparation before output or ASR", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-vad-v1";
+  await f.saveManifest();
+  const result = await recoverTranscriptSources({ ...f.options, mode: "run" }, f.dependencies);
+  assert.equal(result.status, "blocked");
+  assert.equal(
+    f.calls.some((call) => call.options?.label === "Whisper transcription"),
+    false,
+  );
+  await assert.rejects(lstat(f.outputDirectory), { code: "ENOENT" });
+});
+
+test("prepared VAD uses full input and retains asset provenance; edited pins refuse publication", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-vad-v1";
+  await f.saveManifest();
+  const dependencies = {
+    ...f.dependencies,
+    verifyVad: async () => ({
+      path: join(f.root, "fixture-vad.bin"),
+      pin: vadRuntimePin(),
+      delegatePin: vadDelegateRuntimePin(),
+      inputs: [],
+    }),
+  };
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "run" }, dependencies)).status,
+    "passed",
+  );
+  const asr = f.calls.find((call) => call.options?.label === "Whisper transcription");
+  assert.ok(asr.args.includes("--vad"));
+  assert.ok(asr.args.includes("--suppress-nst"));
+  assert.equal(asr.args[asr.args.indexOf("--processors") + 1], "1");
+  for (const flag of ["--offset-t", "--duration", "--suppress-regex"])
+    assert.equal(asr.args.includes(flag), false);
+  const extraction = f.calls.find((call) => call.options?.label === "ASR audio extraction");
+  assert.equal(
+    extraction.args[extraction.args.indexOf("-i") + 1],
+    f.manifest.recordings[0].media.path,
+  );
+  for (const flag of ["-ss", "-t", "-to", "-af"])
+    assert.equal(extraction.args.includes(flag), false);
+  const reportPath = join(f.outputDirectory, "recovery.json");
+  const report = JSON.parse(await readFile(reportPath));
+  assert.deepEqual(
+    report.runtimePins.find((pin) => pin.key === "asr.vad"),
+    vadRuntimePin(),
+  );
+  report.runtimePins.find((pin) => pin.key === "asr.vad").sha256 = "0".repeat(64);
+  await writeFile(reportPath, JSON.stringify(report));
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "publish" }, dependencies)).status,
+    "blocked",
+  );
+  assert.deepEqual(await readdir(f.course.destination), ["lecture.mp4", "lecture.transcript.md"]);
+  report.runtimePins.find((pin) => pin.key === "asr.vad").sha256 = VAD_MODEL.sha256;
+  await writeFile(reportPath, JSON.stringify(report));
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "publish" }, dependencies)).status,
+    "passed",
+  );
+  const provenance = (await readdir(f.course.destination)).find((name) =>
+    name.endsWith(".provenance.json"),
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(join(f.course.destination, provenance))).runtimePins.find(
+      (pin) => pin.key === "asr.vad",
+    ),
+    report.runtimePins.find((pin) => pin.key === "asr.vad"),
+  );
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.sourceBody);
+});
+
+for (const segments of [
+  [],
+  [{ start: 0, end: 20, text: "[BLANK_AUDIO] ".repeat(12).trim() }],
+  [{ start: 0, end: 1, text: "Let x equal minus two." }],
+  [
+    { start: 0, end: 20, text: "Let x equal minus two." },
+    { start: 20, end: 20, text: "I." },
+  ],
+])
+  test(`VAD preserves native rows and full-duration refusal (${segments.length} rows, end ${segments[0]?.end ?? 0})`, async (t) => {
+    const f = await recoveryFixture(t);
+    f.manifest.policy = "independent-context-nonspeech-vad-v1";
+    await f.saveManifest();
+    f.native.segments = segments;
+    const dependencies = {
+      ...f.dependencies,
+      verifyVad: async () => ({
+        path: join(f.root, "fixture-vad.bin"),
+        pin: vadRuntimePin(),
+        delegatePin: vadDelegateRuntimePin(),
+        inputs: [],
+      }),
+    };
+    assert.notEqual(
+      (await recoverTranscriptSources({ ...f.options, mode: "run" }, dependencies)).status,
+      "passed",
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(join(f.outputDirectory, "recording-1.native-asr.json"))),
+      f.native,
+    );
+    assert.notEqual(
+      (await recoverTranscriptSources({ ...f.options, mode: "publish" }, dependencies)).status,
+      "passed",
+    );
+    assert.deepEqual(await readdir(f.course.destination), ["lecture.mp4", "lecture.transcript.md"]);
+  });
+
+test("changed prepared asset between extraction and ASR stops before recognition and preserves originals", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-vad-v1";
+  await f.saveManifest();
+  const path = join(f.root, "fixture-vad.bin");
+  await writeFile(path, "fixture VAD");
+  const input = { path, sha256: digest("fixture VAD"), bytes: 11 };
+  const dependencies = {
+    ...f.dependencies,
+    verifyVad: async () => ({
+      path,
+      pin: vadRuntimePin(),
+      delegatePin: vadDelegateRuntimePin(),
+      inputs: [input],
+    }),
+    runProcess: async (...args) => {
+      const result = await f.dependencies.runProcess(...args);
+      if (args[2].label === "ASR audio extraction") await writeFile(path, "changed VAD");
+      return result;
+    },
+  };
+  assert.notEqual(
+    (await recoverTranscriptSources({ ...f.options, mode: "run" }, dependencies)).status,
+    "passed",
+  );
+  assert.equal(
+    f.calls.some((call) => call.options?.label === "Whisper transcription"),
+    false,
+  );
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.sourceBody);
+});
+
+async function delegateIdentity(f) {
+  const path = join(f.root, "fixture-delegate"),
+    executionPath = join(f.root, "fixture-delegate-link");
+  await writeFile(path, "synthetic delegate bytes");
+  await symlink(path, executionPath);
+  const input = {
+    path,
+    sha256: digest("synthetic delegate bytes"),
+    bytes: Buffer.byteLength("synthetic delegate bytes"),
+  };
+  return {
+    path: join(f.root, "fixture-vad.bin"),
+    pin: vadRuntimePin(),
+    delegatePin: vadDelegateRuntimePin(),
+    delegate: { executionPath, canonicalPath: path, input },
+    inputs: [input],
+  };
+}
+async function retargetDelegate(f, vad) {
+  const copy = join(f.root, "same-byte-delegate-copy");
+  await writeFile(copy, await readFile(vad.delegate.canonicalPath));
+  await unlink(vad.delegate.executionPath);
+  await symlink(copy, vad.delegate.executionPath);
+}
+
+test("same-byte delegated target retarget between extraction and ASR refuses recognition", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-vad-v1";
+  await f.saveManifest();
+  const vad = await delegateIdentity(f);
+  const dependencies = {
+    ...f.dependencies,
+    verifyVad: async () => vad,
+    runProcess: async (...args) => {
+      const result = await f.dependencies.runProcess(...args);
+      if (args[2].label === "ASR audio extraction") await retargetDelegate(f, vad);
+      return result;
+    },
+  };
+  assert.notEqual(
+    (await recoverTranscriptSources({ ...f.options, mode: "run" }, dependencies)).status,
+    "passed",
+  );
+  assert.equal(
+    f.calls.some((call) => call.options?.label === "Whisper transcription"),
+    false,
+  );
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+});
+
+test("same-byte delegated target retarget during publication preserves originals and refuses later writes", async (t) => {
+  const f = await recoveryFixture(t);
+  f.manifest.policy = "independent-context-nonspeech-vad-v1";
+  await f.saveManifest();
+  const vad = await delegateIdentity(f),
+    dependencies = { ...f.dependencies, verifyVad: async () => vad };
+  assert.equal(
+    (await recoverTranscriptSources({ ...f.options, mode: "run" }, dependencies)).status,
+    "passed",
+  );
+  let changed = false;
+  const result = await recoverTranscriptSources(
+    { ...f.options, mode: "publish" },
+    {
+      ...dependencies,
+      afterOutput: async () => {
+        if (!changed) {
+          changed = true;
+          await retargetDelegate(f, vad);
+        }
+      },
+    },
+  );
+  assert.notEqual(result.status, "passed");
+  assert.equal(result.evidence.written, 1);
+  assert.equal(result.evidence.publishedCandidates, 0);
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.sourceBody);
+  assert.deepEqual(
+    JSON.parse(await readFile(join(f.outputDirectory, "recording-1.native-asr.json"))),
+    f.native,
+  );
 });

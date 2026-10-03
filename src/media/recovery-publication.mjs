@@ -8,10 +8,13 @@ import { historicalReads, publishHistoricalFile, historicalDigest } from "./hist
 import { createMediaCapacity } from "./capacity.mjs";
 import { assertRecoveryInputs } from "./recovery-manifest.mjs";
 import { evaluationOutputRoot } from "./evaluation-storage.mjs";
+import { VAD_RECOVERY_POLICY } from "./recovery-policy.mjs";
+import { verifyMediaRuntime } from "./setup.mjs";
+import { verifyRecoveryVad, assertRecoveryVadInputs } from "./vad.mjs";
 import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
 
 export async function publishRecoveryCandidates(
-  { manifest, outputDirectory, config, signal },
+  { manifest, outputDirectory, config, signalProcessGroup, signal },
   dependencies = {},
 ) {
   const progress = {
@@ -25,7 +28,7 @@ export async function publishRecoveryCandidates(
   };
   try {
     return await publishCandidates(
-      { manifest, outputDirectory, config, signal },
+      { manifest, outputDirectory, config, signalProcessGroup, signal },
       dependencies,
       progress,
     );
@@ -42,7 +45,7 @@ export async function publishRecoveryCandidates(
 }
 
 async function publishCandidates(
-  { manifest, outputDirectory, config, signal },
+  { manifest, outputDirectory, config, signalProcessGroup, signal },
   dependencies,
   progress,
 ) {
@@ -66,6 +69,24 @@ async function publishCandidates(
     report.candidates.length !== manifest.recordings.length
   )
     throw recoveryFailure("RECOVERY_CANDIDATE_INVALID");
+  let vad;
+  if (manifest.policy === VAD_RECOVERY_POLICY) {
+    const runtime = await (dependencies.verifyRuntime ?? verifyMediaRuntime)(config.media, {
+      signal,
+      signalProcessGroup,
+    });
+    vad = await (dependencies.verifyVad ?? verifyRecoveryVad)(
+      { runtime, signal },
+      { signal, signalProcessGroup },
+    );
+    const pins = [
+      ...runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 })),
+      vad.pin,
+      vad.delegatePin,
+    ];
+    if (JSON.stringify(report.runtimePins) !== JSON.stringify(pins))
+      throw recoveryFailure("RECOVERY_VAD_UNPREPARED");
+  }
   const outputs = [],
     courseIndexes = new Map(),
     reviewEntries = [],
@@ -193,6 +214,7 @@ async function publishCandidates(
         throw recoveryFailure("RECOVERY_CANDIDATE_EDITED");
     }
     await assertRecoveryInputs(manifest, signal, { includeMedia: false });
+    if (vad) await assertRecoveryVadInputs(vad, signal);
   };
   for (const outputFile of outputs) {
     signal?.throwIfAborted();
@@ -214,6 +236,7 @@ async function publishCandidates(
     await dependencies.afterOutput?.({ written: progress.written, existing: progress.existing });
   }
   await assertRecoveryInputs(manifest, signal);
+  if (vad) await assertRecoveryVadInputs(vad, signal);
   return {
     ...progress,
     publication: "candidate-editions",

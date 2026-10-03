@@ -16,6 +16,7 @@ export async function createRecoveryCandidate(
     paths: { ...runtime.runtime, work: join(output, "work") },
     preserveArtifacts: true,
     asrPolicy: manifest.policy,
+    vadModel: runtime.vad?.path,
     commands: {
       ffmpeg: join(runtime.runtime.bin, setup.mediaTool.filename),
       ffprobe: config.media.tools.ffprobe,

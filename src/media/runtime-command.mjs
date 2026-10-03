@@ -12,8 +12,9 @@ export function createRuntimeCommandRunner(options = {}) {
       throw new Error(
         "Runtime verification needs a positive command timeout. Repair the runtime options, then retry.",
       );
+    let result;
     if (options.signalProcessGroup) {
-      await runMediaProcess(command, args, {
+      result = await runMediaProcess(command, args, {
         ...options,
         ...limits,
         timeoutMs,
@@ -22,9 +23,11 @@ export function createRuntimeCommandRunner(options = {}) {
         stderrMaxBytes: OUTPUT_BYTES,
       });
     } else {
-      await runLeader(command, args, timeoutMs);
+      result = await runLeader(command, args, timeoutMs);
     }
-    return { code: 0 };
+    return limits.captureOutput
+      ? { code: 0, stdout: result.stdout, stderr: result.stderr }
+      : { code: 0 };
   };
 }
 
@@ -42,7 +45,7 @@ function runLeader(command, args, timeoutMs) {
         timeout: timeoutMs,
         killSignal: "SIGKILL",
       },
-      (error) => finish(error),
+      (error, stdout, stderr) => finish(error, { stdout, stderr }),
     );
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
@@ -54,11 +57,11 @@ function runLeader(command, args, timeoutMs) {
         ),
       );
     }, timeoutMs);
-    function finish(cause) {
+    function finish(cause, result) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (!cause) return resolve();
+      if (!cause) return resolve(result);
       const error = new Error(
         "Media runtime verification failed or timed out. Check the configured executable and runtime processes, then retry; direct API calls do not confirm descendant cleanup.",
         { cause },

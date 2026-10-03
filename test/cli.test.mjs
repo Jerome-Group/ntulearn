@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \[RECOVER_TRANSCRIPT_SOURCES\|PUBLISH_RECOVERED_EDITIONS\] \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup -- \[vad\] \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \[RECOVER_TRANSCRIPT_SOURCES\|PUBLISH_RECOVERED_EDITIONS\] \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -820,5 +820,22 @@ test("explicit retry configuration refusals are structured and omit private path
       result.stdout,
       /fixture-secret|bad-private-fragment|ntulearn-private-retry-config|SyntaxError|ENOTDIR/,
     );
+  }
+});
+
+test("optional setup CLI is explicit, structured and masks absent runtime without downloading", async () => {
+  const result = await runCli("media-setup", "vad");
+  assert.equal(result.code, 2);
+  assert.equal(result.stderr, "");
+  const evidence = JSON.parse(result.stdout);
+  assert.equal(evidence.command, "media:setup:vad");
+  assert.equal(evidence.status, "blocked");
+  assert.equal(evidence.evidence.acousticVerification, "unrun");
+  assert.doesNotMatch(result.stdout, /profile|courses.json|_fixture|signed/i);
+  for (const args of [["foreign"], ["vad", "extra"]]) {
+    const refused = await runCli("media-setup", ...args);
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, /Usage:/);
+    assert.equal(refused.stdout, "");
   }
 });

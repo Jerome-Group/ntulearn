@@ -59,3 +59,14 @@ test("never converts uncertain owned-group cleanup to a verifier exit code", asy
     globalSafety: true,
   });
 });
+
+test("explicit capability capture returns bounded stdout and stderr for owned and direct runners", async () => {
+  for (const options of [{}, { signalProcessGroup }]) {
+    const result = await createRuntimeCommandRunner(options)(
+      process.execPath,
+      ["-e", "process.stdout.write('--vad');process.stderr.write('--vad-model')"],
+      { captureOutput: true },
+    );
+    assert.deepEqual(result, { code: 0, stdout: "--vad", stderr: "--vad-model" });
+  }
+});
