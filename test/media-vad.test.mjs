@@ -235,7 +235,10 @@ test("download wrong hash, oversized response, deadline and interruption preserv
     const body = failure === "size" ? Buffer.alloc(f.body.length + 1) : Buffer.alloc(f.body.length);
     const fetcher =
       failure === "deadline" || failure === "interrupt"
-        ? async () => new Promise(() => {})
+        ? async () => {
+            if (failure === "interrupt") setTimeout(() => controller.abort(), 20);
+            return new Promise(() => {});
+          }
         : async () => ({
             ok: true,
             body: new globalThis.ReadableStream({
@@ -245,12 +248,20 @@ test("download wrong hash, oversized response, deadline and interruption preserv
               },
             }),
           });
-    if (failure === "interrupt") setTimeout(() => controller.abort(), 20);
     assert.equal(
       (
         await setupRecoveryVad(
           { config: f.config, signal: controller.signal },
-          { ...f.deps, fetcher, downloadTimeoutMs: 40 },
+          {
+            ...f.deps,
+            verifyRuntime: async (...args) => {
+              // Preparation may outlast the former pre-call abort timer.
+              if (failure === "interrupt") await new Promise((done) => setTimeout(done, 60));
+              return f.deps.verifyRuntime(...args);
+            },
+            fetcher,
+            downloadTimeoutMs: 40,
+          },
         )
       ).status,
       "blocked",
