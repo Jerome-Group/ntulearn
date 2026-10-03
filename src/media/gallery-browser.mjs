@@ -81,7 +81,15 @@ export async function collectMediaGalleryPages({
     }
     const page =
       read && typeof read === "object"
-        ? { ...read, paginationMode: read.paginationMode ?? nextPaginationMode }
+        ? {
+            ...read,
+            paginationMode:
+              read.paginationMode === "unknown" &&
+              nextPaginationMode === "append" &&
+              cumulativeGalleryGrowth(pages.at(-1), read)
+                ? "append"
+                : (read.paginationMode ?? nextPaginationMode),
+          }
         : read;
     pages.push(page);
     if (page?.hasMore !== true) return pages;
@@ -114,6 +122,31 @@ export async function collectMediaGalleryPages({
     pageLimit: maxPages,
     snapshot: pages.at(-1),
   });
+}
+
+function cumulativeGalleryGrowth(previous, current) {
+  if (
+    previous?.hasMore !== true ||
+    !Number.isSafeInteger(current.displayedCount) ||
+    current.displayedCount < 0 ||
+    previous.displayedCount !== current.displayedCount ||
+    !Array.isArray(previous.entries) ||
+    !Array.isArray(current.entries) ||
+    !previous.entries.length ||
+    current.entries.length <= previous.entries.length
+  )
+    return false;
+  const earlier = previous.entries.map(galleryEntryIdentity);
+  const later = current.entries.map(galleryEntryIdentity);
+  if ([...earlier, ...later].some((identity) => typeof identity !== "string" || !identity.trim()))
+    return false;
+  const earlierIdentities = new Set(earlier),
+    laterIdentities = new Set(later);
+  return (
+    earlierIdentities.size === earlier.length &&
+    laterIdentities.size === later.length &&
+    earlier.every((identity) => laterIdentities.has(identity))
+  );
 }
 
 function appendPageReachedDisplayedTotal(page) {
