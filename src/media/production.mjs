@@ -1,5 +1,8 @@
+import { persistMediaSafetyBarrier } from "./safety.mjs";
 import { withCapacityDeadline } from "./capacity-deadline.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
+import { withMediaQueueLock } from "./lock.mjs";
+import { markGlobalMediaSafety } from "./errors.mjs";
 import { join } from "node:path";
 import { openClient } from "../ntulearn/client.mjs";
 import { runMediaProcess } from "./process.mjs";
@@ -14,6 +17,8 @@ export async function runProductionMedia({
   config,
   signalProcessGroup,
   mode = "scheduled",
+  priorityCourseKey = null,
+  signal,
   verifyRuntime = verifyMediaRuntime,
   createCapacity = createMediaCapacity,
   capacityCheckTimeoutMs = 5_000,
@@ -29,8 +34,43 @@ export async function runProductionMedia({
   let runtime;
   let capacity;
   let runner;
+  let settlement;
+  const closeJobRunner = () =>
+    (settlement ??= Promise.resolve().then(async () => {
+      try {
+        await runner?.close?.();
+      } catch (cause) {
+        const error = markGlobalMediaSafety(
+          Object.assign(
+            new Error(
+              "Media browser cleanup is unconfirmed. Inspect the owned session before retrying.",
+              { cause },
+            ),
+            { code: "MEDIA_BROWSER_CLEANUP" },
+          ),
+        );
+        await persistMediaSafetyBarrier({ statePath: config.statePath, error, now });
+        throw error;
+      }
+    }));
+  const queueLock = lock === undefined ? withMediaQueueLock : lock;
+  const settledLock = queueLock
+    ? (options) =>
+        queueLock({
+          ...options,
+          run: async () => {
+            try {
+              return await options.run();
+            } finally {
+              await closeJobRunner();
+            }
+          },
+        })
+    : null;
   const preflight = async () => {
-    runtime = await verifyRuntime(config.media, { signalProcessGroup });
+    signal?.throwIfAborted();
+    runtime = await verifyRuntime(config.media, { signalProcessGroup, signal });
+    signal?.throwIfAborted();
     capacity = await withCapacityDeadline(
       () =>
         createCapacity(config.media, {
@@ -39,8 +79,10 @@ export async function runProductionMedia({
         }),
       { timeoutMs: capacityCheckTimeoutMs },
     );
+    signal?.throwIfAborted();
   };
   const runJob = async (appearance, context) => {
+    context.signal?.throwIfAborted();
     if (appearance.provider === "unsupported") return unsupportedResult(appearance);
     runner ??= await createJobRunner({
       config,
@@ -49,6 +91,7 @@ export async function runProductionMedia({
       capacityCheckTimeoutMs,
       signalProcessGroup,
     });
+    context.signal?.throwIfAborted();
     return runner.run(appearance, context);
   };
 
@@ -58,11 +101,14 @@ export async function runProductionMedia({
       courses: config.courses,
       media: config.media,
       mode,
+      priorityCourseKey,
+      signal,
       preflight,
       checkCapacity: ({ course }) => capacity.checkJob(course),
       capacityCheckTimeoutMs,
       runJob,
-      ...(lock === undefined ? {} : { lock }),
+      closeJobRunner,
+      lock: settledLock,
       ...(write === undefined ? {} : { write }),
       ...(now === undefined ? {} : { now }),
       ...(clock === undefined ? {} : { clock }),
@@ -72,7 +118,7 @@ export async function runProductionMedia({
     });
     return { digest, exitCode: mediaWorkerExitCode(digest) };
   } finally {
-    await runner?.close?.();
+    await closeJobRunner();
   }
 }
 

@@ -55,6 +55,7 @@ npm run renumber -- MH2500    # rename what is on disk back into the course's or
 npm run media:setup            # Owner-started: prepare and verify the local media runtime
 npm run media:discover -- all  # Owner-started: discover and queue recording appearances
 npm run media:worker -- manual # Owner-started: process every enabled queue now
+npm run media:worker -- manual MH2100 # Prioritize one course; still process all enabled queues
 npm run media:worker            # Scheduled semantics: work only from 00:00 through 03:59
 npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # confirm one withdrawal
 ```
@@ -63,19 +64,31 @@ npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # con
 watchdog and future scheduled media runs never install anything. A successful media discovery
 writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
 
-The production entrypoint is `npm run media:worker -- <scheduled|manual>`. One invocation covers
+The production entrypoint is `npm run media:worker -- <scheduled|manual> [priority-course]`.
+Priority is accepted only in manual mode and must name an enabled configured course. It changes
+the order, while one invocation still covers
 every enabled course and provider in its aggregate digest. Unsupported appearances become terminal
 red failures. A red, queued, checkpointed, locked, or otherwise incomplete aggregate exits
 non-zero. `scheduled` is the default and runs only from 00:00 through
 03:59 local time, checkpoints the active appearance at 04:00, and writes the independent
 `.data/media-latest.json` digest plus `.data/media-logs/`. `mode: "manual"` ignores that time
-boundary. Queue entries are `queued`, `active`, `checkpointed`, `complete`, or `red`; successful
-entries are skipped on later runs, while failures remain retryable. Runs share
+boundary. SIGINT/SIGTERM stop further jobs and await owned cleanup; the digest records
+`interrupted: true`, and an active job records a manual or scheduled interruption checkpoint.
+The run and latest digest retain the sanitized `interruptionReason`.
+This differs from the overnight checkpoint. Inspect the run evidence before retrying; cleanup
+uncertainty remains a global safety failure.
+Unconfirmed process/browser cleanup creates a private, persistent `.data/media-safety.json`
+barrier and, for an active job, a non-retryable `safetyFailure` marker. Any barrier or retained
+marker blocks later workers before runtime verification or browser access. The Owner must verify
+cessation and inspect preserved evidence before explicitly clearing them; no command clears them
+automatically. If writing the barrier fails, retain external containment before recovery.
+Queue entries are `queued`, `active`, `checkpointed`, `complete`, or `red`; successful
+entries are skipped on later runs, while failures are retried only when marked retryable. Runs share
 `.data/media-queue.lock`, so a manual run cannot overlap a scheduled one. The worker never calls
 `media:setup`. Every enabled course has `Media Gallery/media-status.md`, and every discovered
 appearance has a sibling `.media-status.md` with provider, source, stage, video/audio availability,
 transcript provenance, retryability, and limitations. A queued appearance is yellow until its next
-eligible worker window; an attempted incomplete source or derivative is red and remains retryable.
+eligible worker window; an attempted incomplete source or derivative is red and records its retry eligibility.
 The status documents and queue remain independent from sync and verify verdicts.
 
 ## Configuration

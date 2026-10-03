@@ -635,7 +635,7 @@ test("exhausts provider paths before capture when provider resolution fails", as
   assert.match(result.limitations.join(" "), /Provider resolution failed/);
 });
 
-test("does not retain capture output after a forced checkpoint", async () => {
+test("does not retain capture output after manual cancellation", async () => {
   const controller = new globalThis.AbortController();
   const writes = [];
   const provider = validProvider();
@@ -645,36 +645,36 @@ test("does not retain capture output after a forced checkpoint", async () => {
     retryable: true,
   });
 
-  const result = await runMediaJob({
-    appearance: recordingAppearance(),
-    provider,
-    playbackCapture: {
-      async media({ signal }) {
-        controller.abort(new Error("04:00 checkpoint"));
-        assert.equal(signal, controller.signal);
-        return { kind: "video", body: Buffer.from("must not commit") };
+  const reason = new Error("Manual cancellation; retry later.");
+  await assert.rejects(
+    runMediaJob({
+      appearance: recordingAppearance(),
+      provider,
+      playbackCapture: {
+        async media({ signal }) {
+          controller.abort(reason);
+          assert.equal(signal, controller.signal);
+          return { kind: "video", body: Buffer.from("must not commit") };
+        },
       },
-    },
-    formatter: {
-      version: "formatter-1",
-      format: async () => ({ markdown: "The value is 2 + 2 = 4." }),
-    },
-    storage: {
-      async write(value) {
-        writes.push(value);
-        return { path: `media/${value.kind}` };
+      formatter: {
+        version: "formatter-1",
+        format: async () => ({ markdown: "The value is 2 + 2 = 4." }),
       },
-    },
-    signal: controller.signal,
-  });
-
-  assert.equal(result.complete, false);
-  assert.equal(result.stage, "red");
+      storage: {
+        async write(value) {
+          writes.push(value);
+          return { path: `media/${value.kind}` };
+        },
+      },
+      signal: controller.signal,
+    }),
+    (error) => error === reason,
+  );
   assert.equal(
     writes.some(({ kind }) => kind === "media"),
     false,
   );
-  assert.match(result.limitations.join(" "), /interrupted/i);
 });
 
 test("keeps a silent browser fallback red even when the provider transcript is complete", async () => {
@@ -1813,3 +1813,64 @@ test("actual regeneration preserves unowned or edited derivatives and replaces o
     if (mode !== "owned") assert.match(result.limitation, /ownership proof.*retain.*inspect/i);
   }
 });
+
+test("refuses publication after a provider returns from manual cancellation with the exact reason", async () => {
+  const controller = new globalThis.AbortController();
+  const reason = new Error("Synthetic cancellation; retry later.");
+  let writes = 0;
+  await assert.rejects(
+    runMediaJob({
+      appearance: {
+        recordingId: "synthetic-cancel",
+        provider: "direct",
+        placement: { destination: "/synthetic" },
+      },
+      provider: {
+        name: "direct",
+        resolve: async () => {
+          controller.abort(reason);
+          return {};
+        },
+        transcript: async () => assert.fail("no transcript after cancellation"),
+        media: async () => assert.fail("no media after cancellation"),
+      },
+      storage: {
+        read: async () => null,
+        write: async () => {
+          writes += 1;
+        },
+      },
+      signal: controller.signal,
+    }),
+    (error) => error === reason,
+  );
+  assert.equal(writes, 0);
+});
+
+for (const reason of [0, false, "", null]) {
+  test(`manual cancellation preserves ${JSON.stringify(reason)} without publication`, async () => {
+    const controller = new globalThis.AbortController();
+    await assert.rejects(
+      runMediaJob({
+        appearance: {
+          recordingId: "synthetic-falsy-cancel",
+          provider: "direct",
+          placement: { destination: "/synthetic" },
+        },
+        provider: {
+          name: "direct",
+          resolve: async () => {
+            controller.abort(reason);
+            return {};
+          },
+        },
+        storage: {
+          read: async () => null,
+          write: async () => assert.fail("no publication after cancellation"),
+        },
+        signal: controller.signal,
+      }),
+      (failure) => failure === reason,
+    );
+  });
+}

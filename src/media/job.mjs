@@ -73,7 +73,7 @@ export async function runMediaJob({
         throwIfInterrupted(signal);
       } catch (error) {
         throwIfGlobalSafety(error);
-        throwIfCheckpointed(signal);
+        throwIfInterrupted(signal);
         retryable = true;
         limitations.push(`Provider resolution failed: ${publicMediaError(error)}`);
       }
@@ -84,7 +84,7 @@ export async function runMediaJob({
           throwIfInterrupted(signal);
         } catch (error) {
           throwIfGlobalSafety(error);
-          throwIfCheckpointed(signal);
+          throwIfInterrupted(signal);
           retryable = true;
           limitations.push(`Provider transcript retrieval failed: ${publicMediaError(error)}`);
         }
@@ -115,7 +115,7 @@ export async function runMediaJob({
               else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
             } catch (error) {
               throwIfGlobalSafety(error);
-              throwIfCheckpointed(signal);
+              throwIfInterrupted(signal);
               limitations.push(`Provider transcript rejected: ${publicMediaError(error)}.`);
             }
           }
@@ -144,7 +144,7 @@ export async function runMediaJob({
           }
         } catch (error) {
           throwIfGlobalSafety(error);
-          throwIfCheckpointed(signal);
+          throwIfInterrupted(signal);
           retryable = true;
           limitations.push(`Media acquisition failed: ${publicMediaError(error)}`);
         }
@@ -176,7 +176,7 @@ export async function runMediaJob({
         }
       } catch (error) {
         throwIfGlobalSafety(error);
-        throwIfCheckpointed(signal);
+        throwIfInterrupted(signal);
         captureFailed = true;
         retryable = true;
         limitations.push(captureErrorMessage(error));
@@ -258,6 +258,7 @@ export async function runMediaJob({
                 : null;
           if (!formatted) throw new Error("ASR resources were not released before formatting");
           if (Array.isArray(formatted?.limitations)) limitations.push(...formatted.limitations);
+          throwIfInterrupted(signal);
           artifacts.formattedTranscript = await artifactsStore.writeFormatted({
             source,
             sourceSha256,
@@ -298,7 +299,7 @@ export async function runMediaJob({
           });
         } catch (error) {
           throwIfGlobalSafety(error);
-          throwIfCheckpointed(signal);
+          throwIfInterrupted(signal);
           limitations.push(`Formatted transcript rejected: ${publicMediaError(error)}`);
         }
       }
@@ -323,6 +324,7 @@ export async function runMediaJob({
       speechDuration,
     });
   } catch (error) {
+    throwIfGlobalSafety(error);
     if (!isCheckpointError(error)) throw error;
     return outcome.persist({
       providerName,
@@ -433,7 +435,7 @@ async function generateLocalTranscript({
     else limitations.push(`Local transcription rejected: ${checked.reason}.`);
   } catch (error) {
     throwIfGlobalSafety(error);
-    throwIfCheckpointed(signal);
+    throwIfInterrupted(signal);
     limitations.push(`Local transcription failed: ${publicMediaError(error)}`);
   } finally {
     if (typeof transcriber.release === "function") {
@@ -441,7 +443,7 @@ async function generateLocalTranscript({
         await transcriber.release();
       } catch (error) {
         throwIfGlobalSafety(error);
-        throwIfCheckpointed(signal);
+        throwIfInterrupted(signal);
         released = false;
         limitations.push(`Local transcription cleanup failed: ${publicMediaError(error)}`);
       }
@@ -451,18 +453,7 @@ async function generateLocalTranscript({
 }
 
 function throwIfInterrupted(signal) {
-  if (!signal?.aborted) return;
-  const reason = signal.reason instanceof Error ? signal.reason : null;
-  if (reason && reason.code !== "MEDIA_CHECKPOINT") return;
-  const error = reason ?? new Error("Media job interrupted; retry after the queue checkpoint.");
-  error.code ??= "MEDIA_CHECKPOINT";
-  throw error;
-}
-
-function throwIfCheckpointed(signal) {
-  if (signal?.aborted && signal.reason?.code === "MEDIA_CHECKPOINT") {
-    throw signal.reason;
-  }
+  signal?.throwIfAborted();
 }
 
 function isCheckpointError(error) {

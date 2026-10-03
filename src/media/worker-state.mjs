@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { assertMediaArtifactPath, mediaRecordingRoot } from "./storage.mjs";
-import { publicMediaError, markGlobalMediaSafety } from "./errors.mjs";
+import { publicMediaError, markGlobalMediaSafety, unconfirmedMediaCleanupCode } from "./errors.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 
 export function resultUpdate(result, finishedAt) {
@@ -35,11 +35,13 @@ export function resultUpdate(result, finishedAt) {
 
 export function failureUpdate(error, finishedAt) {
   const message = publicMediaError(error);
+  const safetyFailure = unconfirmedMediaCleanupCode(error);
   return {
     complete: false,
     stage: "failed",
     verdict: "red",
-    retryable: true,
+    retryable: !safetyFailure,
+    ...(safetyFailure ? { safetyFailure } : {}),
     limitations: [message],
     limitation: message,
     finishedAt: finishedAt.toISOString(),
@@ -48,10 +50,17 @@ export function failureUpdate(error, finishedAt) {
   };
 }
 
-export function checkpointUpdate({ result, failure, finishedAt }) {
-  const base = failure
-    ? failureUpdate(failure, finishedAt)
-    : resultUpdate(result ?? { complete: false }, finishedAt);
+export function checkpointUpdate({
+  result,
+  failure,
+  finishedAt,
+  reason = "overnight window ended",
+}) {
+  const base =
+    failure !== undefined
+      ? failureUpdate(failure, finishedAt)
+      : resultUpdate(result ?? { complete: false }, finishedAt);
+  if (base.safetyFailure) return base;
   return {
     ...base,
     complete: false,
@@ -60,7 +69,7 @@ export function checkpointUpdate({ result, failure, finishedAt }) {
     retryable: true,
     checkpoint: {
       at: finishedAt.toISOString(),
-      reason: "overnight window ended",
+      reason,
     },
   };
 }
@@ -89,7 +98,7 @@ export function safeLimitations(limitations, limitation) {
 }
 
 export async function mediaArtifactEvidenceUpdate(job, { mediaRoot, course } = {}) {
-  if (!isMediaJobComplete(job)) return null;
+  if (job.safetyFailure !== undefined || !isMediaJobComplete(job)) return null;
   const artifacts = job.artifacts ?? {};
   const sourceRoot =
     typeof mediaRoot === "string" ? mediaRecordingRoot(resolve(mediaRoot), job.recordingId) : null;

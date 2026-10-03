@@ -1187,3 +1187,296 @@ test("separates proven documents, unresolved tools and recording failures withou
     /no transcript completeness claimed/,
   );
 });
+
+test("manual priority reorders every course while retaining a full red aggregate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-priority-"));
+  const statePath = join(root, "state.json");
+  const courses = ["AA1000", "MH2100", "ZZ1000"].map((key) => ({ ...COURSE, key }));
+  for (const course of courses) await writeQueue(statePath, course, [`${course.key}-lecture`]);
+  const visited = [];
+  const digest = await runQueue({
+    statePath,
+    courses,
+    mode: "manual",
+    priorityCourseKey: "MH2100",
+    async runJob(job, { course }) {
+      visited.push(course.key);
+      return course.key === "ZZ1000" ? { complete: false } : completeResult(statePath, job);
+    },
+  });
+  assert.deepEqual(visited, ["MH2100", "AA1000", "ZZ1000"]);
+  assert.equal(digest.counts.total, 3);
+  assert.equal(digest.counts.completed, 2);
+  assert.equal(digest.verdict, "red");
+  assert.deepEqual(
+    courses.map(({ key }) => key),
+    ["AA1000", "MH2100", "ZZ1000"],
+  );
+});
+
+test("manual interruption settles the active job and retains untouched full-course counts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-media-interruption-"));
+  const statePath = join(root, "state.json");
+  const second = { ...COURSE, key: "MH2100" };
+  await writeQueue(statePath, COURSE, ["lecture-1", "lecture-2"]);
+  await writeQueue(statePath, second, ["lecture-3"]);
+  const controller = new globalThis.AbortController();
+  const reason = new Error("Synthetic manual interruption; retry later.");
+  let settled = false;
+  let jobs = 0;
+  const digest = await runQueue({
+    statePath,
+    courses: [COURSE, second],
+    mode: "manual",
+    signal: controller.signal,
+    async runJob(_job, { signal }) {
+      jobs += 1;
+      controller.abort(reason);
+      assert.equal(signal.reason, reason);
+      await Promise.resolve();
+      settled = true;
+      throw signal.reason;
+    },
+  });
+  assert.equal(settled, true);
+  assert.equal(jobs, 1);
+  assert.equal(digest.interrupted, true);
+  assert.equal(digest.stoppedAtBoundary, false);
+  assert.equal(digest.verdict, "yellow");
+  assert.equal(digest.counts.total, 3);
+  assert.equal(digest.counts.checkpointed, 1);
+  assert.equal(digest.counts.queued, 2);
+  assert.match(digest.message, /interrupted/);
+  const job = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.equal(job.checkpoint.reason, "manual interruption");
+});
+
+test("unsafe cleanup retains global red precedence during manual interruption", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cancel-unsafe-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1", "lecture-2"]);
+  const controller = new globalThis.AbortController();
+  let jobs = 0;
+  const digest = await runQueue({
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    signal: controller.signal,
+    async runJob() {
+      jobs += 1;
+      controller.abort(new Error("Synthetic cancellation"));
+      throw Object.assign(new Error("Cleanup unconfirmed; inspect owned processes."), {
+        code: "MEDIA_PROCESS_CLEANUP",
+        globalSafety: true,
+      });
+    },
+  });
+  assert.equal(jobs, 1);
+  assert.equal(digest.verdict, "red");
+  assert.equal(digest.globalStop, true);
+  assert.equal(digest.stoppedAtBoundary, false);
+  assert.equal(digest.counts.failed, 1);
+  assert.equal(digest.counts.queued, 1);
+  assert.equal(digest.counts.checkpointed, 0);
+});
+
+test("interruption between jobs leaves the next job untouched", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cancel-between-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1", "lecture-2"]);
+  const controller = new globalThis.AbortController();
+  const reason = new Error("Between jobs; retry later.");
+  let jobs = 0;
+  const digest = await runQueue({
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    signal: controller.signal,
+    async runJob(job) {
+      jobs += 1;
+      return completeResult(statePath, job);
+    },
+    async updateJob(options) {
+      const result = await updateMediaQueueJob(options);
+      if (options.update.complete) controller.abort(reason);
+      return result;
+    },
+  });
+  assert.equal(jobs, 1);
+  assert.equal(digest.interrupted, true);
+  assert.equal(digest.interruptionReason, "Between jobs; retry later.");
+  const run = JSON.parse(await readFile(join(root, digest.runLog), "utf8"));
+  assert.equal(run.interruptionReason, "Between jobs; retry later.");
+  assert.equal(digest.counts.completed, 1);
+  assert.equal(digest.counts.queued, 1);
+  assert.equal(digest.counts.checkpointed, 0);
+  const second = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[1];
+  assert.equal(second.attempts ?? 0, 0);
+});
+
+test("manual priority rejects unknown disabled scheduled and empty selections before locking", async () => {
+  for (const [priorityCourseKey, mode] of [
+    ["MISSING", "manual"],
+    ["OFF", "manual"],
+    ["MH1101", "scheduled"],
+    ["", "manual"],
+  ]) {
+    await assert.rejects(
+      runMediaQueue({
+        statePath: "/synthetic-unused/state.json",
+        courses: [COURSE, { ...COURSE, key: "OFF", mediaMode: "off" }],
+        mode,
+        priorityCourseKey,
+        preflight: async () => assert.fail("no preflight"),
+        runJob: async () => assert.fail("no job"),
+        lock: async () => assert.fail("no lock acquisition"),
+      }),
+      /enabled configured course/,
+    );
+  }
+});
+
+test("unconfirmed cleanup blocks a restarted worker before preflight and survives latch loss via queue evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-unsafe-restart-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1", "lecture-2"]);
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    async runJob() {
+      throw Object.assign(new Error("Unconfirmed cleanup; inspect owned group."), {
+        code: "MEDIA_PROCESS_CLEANUP",
+        globalSafety: true,
+      });
+    },
+  };
+  const first = await runQueue(options);
+  assert.equal(first.globalStop, true);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.equal(held.safetyFailure, "MEDIA_PROCESS_CLEANUP");
+  assert.equal(held.retryable, false);
+  const retry = {
+    ...options,
+    preflight: async () => assert.fail("unsafe restart must not verify/open runtimes"),
+    runJob: async () => assert.fail("unsafe restart must not acquire"),
+  };
+  assert.equal((await runQueue(retry)).globalStop, true);
+  await unlink(join(root, "media-safety.json"));
+  assert.equal((await runQueue(retry)).globalStop, true);
+  assert.deepEqual(
+    (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0],
+    held,
+  );
+});
+
+test("rediscovery and ordinary queue updates cannot reactivate retained cleanup evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-safety-queue-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  await updateMediaQueueJob({
+    statePath,
+    courseKey: COURSE.key,
+    recordingId: "lecture-1",
+    course: { ...COURSE, destination: join(root, "course", COURSE.key) },
+    update: {
+      complete: false,
+      stage: "failed",
+      verdict: "red",
+      retryable: false,
+      safetyFailure: "MEDIA_PROCESS_CLEANUP",
+    },
+  });
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0];
+  assert.equal(held.safetyFailure, "MEDIA_PROCESS_CLEANUP");
+  assert.equal(held.retryable, false);
+  await assert.rejects(
+    updateMediaQueueJob({
+      statePath,
+      courseKey: COURSE.key,
+      recordingId: "lecture-1",
+      update: { stage: "active", retryable: true },
+    }),
+    /cannot be resumed automatically/,
+  );
+  assert.deepEqual(
+    (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue[0],
+    held,
+  );
+});
+
+test("nested unconfirmed preflight cleanup persists a barrier before any job admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-preflight-cleanup-"));
+  const statePath = join(root, "state.json");
+  await writeQueue(statePath, COURSE, ["lecture-1"]);
+  const options = {
+    statePath,
+    courses: [COURSE],
+    mode: "manual",
+    preflight: async () => {
+      throw new Error("Verification cleanup failed", {
+        cause: Object.assign(new Error("Owned cleanup unconfirmed"), {
+          code: "MEDIA_PROCESS_CLEANUP",
+        }),
+      });
+    },
+    runJob: async () => assert.fail("no job after unsafe preflight"),
+  };
+  assert.equal((await runQueue(options)).globalStop, true);
+  const before = await readFile(join(root, "media-safety.json"));
+  assert.equal(JSON.parse(before).code, "MEDIA_PROCESS_CLEANUP");
+  assert.equal(
+    (
+      await runQueue({
+        ...options,
+        preflight: async () => assert.fail("no automatic verification retry"),
+      })
+    ).globalStop,
+    true,
+  );
+  assert.deepEqual(await readFile(join(root, "media-safety.json")), before);
+});
+
+for (const [reason, expected] of [
+  [new Error("Distinct preflight stop; retry later."), "Distinct preflight stop; retry later."],
+  ["Synthetic preflight stop", "Synthetic preflight stop"],
+  [0, "0"],
+  [false, "false"],
+  ["", ""],
+  [null, "unknown error"],
+  [
+    new Error("Stop https://example.invalid/ks/SYNTHETIC_SESSION token=SYNTHETIC_TOKEN"),
+    "Stop [provider address omitted] token=[redacted]",
+  ],
+]) {
+  test(`preflight interruption retains a sanitized reason ${JSON.stringify(expected)}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "ntulearn-preflight-reason-"));
+    const statePath = join(root, "state.json");
+    await writeQueue(statePath, COURSE, ["lecture-1"]);
+    const controller = new globalThis.AbortController();
+    const digest = await runQueue({
+      statePath,
+      courses: [COURSE],
+      mode: "manual",
+      signal: controller.signal,
+      preflight: async () => {
+        controller.abort(reason);
+      },
+      runJob: async () => assert.fail("no job after preflight interruption"),
+    });
+    assert.equal(controller.signal.reason, reason);
+    assert.equal(digest.interrupted, true);
+    assert.equal(digest.interruptionReason, expected);
+    assert.equal(digest.counts.queued, 1);
+    assert.match(digest.message, /interrupted before acquisition; retry/);
+    const run = JSON.parse(await readFile(join(root, digest.runLog), "utf8"));
+    const latest = JSON.parse(await readFile(join(root, "media-latest.json"), "utf8"));
+    assert.equal(run.interruptionReason, expected);
+    assert.equal(latest.interruptionReason, expected);
+    assert.doesNotMatch(
+      JSON.stringify({ run, latest }),
+      /SYNTHETIC_SESSION|SYNTHETIC_TOKEN|https:\/\/example/,
+    );
+  });
+}
