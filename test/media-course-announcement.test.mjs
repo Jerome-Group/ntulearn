@@ -120,7 +120,7 @@ test("known service worker arriving during dismissal invalidates discovery witho
   assert.equal(result.diagnostic.code, "GALLERY_NOTICE_SERVICE_WORKER");
   assert.equal(f.state.gallery, 0);
 });
-test("non-NTULearn request keeps existing route chaining; absent popup does not install a guard", async () => {
+test("non-NTULearn request keeps route chaining; absent popup retains an initialized guard", async () => {
   const f = courseAnnouncementFixture({
     duringClose: ({ send }) => send("POST", "https://provider.example/read"),
   });
@@ -135,7 +135,7 @@ test("non-NTULearn request keeps existing route chaining; absent popup does not 
     (await readKalturaMediaGallery({ page: absent.page, course: ANNOUNCEMENT_COURSE })).complete,
     true,
   );
-  assert.equal(absent.state.routes, 0);
+  assert.equal(absent.state.routes, 1);
   assert.equal(absent.state.close, 0);
 });
 for (const heading of [
@@ -149,7 +149,7 @@ for (const heading of [
     assert.equal(result.complete, false);
     assert.equal(result.diagnostic.code, "GALLERY_NOTICE_UNRECOGNIZED");
     assert.equal(f.state.close, 0);
-    assert.equal(f.state.routes, 0);
+    assert.equal(f.state.routes, 1);
   });
 test("failed abort never falsely claims a write was blocked", async () => {
   const f = courseAnnouncementFixture({

@@ -7,15 +7,15 @@ const FAILURES = Object.freeze({
   ],
   GALLERY_NOTICE_READ_GUARD_FAILED: [
     "opening",
-    "Announcement read-only request guard could not be confirmed. No further dismissal authorized; close the owned context and inspect before retrying discovery.",
+    "Owned Gallery read-only request guard could not be confirmed. No further navigation or dismissal authorized; close the owned context and inspect before retrying discovery.",
   ],
   GALLERY_NOTICE_SERVICE_WORKER: [
     "opening",
-    "A known service worker prevents announcement request-guard coverage. Leave the dialog untouched; close the owned context and inspect before retrying discovery.",
+    "A known service worker prevents owned Gallery request-guard coverage. Leave the dialog untouched; close the owned context and inspect before retrying discovery.",
   ],
   GALLERY_NOTICE_WRITE_BLOCKED: [
     "opening",
-    "The announcement context attempted a non-read NTULearn request; it was blocked. Discovery remains incomplete; close the owned context and inspect before retrying.",
+    "The owned Gallery context attempted a non-read NTULearn request; it was blocked. Discovery remains incomplete; close the owned context and inspect before retrying.",
   ],
   GALLERY_NOTICE_CLOSE_FAILED: [
     "opening",
@@ -73,7 +73,7 @@ export function galleryFailure(code, evidence = {}) {
     source: "student-visible-browser",
     code,
     stage:
-      code === "GALLERY_DISCOVERY_FAILED" &&
+      (code === "GALLERY_DISCOVERY_FAILED" || code.startsWith("GALLERY_NOTICE_")) &&
       ["opening", "catalogue", "date-enrichment"].includes(evidence.stage)
         ? evidence.stage
         : stage,

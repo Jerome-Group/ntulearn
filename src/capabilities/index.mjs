@@ -102,6 +102,7 @@ const routes = {
       "test/media-gallery-browser.test.mjs",
       "test/media-gallery-diagnostic.test.mjs",
       "test/media-course-announcement.test.mjs",
+      "test/media-gallery-read-guard.test.mjs",
       "test/media-workflow.test.mjs",
     ],
   ],
@@ -500,7 +501,7 @@ const commands = [
         "Private discovery report with completed/refused/notAttempted courses, fixed failure/cleanup/barrier codes; existing course evidence remains private.",
       limitations: [
         "Owned discovery handles SIGINT/SIGTERM; abort immediately starts available context close and requires positive close plus read settlement. Canonical startup cannot be physically cancelled before a client returns. Unknown cleanup stops the batch and retains a durable admission barrier before queue-lock release. A close deadline is not physical cancellation; Owner containment is required on uncertainty. Disabled courses skip browser reads. Ordinary sync/verify/renumber retain shared-session semantics.",
-        "Gallery may close only one exact New Course Announcement with dedicated Close, under a retained owned-context NTULearn GET/HEAD request guard. Known service workers, unknown/auth/consent/multiple dialogs and unconfirmed guard/close refuse; no force or Mark as read. Read requests use fallback to preserve existing route chaining; no request URLs/headers/payloads retained. No completeness claim for media acquisition/transcript quality or arbitrary contexts/service workers.",
+        "Gallery initializes and confirms its sticky owned-context NTULearn GET/HEAD guard before initial course navigation, including absent/unknown dialogs, and refuses further operations after guard failure. It may close only one exact New Course Announcement with dedicated Close. Known service workers, unknown/auth/consent/multiple dialogs and unconfirmed guard/close refuse; no force or Mark as read. Read requests use fallback to preserve existing route chaining; no request URLs/headers/payloads retained. No completeness claim for media acquisition/transcript quality or arbitrary contexts/service workers.",
       ],
     },
   ),

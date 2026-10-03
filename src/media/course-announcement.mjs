@@ -67,13 +67,7 @@ export async function closeCourseAnnouncement(page) {
 
 export async function assertCourseAnnouncementGuard(page) {
   if (typeof page?.context !== "function") return;
-  let context;
-  try {
-    context = page.context();
-  } catch {
-    throw galleryFailure("GALLERY_NOTICE_READ_GUARD_FAILED");
-  }
-  if (context && guards.has(context)) await checkGuard(guards.get(context));
+  await checkGuard(await ensureGuard(page));
 }
 
 async function ensureGuard(page) {
