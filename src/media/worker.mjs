@@ -1,3 +1,4 @@
+import { assertMediaSafetyAdmission, persistMediaSafetyBarrier } from "./safety.mjs";
 import { withCapacityDeadline } from "./capacity-deadline.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
 import { monitorMediaCapacity } from "./capacity-monitor.mjs";
@@ -42,6 +43,8 @@ export async function runMediaQueue(options = {}) {
     statePath,
     courses,
     mode = "scheduled",
+    signal,
+    priorityCourseKey = null,
     runJob,
     preflight = null,
     media = null,
@@ -51,7 +54,7 @@ export async function runMediaQueue(options = {}) {
     write,
     runId = randomUUID(),
   } = options;
-  assertRunInputs({ statePath, courses, mode, runJob, preflight, media });
+  assertRunInputs({ statePath, courses, mode, runJob, preflight, media, priorityCourseKey });
   if (!lock) return runMediaQueueUnlocked(options);
 
   const readNow = now ?? clock?.now?.bind(clock) ?? (() => new Date());
@@ -66,6 +69,7 @@ export async function runMediaQueue(options = {}) {
     const finishedAt = validDate(readNow(), "media queue finish");
     return persistMediaDigest({
       statePath,
+      interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
       runId,
       mode,
       startedAt,
@@ -73,6 +77,7 @@ export async function runMediaQueue(options = {}) {
       courses: [],
       globalStop: false,
       stoppedAtBoundary: false,
+      interrupted: Boolean(signal?.aborted),
       verdict: "yellow",
       message: "Media queue skipped: another run is active.",
       summarizeCounts,
@@ -85,6 +90,9 @@ async function runMediaQueueUnlocked({
   statePath,
   courses,
   mode = "scheduled",
+  signal,
+  priorityCourseKey = null,
+  closeJobRunner = null,
   runJob,
   preflight = null,
   checkCapacity = null,
@@ -102,17 +110,48 @@ async function runMediaQueueUnlocked({
   runId = randomUUID(),
   startedAt: suppliedStartedAt = null,
 }) {
-  assertRunInputs({ statePath, courses, mode, runJob, preflight, media });
+  assertRunInputs({ statePath, courses, mode, runJob, preflight, media, priorityCourseKey });
   const readNow = now ?? clock?.now?.bind(clock) ?? (() => new Date());
   const setSchedule = schedule ?? clock?.setTimeout?.bind(clock) ?? scheduleTimer;
   const clearSchedule = cancelSchedule ?? clock?.clearTimeout?.bind(clock) ?? cancelTimer;
-  const safetyCheck = preflight ?? (() => verifyMediaRuntime(media));
+  const safetyCheck = preflight ?? (() => verifyMediaRuntime(media, { signal }));
   const startedAt = suppliedStartedAt ?? validDate(readNow(), "media queue start");
   const selectedCourses = courses.filter((course) => course?.mediaMode !== "off");
+  if (priorityCourseKey) {
+    const index = selectedCourses.findIndex((course) => course.key === priorityCourseKey);
+    selectedCourses.unshift(...selectedCourses.splice(index, 1));
+  }
+
+  try {
+    await assertMediaSafetyAdmission({ statePath, courses, readQueue });
+  } catch (error) {
+    for (const course of selectedCourses)
+      await persistRedCourseStatus({ course, now: readNow, error });
+    const summaries = [];
+    for (const course of selectedCourses)
+      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue, media }));
+    return persistMediaDigest({
+      statePath,
+      interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
+      runId,
+      mode,
+      startedAt,
+      finishedAt: validDate(readNow(), "media queue finish"),
+      courses: summaries,
+      globalStop: true,
+      stoppedAtBoundary: false,
+      interrupted: Boolean(signal?.aborted),
+      verdict: "red",
+      message: publicMediaError(error),
+      summarizeCounts,
+      write,
+    });
+  }
 
   if (mode === "scheduled" && !isOvernightWindow(startedAt, timeZone)) {
     return persistMediaDigest({
       statePath,
+      interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
       runId,
       mode,
       startedAt,
@@ -120,6 +159,7 @@ async function runMediaQueueUnlocked({
       courses: [],
       globalStop: false,
       stoppedAtBoundary: false,
+      interrupted: Boolean(signal?.aborted),
       verdict: "yellow",
       message: "Scheduled media work skipped: outside the overnight window (00:00–04:00).",
       summarizeCounts,
@@ -130,6 +170,7 @@ async function runMediaQueueUnlocked({
   if (!selectedCourses.length) {
     return persistMediaDigest({
       statePath,
+      interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
       runId,
       mode,
       startedAt,
@@ -137,15 +178,20 @@ async function runMediaQueueUnlocked({
       courses: [],
       globalStop: false,
       stoppedAtBoundary: false,
-      verdict: "green",
-      message: "No enabled media courses are configured.",
+      interrupted: Boolean(signal?.aborted),
+      verdict: signal?.aborted ? "yellow" : "green",
+      message: signal?.aborted
+        ? "Media queue interrupted; retry the manual worker."
+        : "No enabled media courses are configured.",
       summarizeCounts,
       write,
     });
   }
 
   try {
-    await safetyCheck({ mode, now: readNow });
+    signal?.throwIfAborted();
+    await safetyCheck({ mode, now: readNow, signal });
+    signal?.throwIfAborted();
     if (!checkCapacity && media) {
       const capacity = await createMediaCapacity(media, {
         courses,
@@ -153,32 +199,47 @@ async function runMediaQueueUnlocked({
       });
       checkCapacity = ({ course }) => capacity.checkJob(course);
     }
+    signal?.throwIfAborted();
   } catch (error) {
-    const message = publicMediaError(error);
-    await Promise.all(
-      selectedCourses.map((course) =>
-        persistRedCourseStatus({
-          course,
-          discovery: { complete: false, verdict: "red", limitations: [message] },
-          queue: [],
-          now: readNow,
-        }),
-      ),
-    );
+    await persistMediaSafetyBarrier({ statePath, error, now: readNow });
+    const interrupted = signal?.aborted && !isGlobalMediaSafetyFailure(error);
+    const message = interrupted
+      ? "Media queue interrupted before acquisition; retry the manual worker."
+      : publicMediaError(error);
+    if (!interrupted)
+      await Promise.all(
+        selectedCourses.map((course) =>
+          persistRedCourseStatus({
+            course,
+            discovery: { complete: false, verdict: "red", limitations: [message] },
+            queue: [],
+            now: readNow,
+          }),
+        ),
+      );
     const summaries = [];
     for (const course of selectedCourses) {
       summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue, media }));
     }
     return persistMediaDigest({
       statePath,
+      interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
       runId,
       mode,
       startedAt,
       finishedAt: validDate(readNow(), "media queue finish"),
       courses: summaries,
-      globalStop: true,
+      globalStop: !interrupted,
       stoppedAtBoundary: false,
-      verdict: "red",
+      interrupted: Boolean(signal?.aborted),
+      verdict: interrupted
+        ? verdictFor({
+            summaries,
+            counts: summarizeCounts(summaries),
+            globalStop: false,
+            stoppedAtBoundary: true,
+          })
+        : "red",
       message,
       summarizeCounts,
       write,
@@ -188,10 +249,11 @@ async function runMediaQueueUnlocked({
   const summaries = [];
   let globalStop = false;
   let stoppedAtBoundary = false;
+  let interrupted = Boolean(signal?.aborted);
 
   for (const course of selectedCourses) {
     const outcome =
-      globalStop || stoppedAtBoundary
+      globalStop || stoppedAtBoundary || interrupted
         ? {
             globalStop: false,
             stoppedAtBoundary: false,
@@ -201,6 +263,7 @@ async function runMediaQueueUnlocked({
             statePath,
             course,
             mode,
+            signal,
             runJob,
             checkCapacity,
             capacityMonitorIntervalMs,
@@ -216,18 +279,30 @@ async function runMediaQueueUnlocked({
     summaries.push(outcome.summary);
     globalStop ||= outcome.globalStop;
     stoppedAtBoundary ||= outcome.stoppedAtBoundary;
+    interrupted ||= Boolean(outcome.interrupted || signal?.aborted);
   }
 
+  let settlementFailure;
+  try {
+    await closeJobRunner?.();
+  } catch (error) {
+    await persistMediaSafetyBarrier({ statePath, error, now: readNow });
+    globalStop = true;
+    settlementFailure = publicMediaError(error);
+  }
+  interrupted ||= Boolean(signal?.aborted);
   const finishedAt = validDate(readNow(), "media queue finish");
   const counts = summarizeCounts(summaries);
-  const verdict = verdictFor({
+  let verdict = verdictFor({
     summaries,
     counts,
     globalStop,
     stoppedAtBoundary,
   });
+  if (interrupted && verdict === "green") verdict = "yellow";
   return persistMediaDigest({
     statePath,
+    interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
     runId,
     mode,
     startedAt,
@@ -237,7 +312,12 @@ async function runMediaQueueUnlocked({
     globalStop,
     stoppedAtBoundary,
     verdict,
-    message: messageFor({ verdict, counts, globalStop, stoppedAtBoundary, summaries }),
+    interrupted,
+    message:
+      settlementFailure ??
+      (interrupted && !globalStop
+        ? `Media queue interrupted: ${counts.completed} complete; pending work retained. Retry the manual worker.`
+        : messageFor({ verdict, counts, globalStop, stoppedAtBoundary, summaries })),
     summarizeCounts,
     write,
   });
@@ -285,6 +365,7 @@ async function runCourse({
   statePath,
   course,
   mode,
+  signal,
   runJob,
   checkCapacity,
   capacityMonitorIntervalMs,
@@ -345,8 +426,13 @@ async function runCourse({
   let processed = 0;
   let globalStop = false;
   let stoppedAtBoundary = false;
+  let interrupted = false;
 
   for (const job of queue) {
+    if (signal?.aborted) {
+      interrupted = true;
+      break;
+    }
     if (recordingDisposition(job) !== "recording") continue;
     let evidence;
     try {
@@ -368,6 +454,10 @@ async function runCourse({
       break;
     }
     if (finishedJob(job)) continue;
+    if (signal?.aborted) {
+      interrupted = true;
+      break;
+    }
     if (mode === "scheduled" && !isOvernightWindow(now(), timeZone)) {
       stoppedAtBoundary = true;
       break;
@@ -399,6 +489,9 @@ async function runCourse({
     Object.assign(job, active.job);
 
     const controller = new globalThis.AbortController();
+    const interrupt = () => controller.abort(signal.reason);
+    signal?.addEventListener("abort", interrupt, { once: true });
+    if (signal?.aborted) interrupt();
     let checkpointRequested = false;
     let timer = null;
     const requestCheckpoint = (reason = "04:00 checkpoint") => {
@@ -417,7 +510,7 @@ async function runCourse({
     }
 
     let result;
-    let failure = null;
+    let failure;
     let capacityFailure = null;
     let stopMonitoring = null;
     const probeCapacity = checkCapacity
@@ -427,7 +520,9 @@ async function runCourse({
           })
       : null;
     try {
+      controller.signal.throwIfAborted();
       await probeCapacity?.();
+      controller.signal.throwIfAborted();
       if (checkCapacity) {
         stopMonitoring = monitorMediaCapacity(probeCapacity, {
           intervalMs: capacityMonitorIntervalMs,
@@ -451,11 +546,13 @@ async function runCourse({
     } finally {
       if (timer !== null && timer !== undefined) cancelSchedule(timer);
       await stopMonitoring?.();
+      signal?.removeEventListener("abort", interrupt);
     }
     failure = isGlobalMediaSafetyFailure(failure) ? failure : (capacityFailure ?? failure);
 
     const finishedAt = validDate(now(), "media job finish");
-    if (failure && isGlobalMediaSafetyFailure(failure)) {
+    if (isGlobalMediaSafetyFailure(failure)) {
+      await persistMediaSafetyBarrier({ statePath, error: failure, now });
       const failed = await persistJobUpdate({
         updateJob,
         statePath,
@@ -470,6 +567,27 @@ async function runCourse({
         Object.assign(job, failed.job);
       }
       globalStop = true;
+      break;
+    }
+    if (signal?.aborted) {
+      interrupted = true;
+      const saved = await persistJobUpdate({
+        updateJob,
+        statePath,
+        course,
+        job,
+        now,
+        update: checkpointUpdate({
+          result,
+          failure: signal.reason,
+          finishedAt,
+          reason: `${mode} interruption`,
+        }),
+      }).catch((error) => ({ error }));
+      if (saved.error) {
+        globalStop = true;
+        await persistRedCourseStatus({ course, discovery: record, queue, now, error: saved.error });
+      } else Object.assign(job, saved.job);
       break;
     }
     if (checkpointRequested || (mode === "scheduled" && !isOvernightWindow(finishedAt, timeZone))) {
@@ -496,7 +614,7 @@ async function runCourse({
     }
 
     processed += 1;
-    if (failure) {
+    if (failure !== undefined) {
       const failed = await persistJobUpdate({
         updateJob,
         statePath,
@@ -573,6 +691,7 @@ async function runCourse({
   return {
     globalStop,
     stoppedAtBoundary,
+    interrupted,
     summary: courseSummary({
       course,
       queuePath: loaded.path,
@@ -612,12 +731,31 @@ async function persistRedCourseStatus({ course, discovery = {}, queue = [], now,
   }).catch(() => null);
 }
 
-function assertRunInputs({ statePath, courses, mode, runJob, preflight, media }) {
+function assertRunInputs({
+  statePath,
+  courses,
+  mode,
+  runJob,
+  preflight,
+  media,
+  priorityCourseKey,
+}) {
   if (typeof statePath !== "string" || !statePath)
     throw new Error("Media queue needs a state path.");
   if (!Array.isArray(courses)) throw new Error("Media queue needs configured courses.");
   if (!MEDIA_RUN_MODES.includes(mode)) {
     throw new Error("Media queue mode must be scheduled or manual.");
+  }
+  if (
+    priorityCourseKey !== null &&
+    priorityCourseKey !== undefined &&
+    (mode !== "manual" ||
+      typeof priorityCourseKey !== "string" ||
+      !courses.some((course) => course.key === priorityCourseKey && course.mediaMode !== "off"))
+  ) {
+    throw new Error(
+      "Manual media priority needs an enabled configured course. Run: npm run media:worker -- manual [priority-course]",
+    );
   }
   if (typeof runJob !== "function") {
     throw new Error("Media queue needs a provider-backed job runner.");

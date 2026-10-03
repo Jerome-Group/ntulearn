@@ -244,3 +244,117 @@ test("keeps full startup verification mandatory when capacity initialization sta
   assert.equal(result.exitCode, 1);
   assert.match(result.digest.message, /timed out.*retry/);
 });
+
+test("cancellation during preflight settles verification and prevents acquisition", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-production-cancel-"));
+  const statePath = join(root, "state.json");
+  const selected = { ...course("AB1001"), destination: join(root, "course") };
+  await queue(statePath, selected, "youtube", "fixture");
+  const controller = new globalThis.AbortController();
+  const reason = new Error("Synthetic preflight interruption; retry later.");
+  let settled = false;
+  const result = await runProductionMedia({
+    config: { statePath, courses: [selected], media: {} },
+    mode: "manual",
+    lock: null,
+    signal: controller.signal,
+    verifyRuntime: async (_media, options) => {
+      assert.equal(options.signal, controller.signal);
+      controller.abort(reason);
+      await Promise.resolve();
+      settled = true;
+      return { runtime: {} };
+    },
+    createCapacity: async () => assert.fail("no capacity initialization after cancellation"),
+    createJobRunner: async () => assert.fail("no acquisition after cancellation"),
+  });
+  assert.equal(settled, true);
+  assert.equal(controller.signal.reason, reason);
+  assert.equal(result.digest.interrupted, true);
+  assert.equal(result.digest.globalStop, false);
+  assert.equal(result.digest.counts.total, 1);
+  assert.equal(result.digest.counts.queued, 1);
+  assert.equal(result.digest.verdict, "yellow");
+  assert.equal(result.exitCode, 1);
+});
+
+test("production cancellation waits for runner close before returning", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-production-close-"));
+  const statePath = join(root, "state.json");
+  const selected = { ...course("AB1001"), destination: join(root, "course") };
+  await queue(statePath, selected, "youtube", "fixture");
+  const controller = new globalThis.AbortController();
+  const reason = new Error("Synthetic job interruption; retry later.");
+  let closed = false;
+  const result = await runProductionMedia({
+    config: { statePath, courses: [selected], media: {} },
+    mode: "manual",
+    lock: null,
+    signal: controller.signal,
+    verifyRuntime: async () => ({ runtime: {} }),
+    createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
+    createJobRunner: async () => ({
+      async run(_appearance, { signal }) {
+        controller.abort(reason);
+        assert.equal(signal.reason, reason);
+        throw reason;
+      },
+      async close() {
+        await Promise.resolve();
+        closed = true;
+      },
+    }),
+  });
+  assert.equal(closed, true);
+  assert.equal(result.digest.interrupted, true);
+  assert.equal(result.digest.counts.checkpointed, 1);
+});
+
+test("production retains queue ownership through browser settlement and marks cleanup uncertainty red", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-production-settlement-"));
+  const statePath = join(root, "state.json");
+  const selected = { ...course("AB1001"), destination: join(root, "course") };
+  await queue(statePath, selected, "youtube", "fixture");
+  let held = false;
+  await assert.rejects(
+    runProductionMedia({
+      config: { statePath, courses: [selected], media: {} },
+      mode: "manual",
+      lock: async ({ run }) => {
+        held = true;
+        try {
+          return await run();
+        } finally {
+          held = false;
+        }
+      },
+      verifyRuntime: async () => ({ runtime: {} }),
+      createCapacity: async () => ({ check: async () => {}, checkJob: async () => {} }),
+      createJobRunner: async () => ({
+        async run() {
+          return { complete: false };
+        },
+        async close() {
+          assert.equal(held, true);
+          throw new Error("Synthetic browser cleanup uncertainty; inspect owned session.");
+        },
+      }),
+    }),
+    /cleanup/,
+  );
+  assert.equal(held, false);
+  const digest = JSON.parse(await readFile(join(root, "media-latest.json"), "utf8"));
+  assert.equal(digest.globalStop, true);
+  assert.equal(digest.verdict, "red");
+  const barrier = JSON.parse(await readFile(join(root, "media-safety.json"), "utf8"));
+  assert.equal(barrier.code, "MEDIA_BROWSER_CLEANUP");
+  const blocked = await runProductionMedia({
+    config: { statePath, courses: [selected], media: {} },
+    mode: "manual",
+    lock: null,
+    verifyRuntime: async () => assert.fail("browser-uncertain restart must refuse preflight"),
+    createJobRunner: async () => assert.fail("no browser admission after uncertain close"),
+  });
+  assert.equal(blocked.digest.globalStop, true);
+  assert.equal(blocked.exitCode, 1);
+});

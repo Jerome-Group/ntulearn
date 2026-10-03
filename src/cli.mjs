@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -36,7 +36,6 @@ const commands = {
   renumber,
   watchdog,
   "media-setup": mediaSetup,
-  "media-worker": mediaWorker,
   "media-discover": mediaDiscover,
   "media-withdraw": mediaWithdraw,
   "watchdog-locked": watchdogLocked,
@@ -115,19 +114,43 @@ async function mediaSetup(config) {
   return 0;
 }
 
-async function mediaWorker(config, mode = "scheduled") {
-  if (!MEDIA_RUN_MODES.includes(mode)) {
-    throw new Error("Usage: npm run media:worker -- <scheduled|manual>");
+async function mediaWorker([mode = "scheduled", priorityCourseKey = null, ...unexpected]) {
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      Object.assign(
+        new Error("Media queue interrupted; inspect the run log and retry the manual worker."),
+        { code: "MEDIA_INTERRUPTED" },
+      ),
+    );
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
+  try {
+    if (
+      !MEDIA_RUN_MODES.includes(mode) ||
+      unexpected.length ||
+      (priorityCourseKey !== null && mode !== "manual")
+    ) {
+      throw new Error(
+        "Usage: npm run media:worker -- <scheduled|manual> [priority-course (manual only)]",
+      );
+    }
+    const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+    const { runProductionMedia } = await import("./media/production.mjs");
+    const result = await runProductionMedia({
+      config,
+      mode,
+      priorityCourseKey,
+      signal: controller.signal,
+      timeZone: "Asia/Singapore",
+      signalProcessGroup: signalMediaProcessGroup,
+    });
+    await writeLine(stdout, asJson(result.digest));
+    return result.exitCode;
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
   }
-  const { runProductionMedia } = await import("./media/production.mjs");
-  const result = await runProductionMedia({
-    config,
-    mode,
-    timeZone: "Asia/Singapore",
-    signalProcessGroup: signalMediaProcessGroup,
-  });
-  await writeLine(stdout, asJson(result.digest));
-  return result.exitCode;
 }
 
 async function mediaDiscover(config, key) {
@@ -276,6 +299,7 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
+  if (name === "media-worker") return mediaWorker(argumentsForCommand);
   if (name === "media-format") return mediaFormat(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {

@@ -3,7 +3,7 @@ import { recordingDisposition } from "./disposition.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
-import { publicMediaError } from "./errors.mjs";
+import { publicMediaError, markGlobalMediaSafety } from "./errors.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 import { positiveDuration } from "./duration.mjs";
 import { writeMediaCourseStatus, writeMediaRecordingStatus } from "./status.mjs";
@@ -14,6 +14,7 @@ const JOB_STATE_FIELDS = Object.freeze([
   "stage",
   "verdict",
   "retryable",
+  "safetyFailure",
   "withdrawn",
   "artifacts",
   "limitations",
@@ -192,6 +193,20 @@ export async function updateMediaQueueJob({
   const queue = loaded.record.queue.map((job, jobIndex) => {
     const durableJob = stripEphemeralFields(job);
     if (jobIndex !== index) return durableJob;
+    if (
+      durableJob.safetyFailure !== undefined &&
+      (safeUpdate.complete === true ||
+        safeUpdate.retryable === true ||
+        (safeUpdate.stage !== undefined && safeUpdate.stage !== "failed") ||
+        (safeUpdate.safetyFailure !== undefined &&
+          safeUpdate.safetyFailure !== durableJob.safetyFailure))
+    ) {
+      throw markGlobalMediaSafety(
+        new Error(
+          "Retained media cleanup safety evidence cannot be resumed automatically. The Owner must verify cessation and inspect the barrier before explicit recovery.",
+        ),
+      );
+    }
     const nextJob = { ...durableJob, ...safeUpdate };
     if (Array.isArray(durableJob.limitations) && Array.isArray(safeUpdate.limitations)) {
       nextJob.limitations = [...new Set([...durableJob.limitations, ...safeUpdate.limitations])];
@@ -267,7 +282,8 @@ function mergeQueue(previousQueue, discoveredQueue, boundary) {
       disposition === "recording" &&
       (recordingDisposition(old) !== "recording" || old.provider !== appearance.provider) &&
       !isMediaJobComplete(old) &&
-      !old.withdrawn
+      !old.withdrawn &&
+      old.safetyFailure === undefined
     ) {
       Object.assign(reconciled, {
         complete: false,
@@ -351,6 +367,12 @@ function sanitizeJobState(update, { dropInvalidDurations = false } = {}) {
     const value = update[field];
     if (["complete", "retryable", "withdrawn"].includes(field)) {
       if (typeof value !== "boolean") throw new Error(`Media queue ${field} must be boolean.`);
+      safe[field] = value;
+    } else if (field === "safetyFailure") {
+      if (!["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP"].includes(value))
+        throw new Error(
+          "Media safety evidence must identify unconfirmed process or browser cleanup; inspect the retained barrier before recovery.",
+        );
       safe[field] = value;
     } else if (field === "attempts") {
       if (!Number.isSafeInteger(value) || value < 0) {

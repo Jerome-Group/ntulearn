@@ -189,6 +189,10 @@ const routes = {
       "src/media/lock.mjs",
       "src/media/process.mjs",
       "src/media/digest.mjs",
+      "src/media/safety.mjs",
+      "src/media/errors.mjs",
+      "src/media/queue.mjs",
+      "src/media/worker-state.mjs",
       "src/media/capacity.mjs",
       "src/media/capacity-monitor.mjs",
       "src/media/capacity-deadline.mjs",
@@ -196,6 +200,9 @@ const routes = {
     [
       "test/media-worker.test.mjs",
       "test/media-production.test.mjs",
+      "test/media-safety.test.mjs",
+      "test/media-errors.test.mjs",
+      "test/media-queue.test.mjs",
       "test/media-lock.test.mjs",
       "test/media-process.test.mjs",
       "test/media-process-boundary.test.mjs",
@@ -361,10 +368,11 @@ const commands = [
       writes: ["media-store", "course-media-artifacts", "media-queues", "private-media-logs"],
     },
     {
-      arguments: ["[scheduled|manual]"],
+      arguments: ["[scheduled|manual]", "[priority-course (manual only)]"],
       risk: "media-acquisition",
       limitations: [
         "Scheduled mode works only 00:00–03:59 Asia/Singapore; manual mode ignores the overnight boundary.",
+        "Manual priority reorders all enabled courses; SIGINT/SIGTERM await owned cleanup and report interruption separately from the overnight boundary.",
       ],
     },
   ),

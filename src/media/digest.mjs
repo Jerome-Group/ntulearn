@@ -1,3 +1,4 @@
+import { publicMediaError } from "./errors.mjs";
 import { join, relative, dirname, resolve } from "node:path";
 import { writeAtomically } from "../atomic.mjs";
 
@@ -20,6 +21,8 @@ export async function persistMediaDigest({
   counts,
   globalStop,
   stoppedAtBoundary,
+  interrupted = false,
+  interruptionReason,
   verdict,
   message,
   summarizeCounts,
@@ -36,6 +39,8 @@ export async function persistMediaDigest({
     durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
     globalStop,
     stoppedAtBoundary,
+    interrupted,
+    ...(interrupted ? { interruptionReason: publicMediaError(interruptionReason) } : {}),
     verdict,
     message,
     courses,
@@ -54,6 +59,8 @@ export async function persistMediaDigest({
     counts: run.counts,
     globalStop,
     stoppedAtBoundary,
+    interrupted,
+    ...(interrupted ? { interruptionReason: run.interruptionReason } : {}),
   };
   await write(logPath, `${JSON.stringify(run, null, 2)}\n`);
   await write(paths.latestPath, `${JSON.stringify(digest, null, 2)}\n`);

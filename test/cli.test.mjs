@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -247,7 +247,10 @@ test("rejects an unknown media worker mode", async () => {
   const { code, stdout, stderr } = await runCli("media-worker", "fast");
   assert.equal(code, 1);
   assert.equal(stdout, "");
-  assert.match(stderr, /^Usage: npm run media:worker -- <scheduled\|manual>\n$/);
+  assert.match(
+    stderr,
+    /^Usage: npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\]\n$/,
+  );
 });
 
 test("exits non-zero when the aggregate media verdict is red", async () => {
@@ -540,3 +543,86 @@ test("historical CLI plan apply verify executes offline against owned temporary 
   assert.equal(await readFile(at.originalPath, "utf8"), at.original);
   assert.equal(await readFile(at.sourcePath, "utf8"), at.raw);
 });
+
+test("manual priority CLI rejects unknown selections and unexpected arguments", async () => {
+  for (const args of [
+    ["manual", "MISSING"],
+    ["manual", "MISSING", "extra"],
+    ["scheduled", "MISSING"],
+  ]) {
+    const result = await runCli("media-worker", ...args);
+    assert.equal(result.code, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Usage:|enabled configured course/);
+    assert.equal(result.sandboxDigest, null);
+  }
+});
+
+for (const signalName of ["SIGINT", "SIGTERM"]) {
+  test(`media worker CLI settles ${signalName} cancellation before exiting`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-worker-cancel-"));
+    try {
+      await cp(fileURLToPath(new URL("../src", import.meta.url)), join(root, "src"), {
+        recursive: true,
+      });
+      const configPath = join(root, "courses.json");
+      const example = JSON.parse(
+        await readFile(
+          fileURLToPath(new URL("../config/courses.example.json", import.meta.url)),
+          "utf8",
+        ),
+      );
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          ...example,
+          courses: [],
+          statePath: join(root, "state.json"),
+          profilePath: join(root, "profile"),
+        }),
+      );
+      await writeFile(
+        join(root, "src/media/production.mjs"),
+        `
+        export async function runProductionMedia({signal}) {
+          process.stdout.write('READY\\n');
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('Fixture expired')), 1000);
+            const finish = () => { clearTimeout(timer); resolve(); };
+            signal.addEventListener('abort', finish, {once:true});
+            if (signal.aborted) finish();
+          });
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return {exitCode:1, digest:{interrupted:true, settled:true, reasonCode:signal.reason.code}};
+        }
+      `,
+      );
+      const result = await new Promise((resolve) => {
+        const child = execFile(
+          process.execPath,
+          [join(root, "src/cli.mjs"), "media-worker", "manual"],
+          { env: { ...process.env, NTULEARN_CONFIG_PATH: configPath }, timeout: 3000 },
+          (error, stdout, stderr) =>
+            resolve({ code: error?.code ?? 0, signal: error?.signal, stdout, stderr }),
+        );
+        let requested = false;
+        child.stdout.on("data", (data) => {
+          if (!requested && data.toString().includes("READY")) {
+            requested = true;
+            child.kill(signalName);
+          }
+        });
+      });
+      assert.equal(result.code, 1, result.stderr);
+      assert.equal(result.signal, null);
+      assert.equal(result.stderr, "");
+      assert.deepEqual(JSON.parse(result.stdout.replace(/^READY\n/, "")), {
+        interrupted: true,
+        settled: true,
+        reasonCode: "MEDIA_INTERRUPTED",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
