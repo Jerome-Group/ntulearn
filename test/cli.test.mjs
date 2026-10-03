@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \[RECOVER_TRANSCRIPT_SOURCES\|PUBLISH_RECOVERED_EDITIONS\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -639,6 +639,22 @@ test("explicit retry rejects extra arguments before loading a configuration", as
   assert.equal(result.code, 2);
   assert.equal(result.stderr, "");
   assert.equal(JSON.parse(result.stdout).checks[0].code, "MEDIA_RETRY_ARGUMENTS");
+});
+
+test("source recovery CLI refuses malformed arguments and masks unavailable configuration", async () => {
+  const env = { ...process.env, NTULEARN_CONFIG_PATH: "/missing-synthetic-recovery-config" };
+  for (const [args, code] of [
+    [["media-recover", "plan", "private-manifest", "unexpected"], "RECOVERY_ARGUMENTS"],
+    [["media-recover", "run", "private-manifest"], "RECOVERY_ARGUMENTS"],
+    [["media-recover", "plan", "private-manifest"], "RECOVERY_CONFIG_UNAVAILABLE"],
+  ]) {
+    const result = await runCliWithEnvironment(env, ...args);
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    assert.equal(JSON.parse(result.stdout).checks[0].code, code);
+    assert.equal(result.stdout.includes("/missing-synthetic-recovery-config"), false);
+    assert.equal(result.stdout.includes("private-manifest"), code === "RECOVERY_ARGUMENTS");
+  }
 });
 
 test("explicit retry CLI plans, requires confirmation, respects locking and preserves originals", async (t) => {

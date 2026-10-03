@@ -26,7 +26,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] [RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -355,6 +355,7 @@ async function main([name, ...argumentsForCommand]) {
   if (name === "media-retry") return mediaRetry(argumentsForCommand);
   if (name === "media-worker") return mediaWorker(argumentsForCommand);
   if (name === "media-format") return mediaFormat(argumentsForCommand);
+  if (name === "media-recover") return mediaRecover(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
     return offlineCommand(name, argumentsForCommand);
@@ -365,6 +366,66 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
+}
+
+async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]) {
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      Object.assign(
+        new Error(
+          "Recovery interrupted; inspect retained private candidates and retry with a fresh directory.",
+        ),
+        { code: "RECOVERY_INTERRUPTED" },
+      ),
+    );
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  let result;
+  try {
+    if (
+      !["plan", "run", "publish"].includes(mode) ||
+      !manifestPath ||
+      unexpected.length ||
+      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory)
+    ) {
+      result = capabilityResult("media:recover", [
+        observation(
+          "arguments",
+          "blocked",
+          "RECOVERY_ARGUMENTS",
+          "Invalid explicit source recovery arguments.",
+          "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]",
+        ),
+      ]);
+    } else {
+      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+      const { recoverTranscriptSources } = await import("./media/recovery.mjs");
+      result = await recoverTranscriptSources({
+        mode,
+        manifestPath: resolve(manifestPath),
+        outputDirectory: outputDirectory ? resolve(outputDirectory) : undefined,
+        config,
+        signalProcessGroup: signalMediaProcessGroup,
+        signal: controller.signal,
+      });
+    }
+  } catch {
+    result = capabilityResult("media:recover", [
+      observation(
+        "configuration",
+        "blocked",
+        "RECOVERY_CONFIG_UNAVAILABLE",
+        "Private recovery configuration could not be validated; no raw exception exposed.",
+        "Repair private configuration and accessible storage, then retry media:recover plan.",
+      ),
+    ]);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
 }
 
 async function mediaFormat([mode, manifestPath, ...unexpected]) {

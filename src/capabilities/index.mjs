@@ -233,6 +233,27 @@ const routes = {
     ["src/media/retry.mjs", "src/media/safety.mjs", "src/media/queue.mjs", "src/cli.mjs"],
     ["test/media-retry.test.mjs", "test/media-safety.test.mjs", "test/cli.test.mjs"],
   ],
+  "transcript-source-recovery": [
+    [
+      "src/media/recovery.mjs",
+      "src/media/recovery-files.mjs",
+      "src/media/recovery-policy.mjs",
+      "src/media/recovery-manifest.mjs",
+      "src/media/recovery-candidate.mjs",
+      "src/media/recovery-publication.mjs",
+      "src/media/production-local.mjs",
+      "src/cli.mjs",
+    ],
+    [
+      "test/media-recovery.test.mjs",
+      "test/media-recovery-manifest.test.mjs",
+      "test/media-recovery-candidate.test.mjs",
+      "test/media-recovery-policy.test.mjs",
+      "test/media-recovery-files.test.mjs",
+      "test/media-recovery-publication.test.mjs",
+      "test/cli.test.mjs",
+    ],
+  ],
   capabilities: [
     [
       "src/capabilities/index.mjs",
@@ -470,6 +491,90 @@ const commands = [
       },
       limitations: [
         "Permission to retry only; no acquisition, transcription or completeness verdict is changed. Failure history and existing artifacts remain. Cleanup safety barriers and markers cannot be cleared.",
+      ],
+    },
+  ),
+  command(
+    "media-recover",
+    "media:recover",
+    "transcript-source-recovery",
+    [
+      "configured-courses",
+      "private-source-recovery-manifest",
+      "positive-source-media-ownership",
+      "safe-media-admission",
+    ],
+    {
+      reads: ["private-source-media-digests", "media-queues", "private-media-safety-evidence"],
+      writes: [
+        "exclusive-private-candidates-for-run",
+        "exclusive-lecture-editions-and-course-indexes-for-publish",
+      ],
+    },
+    {
+      manifest: {
+        schemaVersion: 1,
+        policy: "independent-context-v1",
+        maximumRecordings: 64,
+        recordingFields: [
+          "courseKey",
+          "recordingId",
+          "source.path",
+          "source.sha256",
+          "media.path",
+          "media.sha256",
+        ],
+        maximumBudgets: {
+          maxRecordingSeconds: 28800,
+          maxInputBytes: 34359738368,
+          maxOutputBytes: 34359738368,
+          jobTimeoutMs: 86400000,
+          processTimeoutMs: 28800000,
+        },
+        paths:
+          "Manifest-relative or absolute canonical physical files; private input paths and identities are not emitted in structured reports.",
+      },
+      arguments: [
+        "<plan|run|publish>",
+        "<private-manifest>",
+        "[candidate-directory (run/publish only)]",
+      ],
+      risk: "local-user-storage",
+      output: "capability-result-v1",
+      exitCodes: offlineCodes,
+      operations: {
+        plan: { ownerOnly: false, network: false, browser: false, writes: [], runtime: false },
+        run: {
+          ownerOnly: true,
+          network: false,
+          browser: false,
+          writes: ["fresh-private-candidates", "native-ASR-output", "private-provenance"],
+          runtime: true,
+          prerequisites: [
+            "Owner-recovery-authorization",
+            "prepared-runtime",
+            "RAID0-and-reserve",
+            "media-queue-lock",
+            "fresh-output-directory",
+          ],
+        },
+        publish: {
+          ownerOnly: true,
+          network: false,
+          browser: false,
+          writes: ["exclusive-lecture-editions", "course-recovery-indexes"],
+          runtime: false,
+          prerequisites: [
+            "Owner-publication-authorization",
+            "unchanged-private-candidates",
+            "eligible-only-subset-unflagged-native-and-timing-evidence",
+            "RAID0-and-reserve",
+            "media-queue-lock",
+          ],
+        },
+      },
+      limitations: [
+        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Context mitigation is unmeasured; native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
       ],
     },
   ),
