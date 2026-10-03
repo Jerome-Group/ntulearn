@@ -913,6 +913,15 @@ candidates precede current-source paragraph editions. Source flags exclude parag
 unknown recovery timing refuses. Reading verification is lexical/provenance evidence, with acoustic
 verification unrun; canonical source review and media readiness stay separate.
 
+Catalogue metadata has its own aggregate bounds: 16 MiB input, 100,000 values, depth 16 and
+1 MiB per string, with every decoded key/value checked for session and signed addresses. Overwritten
+duplicate-key tokens remain checked. Native transcript safety limits and candidate gates are unchanged.
+Proposed plans remain capped at 4 MiB; both plan and receipt validate before the first write. The
+operation keeps its 256 MiB/120 s read budget. Plan/receipt hashes are checked at admission/final
+publication, with descriptor-bound device/inode/size/mtime/ctime checks between writes. Changed
+bytes, replacements, links or private-profile retargeting refuse; bounded read counts appear in
+publication/verification evidence. Limits return fixed codes and retain any partial journal.
+
 Owner publication: `npm run --silent media:catalogue -- publish /absolute/private/catalogue.json PUBLISH_TRANSCRIPT_CATALOGUE`.
 It requires an idle exclusive queue lock, accessible RAID0/reserve and unchanged plan inputs. Each course
 gets `Transcript editions/index.md`, managed producer evidence and immutable `.catalogue-history/`

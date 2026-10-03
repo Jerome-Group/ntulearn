@@ -14,19 +14,23 @@ export const HISTORICAL_LIMITS = Object.freeze({
   timeoutMs: 120000,
 });
 export const historicalDigest = (value) => createHash("sha256").update(value).digest("hex");
-export const historicalFailure = () =>
-  new Error(
-    "Historical formatting evidence changed or exceeds its bounds. Inspect the private plan and retained files, then retry plan; originals are retained.",
+export const historicalFailure = (code) =>
+  Object.assign(
+    new Error(
+      "Historical formatting evidence changed or exceeds its bounds. Inspect the private plan and retained files, then retry plan; originals are retained.",
+    ),
+    code ? { code } : {},
   );
 export const insideHistoricalRoot = (root, path) => path.startsWith(root + sep);
 
 export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
   let entries = 0,
-    bytes = 0;
+    bytes = 0,
+    files = 0;
   const deadline = Date.now() + limits.timeoutMs;
   function active() {
     signal?.throwIfAborted();
-    if (Date.now() >= deadline) throw historicalFailure();
+    if (Date.now() >= deadline) throw historicalFailure("HISTORICAL_READ_LIMIT");
   }
   const probe = (operation) => {
     active();
@@ -38,7 +42,8 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
   return {
     active,
     probe,
-    async read(path) {
+    evidence: () => ({ readBytes: bytes, readFiles: files, maximumReadBytes: limits.totalBytes }),
+    async read(path, { includeIdentity = false } = {}) {
       return probe(async () => {
         if ((await realpath(path)) !== path) throw historicalFailure();
         const handle = await open(
@@ -47,12 +52,9 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
         );
         try {
           const before = await handle.stat();
-          if (
-            !before.isFile() ||
-            before.size > limits.fileBytes ||
-            bytes + before.size > limits.totalBytes
-          )
-            throw historicalFailure();
+          if (!before.isFile()) throw historicalFailure();
+          if (before.size > limits.fileBytes || bytes + before.size > limits.totalBytes)
+            throw historicalFailure("HISTORICAL_READ_LIMIT");
           const parts = [];
           let received = 0;
           const buffer = Buffer.alloc(Math.min(limits.fileBytes + 1, 64 * 1024));
@@ -72,11 +74,30 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
             after.mtimeMs !== before.mtimeMs ||
             current.ino !== before.ino ||
             current.dev !== before.dev ||
-            current.mtimeMs !== before.mtimeMs
+            current.mtimeMs !== before.mtimeMs ||
+            (includeIdentity &&
+              (after.ctimeMs !== before.ctimeMs || current.ctimeMs !== before.ctimeMs))
           )
             throw historicalFailure();
           bytes += content.length;
-          return { path, sha256: historicalDigest(content), bytes: content.length, content };
+          files++;
+          return {
+            path,
+            sha256: historicalDigest(content),
+            bytes: content.length,
+            content,
+            ...(includeIdentity
+              ? {
+                  identity: {
+                    dev: before.dev,
+                    ino: before.ino,
+                    size: before.size,
+                    mtimeMs: before.mtimeMs,
+                    ctimeMs: before.ctimeMs,
+                  },
+                }
+              : {}),
+          };
         } finally {
           await handle.close();
         }

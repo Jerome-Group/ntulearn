@@ -155,6 +155,7 @@ const routes = {
     [
       "src/media/catalogue.mjs",
       "src/media/catalogue-files.mjs",
+      "src/media/catalogue-safety.mjs",
       "src/media/catalogue-profile.mjs",
       "src/media/catalogue-inventory.mjs",
       "src/media/catalogue-editions.mjs",
@@ -550,6 +551,7 @@ const commands = [
         "All configured local queue appearances accounted for as recognized recordings, unresolved review or positively classified non-recordings; retained source evidence accounted for; upstream completeness and acoustic verification unrun. Inspect emits private bounded titles/IDs/local links; no transcript/config/profile/log bodies. Plan/publication/verify emit bounded counts/codes only.",
         "Prefer a unique eligible recovered digest, otherwise unique eligible current-source paragraph digest. Equivalent digests group; distinct candidates require explicit recordingId/sha256 selections. Source flags exclude paragraph preference; unknown recovery timing refuses. Canonical source review/media verdicts remain unchanged.",
         "Generation candidate proofs stay immutable; current per-recording ownership is independently revalidated without generation-time whole-queue SHA. Publication plans pin the entire current inventory and refuse subsequent input changes. Existing managed index requires positive producer hash/history; user edits refuse. Retry identical plan after journalled interruption; no automatic sync publication or universal external-edit CAS guarantee.",
+        "Catalogue metadata scans every decoded key/value, including overwritten duplicate-key tokens: 16MiB input, 100000 values, depth16, 1MiB per string plus unchanged native address guards. Proposed plans remain capped at4MiB and validate both plan and receipt before any write. Per-operation read budget256MiB/120s remains; private plan/receipt get full hashes at admission/final and descriptor-bound identity checks between writes. Bounded failures retain evidence and emit fixed codes; no native transcript gate is relaxed.",
       ],
     },
   ),

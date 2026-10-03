@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { historicalReads, HISTORICAL_LIMITS } from "./historical-files.mjs";
-import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
+import { parseCatalogueMetadata } from "./catalogue-safety.mjs";
 
 export const CATALOGUE_POLICY = "verified-reading-v1";
 export const catalogueFailure = (code = "CATALOGUE_EVIDENCE_INVALID") =>
@@ -40,9 +40,7 @@ export function catalogueReads(signal) {
   };
 }
 export function catalogueJson(file) {
-  const value = JSON.parse(file.content.toString("utf8"));
-  safeNativeTranscriptBody(value);
-  return value;
+  return parseCatalogueMetadata(file.content);
 }
 export const catalogueFingerprint = ({ path, sha256, bytes }) => ({ path, sha256, bytes });
 

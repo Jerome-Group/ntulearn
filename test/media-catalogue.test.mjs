@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, symlink, lstat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { historicalFixture } from "./fixtures/historical.mjs";
 import { historicalTranscripts } from "../src/media/historical.mjs";
@@ -54,6 +54,119 @@ test("plan publish verify repeat preserve originals and refuse student-edited st
   assert.equal(await readFile(path, "utf8"), "Student catalogue edits");
   assert.equal(await readFile(f.originalPath, "utf8"), f.original);
 });
+
+test("multi-course aggregate plan remains publishable, verifiable and idempotent within the operation read budget", async (t) => {
+  const f = await fixture(t),
+    { mediaQueuePath } = await import("../src/media/queue.mjs");
+  const courses = [f.config.courses[0]];
+  for (let index = 1; index < 11; index++) {
+    const destination = join(f.root, `course-${index}`);
+    await mkdir(destination);
+    courses.push({
+      ...courses[0],
+      key: `SYNTHETIC-${index}`,
+      courseId: `_synthetic_${index}`,
+      destination,
+    });
+  }
+  f.config.courses = courses;
+  const originalQueue = JSON.parse(await readFile(f.queuePath));
+  for (const [index, course] of courses.entries()) {
+    const queue = {
+      ...originalQueue,
+      courseKey: course.key,
+      courseId: course.courseId,
+      queue: Array.from({ length: 200 }, (_, row) => ({
+        ...f.job,
+        courseKey: course.key,
+        courseId: course.courseId,
+        recordingId: `synthetic-${index}-${row}`,
+        title: `Resource ${row}`,
+        providerReference: `https://ntulearn.ntu.edu.sg/ultra/courses/${course.courseId}/outline`,
+        placement: { ...f.job.placement, destination: course.destination },
+        disposition: "unresolved",
+        classificationEvidence: "unknown",
+      })),
+    };
+    if (index === 0) queue.queue.unshift(f.job);
+    await writeFile(mediaQueuePath(f.config.statePath, course.key), JSON.stringify(queue));
+  }
+  const options = { config: f.config, manifestPath: f.manifestPath };
+  const planned = await transcriptCatalogue({ ...options, mode: "plan" });
+  assert.equal(planned.status, "passed", JSON.stringify(planned));
+  assert.equal(planned.evidence.unresolved, 2200, JSON.stringify(planned.evidence));
+  const published = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
+  assert.equal(published.status, "passed", JSON.stringify(published));
+  assert.ok(
+    published.evidence.reads.readBytes < 32 * 1024 ** 2,
+    JSON.stringify(published.evidence.reads),
+  );
+  assert.equal((await transcriptCatalogue({ ...options, mode: "verify" })).status, "passed");
+  const repeat = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
+  assert.equal(repeat.status, "passed", JSON.stringify(repeat));
+  assert.equal(repeat.evidence.written, 0);
+  assert.equal(repeat.evidence.promoted, 0);
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.raw);
+});
+
+test("unsafe proposed receipt path is rejected before either private plan file is published", async (t) => {
+  const f = await fixture(t),
+    manifestPath = join(f.root, "catalogue?sig=private.json");
+  const result = await transcriptCatalogue({ config: f.config, mode: "plan", manifestPath });
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].code, "CATALOGUE_METADATA_UNSAFE");
+  for (const path of [manifestPath, manifestPath + ".catalogue-plan.json"])
+    await assert.rejects(lstat(path), { code: "ENOENT" });
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+});
+
+for (const mutation of ["in-place", "replacement", "symlink", "parent"])
+  for (const receipt of [false, true])
+    test(`private ${receipt ? "receipt" : "manifest"} ${mutation} during publication stops before managed index promotion`, async (t) => {
+      const f = await fixture(t),
+        privateParent = join(f.root, "private-plan");
+      await mkdir(privateParent);
+      const options = { config: f.config, manifestPath: join(privateParent, "catalogue.json") };
+      assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+      const pinned = options.manifestPath + (receipt ? ".catalogue-plan.json" : ""),
+        before = await readFile(pinned),
+        info = await lstat(pinned);
+      let changed = false;
+      const result = await transcriptCatalogue(
+        { ...options, mode: "publish" },
+        {
+          ...f.dependencies,
+          afterOutput: async () => {
+            if (changed) return;
+            changed = true;
+            if (mutation === "in-place") {
+              await writeFile(pinned, before);
+              await utimes(pinned, info.atime, info.mtime);
+            } else if (mutation === "parent") {
+              await rename(privateParent, privateParent + ".retained");
+              await mkdir(privateParent);
+              for (const suffix of ["", ".catalogue-plan.json"])
+                await writeFile(
+                  options.manifestPath + suffix,
+                  await readFile(join(privateParent + ".retained", "catalogue.json" + suffix)),
+                );
+            } else {
+              await rename(pinned, pinned + ".retained");
+              if (mutation === "symlink") await symlink(pinned + ".retained", pinned);
+              else await writeFile(pinned, before);
+            }
+          },
+        },
+      );
+      assert.equal(result.status, "failed", JSON.stringify(result));
+      assert.equal(result.checks[0].code, "CATALOGUE_MANIFEST_CHANGED");
+      assert.equal(result.evidence.written, 1);
+      assert.equal(result.evidence.promoted, 0);
+      assert.equal(result.evidence.partialPublication, "retained-managed-publication");
+      assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+      assert.equal(await readFile(f.sourcePath, "utf8"), f.raw);
+    });
 
 test("durable queue review and suspicious source paragraphs stay readable review, never preferred polished garbage", async (t) => {
   const f = await fixture(t),
