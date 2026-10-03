@@ -167,7 +167,9 @@ The status documents and queue remain independent from sync and verify verdicts.
 `media:retry` changes retry permission only. Plan is read-only; apply requires explicit Owner
 authorization, the literal confirmation and exclusive queue ownership. It preserves failure
 history, attempts, verdicts and existing artifacts. Disabled courses, incomplete discovery,
-unresolved/excluded/withdrawn jobs and cleanup safety evidence are refused. Run the worker after
+unresolved/excluded/withdrawn jobs and cleanup safety evidence are refused. Retained transcript source
+review explicitly refuses both plan and apply; inspect the source and use source-preserving
+`media:recover`, retaining originals and queue/source review flags. Run the worker after
 rearming; retry permission does not prove acquisition, transcription or completion. A specific
 recording ID can replace `failed`, and one configured course can replace `all`.
 Queue metadata is inspected per raw JSON scalar, including overwritten duplicate values;
