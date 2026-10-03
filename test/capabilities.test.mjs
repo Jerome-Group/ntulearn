@@ -116,3 +116,16 @@ test("optional VAD setup index preserves base receipt and points to offline qual
   assert.ok(recovery.verification.tests.includes("test/media-vad.test.mjs"));
   assert.match(recovery.operations.publish.optionalVadRuntime, /VAD policy only/);
 });
+
+test("media discovery indexes owned course isolation, safety admission and truthful partial reports", () => {
+  const route = capabilityIndex("media-discover").commands[0];
+  assert.ok(route.prerequisites.includes("safe-media-admission"));
+  assert.ok(route.effects.writes.includes("cleanup-safety-barrier"));
+  assert.match(route.courseContexts, /positive closure/);
+  assert.match(route.report, /notAttempted/);
+  assert.equal(route.exitCodes.incompleteOrInterrupted, 1);
+  assert.equal(route.exitCodes.runtimeRefused, 1);
+  assert.equal(route.exitCodes.usage, 2);
+  assert.ok(route.code.includes("src/media/discover-run.mjs"));
+  assert.ok(route.verification.tests.includes("test/media-discover-cli.test.mjs"));
+});

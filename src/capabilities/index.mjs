@@ -71,6 +71,9 @@ const routes = {
   "media-discovery": [
     [
       "src/cli.mjs",
+      "src/media/discover-run.mjs",
+      "src/ntulearn/session.mjs",
+      "src/media/safety.mjs",
       "src/media/lock.mjs",
       "src/media/discovery.mjs",
       "src/media/queue.mjs",
@@ -86,6 +89,8 @@ const routes = {
     ],
     [
       "test/cli.test.mjs",
+      "test/media-discover-run.test.mjs",
+      "test/media-discover-cli.test.mjs",
       "test/media-lock.test.mjs",
       "test/media-discovery.test.mjs",
       "test/media-queue.test.mjs",
@@ -483,12 +488,18 @@ const commands = [
     "media-discover",
     "media:discover",
     "media-discovery",
-    [...livePrerequisites, "media-queue-lock"],
-    { ...live, writes: ["media-queues", "course-media-status"] },
+    [...livePrerequisites, "media-queue-lock", "safe-media-admission"],
+    { ...live, writes: ["media-queues", "course-media-status", "cleanup-safety-barrier"] },
     {
       arguments: courseArgument,
       risk: "live-session",
+      courseContexts:
+        "Sequential canonical context per enabled course; positive closure before queue/status publication or another context. Sticky Gallery guard never resets.",
+      exitCodes: { passed: 0, incompleteOrInterrupted: 1, runtimeRefused: 1, usage: 2 },
+      report:
+        "Private discovery report with completed/refused/notAttempted courses, fixed failure/cleanup/barrier codes; existing course evidence remains private.",
       limitations: [
+        "Owned discovery handles SIGINT/SIGTERM; abort immediately starts available context close and requires positive close plus read settlement. Canonical startup cannot be physically cancelled before a client returns. Unknown cleanup stops the batch and retains a durable admission barrier before queue-lock release. A close deadline is not physical cancellation; Owner containment is required on uncertainty. Disabled courses skip browser reads. Ordinary sync/verify/renumber retain shared-session semantics.",
         "Gallery may close only one exact New Course Announcement with dedicated Close, under a retained owned-context NTULearn GET/HEAD request guard. Known service workers, unknown/auth/consent/multiple dialogs and unconfirmed guard/close refuse; no force or Mark as read. Read requests use fallback to preserve existing route chaining; no request URLs/headers/payloads retained. No completeness claim for media acquisition/transcript quality or arbitrary contexts/service workers.",
       ],
     },
