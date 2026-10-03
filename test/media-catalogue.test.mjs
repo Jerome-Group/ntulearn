@@ -148,6 +148,10 @@ test("compact aggregate plan fits the unchanged byte bound and remains publishab
     refused = await transcriptCatalogue({ config: f.config, mode: "plan", manifestPath });
   assert.equal(refused.status, "failed");
   assert.equal(refused.checks[0].code, "CATALOGUE_LIMIT");
+  assert.equal(refused.evidence.stage, "plan-validation");
+  assert.equal(refused.evidence.limit.kind, "plan-bytes");
+  assert.equal(refused.evidence.limit.maximum, HISTORICAL_LIMITS.fileBytes);
+  assert.ok(refused.evidence.limit.observed > refused.evidence.limit.maximum);
   for (const path of [manifestPath, manifestPath + ".catalogue-plan.json"])
     await assert.rejects(lstat(path), { code: "ENOENT" });
 });

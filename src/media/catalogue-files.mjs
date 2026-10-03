@@ -5,16 +5,17 @@ import { parseCatalogueMetadata } from "./catalogue-safety.mjs";
 import { createCatalogueMediaReads } from "./catalogue-media-read.mjs";
 
 export const CATALOGUE_POLICY = "verified-reading-v1";
-export const catalogueFailure = (code = "CATALOGUE_EVIDENCE_INVALID") =>
+export const catalogueFailure = (code = "CATALOGUE_EVIDENCE_INVALID", limit) =>
   Object.assign(
     new Error(
       "Inspect private catalogue evidence and retry an unchanged plan; originals and user edits remain.",
     ),
-    { code },
+    { code, ...(limit ? { limit } : {}) },
   );
-export function catalogueReads(signal, { media = createCatalogueMediaReads(signal) } = {}) {
+export function catalogueReads(signal, { media = createCatalogueMediaReads(signal), now } = {}) {
   const reads = historicalReads({
     signal,
+    now,
     limits: { ...HISTORICAL_LIMITS, fileBytes: 16 * 1024 ** 2 },
   });
   const files = new Map(),
@@ -51,9 +52,19 @@ export async function scanCatalogue(root, reads) {
   const paths = [];
   let entries = 0;
   async function walk(directory, depth) {
-    if (depth > HISTORICAL_LIMITS.depth) throw catalogueFailure("CATALOGUE_LIMIT");
+    if (depth > HISTORICAL_LIMITS.depth)
+      throw catalogueFailure("CATALOGUE_LIMIT", {
+        kind: "scan-depth",
+        observed: depth,
+        maximum: HISTORICAL_LIMITS.depth,
+      });
     for (const name of (await reads.probe(() => readdir(directory))).sort()) {
-      if (++entries > HISTORICAL_LIMITS.files) throw catalogueFailure("CATALOGUE_LIMIT");
+      if (++entries > HISTORICAL_LIMITS.files)
+        throw catalogueFailure("CATALOGUE_LIMIT", {
+          kind: "scan-entries",
+          observed: entries,
+          maximum: HISTORICAL_LIMITS.files,
+        });
       if (name === ".runtime" || name === ".catalogue-history") continue;
       const path = join(directory, name),
         info = await reads.probe(() => lstat(path));
