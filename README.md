@@ -368,13 +368,13 @@ evidence; successful lexical checks and conditional alignment never turn that bl
 
 When the course opens one exact **New Course Announcement** dialog, Gallery discovery may use its
 **Close new announcements modal** control. It never chooses **Mark as read**, uses force, or dismisses
-unknown/consent/authentication/multiple dialogs. Before closing, an owned-context request guard blocks
+unknown/consent/authentication/multiple dialogs. Before initial course navigation, including courses without a dialog, the existing sticky owned-context request guard is installed and confirmed. It blocks
 non-GET/HEAD NTULearn requests and retains only bounded failure codes. GET/HEAD use route fallback;
 existing route chaining remains intact. Known service workers, unavailable guard APIs and unconfirmed
 close refuse with incomplete discovery. The guard stays for that context's lifetime; it does not cover
 arbitrary other contexts, external page-route overrides or detached/unknown service workers, and changes
 no browser/security setting. Close an affected owned context and inspect the fixed diagnostic before
-retrying. No request URLs, headers, payloads or browser logs are retained in diagnostics.
+retrying. No request URLs, headers, payloads or browser logs are retained in diagnostics. Legacy context-less offline adapters preserve fixture behavior only; they establish no production request-guard authority. Context-bearing production pages require positive routing and service-worker absence APIs.
 
 Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the
 signed-in course surface, exhausts its visible `Load More`/pagination controls, and refuses to

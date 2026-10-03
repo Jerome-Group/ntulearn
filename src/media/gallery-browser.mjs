@@ -42,8 +42,9 @@ export async function readKalturaMediaGallery({ page, course }) {
     stage = "catalogue";
     await waitForGalleryCatalogue(surface);
     const pages = await collectMediaGalleryPages({
-      readPage: () => readGalleryPage(surface),
-      clickLoadMore: (page) => clickGalleryMore(surface, page),
+      readPage: () => guardedGalleryRead(page, () => readGalleryPage(surface)),
+      clickLoadMore: (snapshot) =>
+        guardedGalleryRead(page, () => clickGalleryMore(surface, snapshot)),
     });
     stage = "date-enrichment";
     const enrichedPages = await enrichGalleryDates({
@@ -54,8 +55,26 @@ export async function readKalturaMediaGallery({ page, course }) {
     await assertCourseAnnouncementGuard(page);
     return discoverMediaGallery({ course, pages: enrichedPages });
   } catch (error) {
-    const failure = galleryFailure(publicErrorCode(error, page), { ...error?.diagnostic, stage });
+    let cause = error;
+    try {
+      await assertCourseAnnouncementGuard(page);
+    } catch (guardFailure) {
+      cause = guardFailure;
+    }
+    const failure = galleryFailure(publicErrorCode(cause, page), { ...error?.diagnostic, stage });
     return inaccessibleGallery(failure);
+  }
+}
+
+async function guardedGalleryRead(page, operation) {
+  await assertCourseAnnouncementGuard(page);
+  try {
+    const result = await operation();
+    await assertCourseAnnouncementGuard(page);
+    return result;
+  } catch (error) {
+    await assertCourseAnnouncementGuard(page);
+    throw error;
   }
 }
 
@@ -77,12 +96,15 @@ export async function collectMediaGalleryPages({
     let read;
     try {
       read = await readPage();
-    } catch {
-      throw galleryFailure("GALLERY_CATALOGUE_READ_FAILED", {
-        pagesRead: pages.length,
-        pageLimit: maxPages,
-        snapshot: pages.at(-1),
-      });
+    } catch (error) {
+      throw galleryFailure(
+        error?.code?.startsWith("GALLERY_NOTICE_") ? error.code : "GALLERY_CATALOGUE_READ_FAILED",
+        {
+          pagesRead: pages.length,
+          pageLimit: maxPages,
+          snapshot: pages.at(-1),
+        },
+      );
     }
     const page =
       read && typeof read === "object"
@@ -168,12 +190,15 @@ async function openGallerySurface(page, courseId) {
   if (!page || typeof page.goto !== "function") {
     throw new Error("Media Gallery needs the signed-in browser page.");
   }
-  await assertCourseAnnouncementGuard(page);
-  await page.goto(courseUrl(courseId), { waitUntil: "domcontentloaded" });
+  await guardedGalleryRead(page, () =>
+    page.goto(courseUrl(courseId), { waitUntil: "domcontentloaded" }),
+  );
   if (typeof page.waitForLoadState === "function") {
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
   }
+  await assertCourseAnnouncementGuard(page);
   await waitForCourseContent(page);
+  await assertCourseAnnouncementGuard(page);
   await closeCourseAnnouncement(page);
   await loadLazyCourseContent(page);
 
@@ -195,6 +220,7 @@ async function openGallerySurface(page, courseId) {
       { control: "trigger" },
     );
   }
+  await assertCourseAnnouncementGuard(page);
   const opened = popup ? await popup : null;
   const surface = opened ?? page;
   if (typeof surface.waitForLoadState === "function") {
@@ -235,6 +261,7 @@ async function loadLazyCourseContent(page) {
 
   const controls = page.locator('button[data-analytics-id*="loadMoreButton"]');
   for (let attempt = 0; attempt < MAX_CONTENT_LOADS; attempt += 1) {
+    await assertCourseAnnouncementGuard(page);
     if ((await controls.count()) === 0) return;
 
     const control = controls.first();
@@ -244,6 +271,7 @@ async function loadLazyCourseContent(page) {
     const before =
       typeof body?.innerText === "function" ? await body.innerText().catch(() => null) : null;
     await control.evaluate((element) => element.click());
+    await assertCourseAnnouncementGuard(page);
     if (before !== null && typeof page.waitForFunction === "function") {
       await page
         .waitForFunction((previous) => (document.body?.innerText ?? "") !== previous, before, {
@@ -360,14 +388,17 @@ async function enrichGalleryDates({ page, pages, baseUrl }) {
   const dates = new Map();
   try {
     for (const entry of missing) {
+      await assertCourseAnnouncementGuard(page);
       if (typeof entry?.href !== "string" || !entry.href.trim()) continue;
       const target = new URL(entry.href, baseUrl).href;
       if (!dates.has(target)) {
         await detail.goto(target, { waitUntil: "domcontentloaded" });
+        await assertCourseAnnouncementGuard(page);
         const body = await detail
           .locator("body")
           .innerText()
           .catch(() => "");
+        await assertCourseAnnouncementGuard(page);
         dates.set(target, parseMediaDetailCreatedAt(body));
       }
       const createdAt = dates.get(target);
