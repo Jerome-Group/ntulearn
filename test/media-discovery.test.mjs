@@ -558,3 +558,186 @@ test("a hostname named ks remains a safe direct media authority", () => {
   assert.equal(queue[0].disposition, "recording");
   assert.equal(queue[0].providerReference, "direct:ks/lecture.mp4");
 });
+
+test("discovers folder bodies and typed detail media without losing document evidence", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  const items = [
+    {
+      id: "folder",
+      title: "Lectures",
+      position: 0,
+      contentHandler: "resource/x-bb-folder",
+      body: { rawText: '<a href="https://youtu.be/abc123xyz89?token=fixture-secret">Watch</a>' },
+    },
+    {
+      id: "video",
+      title: "Lecture",
+      position: 1,
+      contentDetail: {
+        link: {
+          url: "https://example.test/opaque?signature=fixture-secret",
+          mimeType: "video/mp4",
+        },
+      },
+    },
+    {
+      id: "document",
+      title: "Notes",
+      position: 2,
+      contentDetail: {
+        link: { url: "https://example.test/notes", mimeType: "application/pdf" },
+      },
+    },
+  ];
+  const queue = discoverContentRecordings({ course, snapshot: { items } });
+  assert.deepEqual(
+    queue.map((job) => job.disposition),
+    ["recording", "recording", "non-recording"],
+  );
+  assert.equal(queue[0].placement.formattedTranscriptPath, "01 Lectures/01 Lectures.transcript.md");
+  assert.equal(queue[1].provider, "direct");
+  assert.equal(queue[1].mediaType, "video");
+  assert.doesNotMatch(JSON.stringify(queue), /fixture-secret|signature=|token=|https?:/);
+  assert.deepEqual(discoverContentRecordings({ course, snapshot: { items } }), queue);
+});
+
+test("quoted and unquoted embedded media preserve MIME and stable identity", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  const discover = (body) =>
+    discoverContentRecordings({
+      course,
+      snapshot: { items: [{ id: "item", title: "Lecture", position: 0, body: { rawText: body } }] },
+    });
+  const quoted = discover(
+    '<video src="https://example.test/opaque?signature=fixture-secret" type="video/mp4"></video>',
+  );
+  const unquoted = discover(
+    "<video src=https://example.test/opaque?signature=another-secret type=video/mp4></video>",
+  );
+  assert.equal(quoted.length, 1);
+  assert.equal(quoted[0].disposition, "recording");
+  assert.equal(quoted[0].provider, "direct");
+  assert.equal(quoted[0].classificationEvidence, "media");
+  assert.deepEqual(unquoted, quoted);
+  assert.equal(discover("<audio src=/lecture.mp3></audio>")[0].mediaType, "audio");
+  assert.doesNotMatch(JSON.stringify(quoted), /fixture-secret|signature=|https?:/);
+});
+
+test("addressless and malformed embeds remain explicit unresolved appearances", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const body of [
+    '<iframe data-bbfile="not-json fixture-secret"></iframe>',
+    "<video></video>",
+    '<iframe data-bbfile="null"></iframe>',
+    '<a data-bbfile="not-json">Watch</a>',
+    "<a data-bbfile=null>Watch</a>",
+  ]) {
+    const input = {
+      course,
+      snapshot: { items: [{ id: "item", title: "Lecture", position: 0, body: { rawText: body } }] },
+    };
+    const queue = discoverContentRecordings(input);
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].disposition, "unresolved");
+    assert.equal(queue[0].provider, "unsupported");
+    assert.match(queue[0].limitation, /Inspect.*NTULearn/);
+    assert.doesNotMatch(JSON.stringify(queue), /fixture-secret|not-json/);
+    assert.deepEqual(discoverContentRecordings(input), queue);
+    assert.deepEqual(
+      discoverContentRecordings({
+        ...input,
+        snapshot: {
+          items: [{ ...input.snapshot.items[0], body: { rawText: body, displayText: body } }],
+        },
+      }),
+      queue,
+    );
+  }
+});
+
+test("native wrappers with child source addresses do not invent unresolved media", () => {
+  const queue = discoverContentRecordings({
+    course: { key: "fixture", courseId: "fixture", destination: "/fixture/course" },
+    snapshot: {
+      items: [
+        {
+          id: "item",
+          title: "Lecture",
+          position: 0,
+          body: { rawText: "<video controls><source src=/lecture.mp4 type=video/mp4></video>" },
+        },
+      ],
+    },
+  });
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].disposition, "recording");
+});
+
+test("typed conflicts and session-dependent media remain unresolved", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const body of [
+    "<video src=/lecture.pdf type=video/mp4></video>",
+    "<video src=/media/ks/fixture-secret/lecture type=video/mp4></video>",
+    "<iframe src=/opaque type=unknown></iframe>",
+  ]) {
+    const queue = discoverContentRecordings({
+      course,
+      snapshot: { items: [{ id: "item", title: "Lecture", position: 0, body: { rawText: body } }] },
+    });
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].disposition, "unresolved");
+    assert.doesNotMatch(JSON.stringify(queue), /fixture-secret/);
+  }
+});
+
+test("unquoted watch query preserves provider identity across signed URL rotation", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const [tag, attribute] of [
+    ["iframe", "src"],
+    ["a", "href"],
+  ]) {
+    const discover = (body) =>
+      discoverContentRecordings({
+        course,
+        snapshot: {
+          items: [{ id: "item", title: "Lecture", position: 0, body: { rawText: body } }],
+        },
+      });
+    const quoted = discover(
+      `<${tag} ${attribute}="https://www.youtube.com/watch?v=abc123xyz89&amp;token=fixture-secret"></${tag}>`,
+    );
+    const unquoted = discover(
+      `<${tag} ${attribute}=https://www.youtube.com/watch?v=abc123xyz89&amp;token=rotated-secret></${tag}>`,
+    );
+    assert.equal(quoted.length, 1);
+    assert.equal(quoted[0].provider, "youtube");
+    assert.deepEqual(unquoted, quoted);
+    assert.doesNotMatch(JSON.stringify(unquoted), /fixture-secret|rotated-secret|token=|https?:/);
+  }
+});
+
+test("addressless and invalid typed content details stay unresolved without source payloads", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const descriptor of [
+    { mimeType: "video/mp4" },
+    { mimeType: "video/mp4", url: 17 },
+    { contentType: "audio/mp4", url: "" },
+    { type: "video/mp4", url: { private: "fixture-secret" } },
+  ]) {
+    const input = {
+      course,
+      snapshot: {
+        items: [
+          { id: "item", title: "Lecture", position: 0, contentDetail: { media: descriptor } },
+        ],
+      },
+    };
+    const queue = discoverContentRecordings(input);
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].disposition, "unresolved");
+    assert.equal(queue[0].provider, "unsupported");
+    assert.match(queue[0].limitation, /Inspect.*NTULearn/);
+    assert.deepEqual(discoverContentRecordings(input), queue);
+    assert.doesNotMatch(JSON.stringify(queue), /fixture-secret|"url"|"private"/);
+  }
+});

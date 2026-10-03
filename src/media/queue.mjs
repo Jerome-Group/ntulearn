@@ -62,24 +62,17 @@ export async function writeMediaQueue({
     read,
     boundary,
   });
-  if (discovery.complete !== true && existing.record) {
-    const status = await persistQueueStatuses({
-      course,
-      discovery,
-      queue: existing.record.queue,
-      boundary,
-      now,
-      write,
-    });
-    return { path, status: "unchanged", statusPath: status?.path };
-  }
   const discoveredQueue =
     discovery.complete === true && Array.isArray(discovery.queue) ? discovery.queue : [];
   await boundary.assert(discoveredQueue, course.courseId);
-  const reconciledQueue = mergeQueue(existing.record?.queue, discoveredQueue, boundary);
-  const transition = withdrawal
-    ? withdrawQueuedRecording({ queue: reconciledQueue, ...withdrawal })
-    : { status: "written", queue: reconciledQueue };
+  const reconciledQueue =
+    discovery.complete === true
+      ? mergeQueue(existing.record?.queue, discoveredQueue, boundary)
+      : (existing.record?.queue ?? []);
+  const transition =
+    discovery.complete === true && withdrawal
+      ? withdrawQueuedRecording({ queue: reconciledQueue, ...withdrawal })
+      : { status: "written", queue: reconciledQueue };
   const queue = transition.queue;
   await write(
     path,
@@ -88,7 +81,7 @@ export async function writeMediaQueue({
       courseKey: course.key,
       courseId: course.courseId,
       complete: discovery.complete === true,
-      verdict: discovery.verdict ?? "red",
+      verdict: discovery.complete === true ? (discovery.verdict ?? "red") : "red",
       displayedCount: discovery.displayedCount ?? null,
       discoveredCount: discovery.discoveredCount ?? 0,
       ...(discovery.contentCount === undefined ? {} : { contentCount: discovery.contentCount }),

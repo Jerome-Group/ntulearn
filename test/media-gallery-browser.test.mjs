@@ -913,8 +913,14 @@ test("Gallery diagnostics reach the course receipt while incomplete discovery re
   assert.equal(discovery.verdict, "red");
   assert.equal(discovery.diagnostic.code, "GALLERY_PAGINATION_UPDATE_UNCONFIRMED");
   const published = await writeMediaQueue({ statePath, course, discovery });
-  assert.equal(published.status, "unchanged");
-  assert.equal(await readFile(saved.path, "utf8"), before);
+  assert.equal(published.status, "written");
+  const retained = JSON.parse(await readFile(saved.path, "utf8"));
+  assert.deepEqual(retained.queue, JSON.parse(before).queue);
+  assert.equal(retained.complete, false);
+  assert.equal(retained.verdict, "red");
+  assert.equal(retained.displayedCount, discovery.displayedCount);
+  assert.equal(retained.discoveredCount, discovery.discoveredCount);
+  assert.deepEqual(retained.limitations, discovery.limitations);
   assert.equal(await readFile(source, "utf8"), "Synthetic original source");
   assert.equal(await readFile(edited, "utf8"), "Student edited derivative");
   assert.match(await readFile(published.statusPath, "utf8"), /Verdict: red/);

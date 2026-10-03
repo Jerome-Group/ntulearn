@@ -62,7 +62,15 @@ npm run media:withdraw -- MH1101 media-gallery:_9_1:gallery-entry confirm  # con
 
 `media:setup` is the only command that prepares media dependencies or models. Sync, verify,
 watchdog and future scheduled media runs never install anything. A successful media discovery
-writes its per-course queue under `.data/media-queue/`; a red discovery writes no jobs.
+writes its per-course queue under `.data/media-queue/`. An incomplete discovery retains existing
+jobs and artifacts, adds no partial jobs, and persists its latest red/incomplete outcome. A worker
+refuses that course until discovery recovers; previously successful queue evidence cannot prove
+current coverage.
+
+Discovery includes folder bodies and media descriptors alongside content links and embeds.
+Positive MIME/type evidence distinguishes media from documents. Malformed or addressless embeds
+remain unresolved so missing information stays visible; unresolved resources are not automatically
+treated as recordings.
 
 The production entrypoint is `npm run media:worker -- <scheduled|manual> [priority-course]`.
 Priority is accepted only in manual mode and must name an enabled configured course. It changes

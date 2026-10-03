@@ -121,11 +121,33 @@ test("keeps prior job state on red rediscovery and merges it on the next green r
   const red = await writeMediaQueue({
     statePath,
     course: COURSE,
-    discovery: { complete: false, verdict: "red", queue: [] },
+    discovery: {
+      complete: false,
+      verdict: "red",
+      queue: [{ recordingId: "false-subset" }],
+      displayedCount: 7,
+      discoveredCount: 2,
+      contentCount: 1,
+      galleryCount: 0,
+      limitations: ["Pagination incomplete; inspect Media Gallery then retry discovery."],
+    },
+    now: () => new Date("2026-10-03T01:02:03.000Z"),
   });
-  assert.equal(red.status, "unchanged");
+  assert.equal(red.status, "written");
   const preserved = JSON.parse(await readFile(red.path, "utf8"));
   assert.deepEqual(preserved.queue, [prior]);
+  assert.equal(preserved.complete, false);
+  assert.equal(preserved.verdict, "red");
+  assert.equal(preserved.displayedCount, 7);
+  assert.equal(preserved.discoveredCount, 2);
+  assert.equal(preserved.contentCount, 1);
+  assert.equal(preserved.galleryCount, 0);
+  assert.equal(preserved.updatedAt, "2026-10-03T01:02:03.000Z");
+  assert.match(preserved.limitations[0], /retry discovery/);
+  assert.equal(
+    (await readMediaQueue({ statePath, courseKey: COURSE.key, course: COURSE })).record.complete,
+    false,
+  );
 
   const green = await writeMediaQueue({
     statePath,
@@ -139,6 +161,7 @@ test("keeps prior job state on red rediscovery and merges it on the next green r
     },
   });
   const merged = JSON.parse(await readFile(green.path, "utf8"));
+  assert.equal(merged.complete, true);
   assert.equal(merged.queue[0].title, "New title");
   assert.equal(merged.queue[0].complete, true);
   assert.equal(merged.queue[0].withdrawn, true);

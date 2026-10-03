@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { attachmentName, isFolder } from "../ntulearn/content.mjs";
+import { attachmentName } from "../ntulearn/content.mjs";
 import { attachmentPlacement, placedFile, placementsIn } from "../placement.mjs";
 import { orderedName } from "../paths.mjs";
 import { classifyRecordingCandidate } from "./classification.mjs";
 
 const EMBED = /<(iframe|object|embed|video|audio|source)\b([^>]*)>/gi;
 const LINK = /<a\b([^>]*)>/gi;
-const ATTRIBUTE = /\b(src|href|data)\s*=\s*(["'])(.*?)\2/gi;
-const JSON_ATTRIBUTE = /\bdata-bbfile\s*=\s*(["'])(.*?)\1/i;
+const ATTRIBUTE =
+  /(?:^|\s)(src|href|data|type|data-bbfile)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gi;
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".m4a", ".mp3", ".ogg", ".wav"]);
 
@@ -21,8 +21,6 @@ export function discoverContentRecordings({
   const recordings = [];
 
   for (const item of snapshot.items ?? []) {
-    if (isFolder(item)) continue;
-
     const placement = placements.get(item.id) ?? { trail: "", segments: [] };
     const candidates = [
       ...attachmentCandidates(attachmentsByItem.get(item.id) ?? []),
@@ -32,7 +30,8 @@ export function discoverContentRecordings({
     const seen = new Set();
 
     for (const candidate of candidates) {
-      const classification = classifyRecordingCandidate({ ...candidate, adapters });
+      const classification =
+        candidate.classification ?? classifyRecordingCandidate({ ...candidate, adapters });
       if (!classification) continue;
       const identity = `${classification.provider}:${classification.providerReference}`;
       if (seen.has(identity)) continue;
@@ -149,67 +148,125 @@ function attachmentCandidates(attachments) {
 }
 
 function bodyCandidates(item) {
-  const html = `${item.body?.rawText ?? ""}\n${item.body?.displayText ?? ""}`;
   const candidates = [];
-
-  for (const match of html.matchAll(EMBED)) {
-    const attributes = match[2];
-    for (const value of attributeValues(attributes)) {
-      candidates.push({ value, sourceKind: "embedded-player" });
+  const bodies = new Set([item.body?.rawText ?? "", item.body?.displayText ?? ""]);
+  for (const html of bodies) {
+    for (const [index, match] of [...html.matchAll(EMBED), ...html.matchAll(LINK)].entries()) {
+      const isEmbed = match[0].match(/^<a\b/i) === null;
+      const attributes = isEmbed ? match[2] : match[1];
+      const fields = attributeFields(attributes);
+      const values = attributeCandidates(fields);
+      const embedded = embeddedValue(fields);
+      const sourceKind = isEmbed ? "embedded-player" : "external-link";
+      for (const value of values) candidates.push({ value, sourceKind });
+      if (embedded.value) candidates.push({ value: embedded.value, sourceKind: "embedded-player" });
+      if (
+        embedded.malformed ||
+        (isEmbed && values.length === 0 && !embedded.value && !hasChildSource(html, match))
+      ) {
+        candidates.push({
+          value: { id: `unresolved-embed-${index + 1}` },
+          sourceKind: "embedded-player",
+        });
+      }
     }
-    const embedded = embeddedValue(attributes);
-    if (embedded) candidates.push({ value: embedded, sourceKind: "embedded-player" });
   }
-
-  for (const match of html.matchAll(LINK)) {
-    const attributes = match[1];
-    for (const value of attributeValues(attributes)) {
-      candidates.push({ value, sourceKind: "external-link" });
-    }
-    const embedded = embeddedValue(attributes);
-    if (embedded) candidates.push({ value: embedded, sourceKind: "embedded-player" });
-  }
-
   return candidates;
 }
 
 function externalCandidates(item) {
-  const links = Object.values(item.contentDetail ?? {}).flatMap((detail) =>
-    detailLinks(detail).map(({ value, sourceKind }) => ({ value, sourceKind })),
+  const links = Object.entries(item.contentDetail ?? {}).flatMap(([key, detail]) =>
+    detailLinks(detail, key),
   );
   const byValue = new Map();
   for (const link of links) {
-    const previous = byValue.get(link.value);
+    const address = typeof link.value === "string" ? link.value : (link.value.url ?? link.value.id);
+    const previous = byValue.get(address);
     if (
       !previous ||
       (link.sourceKind === "launch-link" && previous.sourceKind === "external-link")
     ) {
-      byValue.set(link.value, link);
+      byValue.set(address, link);
     }
   }
   return [...byValue.values()];
 }
 
-function detailLinks(detail) {
-  return [
+function detailLinks(detail, detailKey) {
+  const metadata = Object.fromEntries(
+    ["mimeType", "contentType", "type", "fileName", "filename"].flatMap((key) =>
+      typeof detail?.[key] === "string" ? [[key, detail[key]]] : [],
+    ),
+  );
+  const links = [
     { value: detail?.url, sourceKind: "external-link" },
     { value: detail?.launchUrl, sourceKind: "launch-link" },
     { value: detail?.launchLink, sourceKind: "launch-link" },
     { value: detail?.placement?.launchLink, sourceKind: "launch-link" },
-  ].filter(({ value }) => typeof value === "string" && value);
+  ]
+    .filter(({ value }) => typeof value === "string" && value.trim())
+    .map((link) => ({
+      ...link,
+      value: Object.keys(metadata).length ? { ...metadata, url: link.value } : link.value,
+    }));
+  const mediaTyped = [metadata.mimeType, metadata.contentType, metadata.type].some((type) =>
+    /^(?:video|audio)\//i.test(type ?? ""),
+  );
+  if (links.length || !mediaTyped) return links;
+  const identity = createHash("sha256").update(detailKey).digest("hex").slice(0, 16);
+  return [
+    {
+      value: { id: `unresolved-detail-${identity}` },
+      sourceKind: "external-link",
+      classification: {
+        provider: "unsupported",
+        providerReference: `unsupported:malformed-detail:${identity}`,
+        candidateReference: `candidate:malformed-detail:${identity}`,
+        disposition: "unresolved",
+        classificationEvidence: "malformed",
+        retryable: true,
+        limitation:
+          "Media-typed resource has no valid source address. Appearance unresolved. Inspect it in NTULearn and retry media discovery after metadata is clarified.",
+      },
+    },
+  ];
 }
 
-function attributeValues(attributes) {
-  return [...attributes.matchAll(ATTRIBUTE)].map((match) => match[3]);
+function hasChildSource(html, match) {
+  if (!/^(?:video|audio)$/i.test(match[1])) return false;
+  const remainder = html.slice(match.index + match[0].length);
+  const body = remainder.split(new RegExp(`</${match[1]}\\s*>`, "i"), 1)[0];
+  return [...body.matchAll(EMBED)].some(
+    (child) =>
+      child[1].toLowerCase() === "source" &&
+      attributeCandidates(attributeFields(child[2])).length > 0,
+  );
 }
 
-function embeddedValue(attributes) {
-  const encoded = attributes.match(JSON_ATTRIBUTE)?.[2];
-  if (!encoded) return null;
+function attributeFields(attributes) {
+  return [...attributes.matchAll(ATTRIBUTE)].map((match) => [
+    match[1].toLowerCase(),
+    decodeHtmlEntities(match[2] ?? match[3] ?? match[4]),
+  ]);
+}
+
+function attributeCandidates(fields) {
+  const type = fields.find(([key]) => key === "type")?.[1];
+  return fields
+    .filter(([key]) => !["type", "data-bbfile"].includes(key))
+    .map(([, url]) => (type ? { url, type } : url));
+}
+
+function embeddedValue(fields) {
+  const encoded = fields.find(([key]) => key === "data-bbfile")?.[1];
+  if (encoded === undefined) return { value: null, malformed: false };
   try {
-    return JSON.parse(decodeHtmlEntities(encoded));
+    const value = JSON.parse(encoded);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? { value, malformed: false }
+      : { value: null, malformed: true };
   } catch {
-    return null;
+    return { value: null, malformed: true };
   }
 }
 
