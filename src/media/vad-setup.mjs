@@ -8,6 +8,7 @@ import { withMediaQueueLock } from "./lock.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
 import { assertMediaSafetyAdmission, persistMediaSafetyBarrier } from "./safety.mjs";
 import { assertRecoveryInputs } from "./recovery-manifest.mjs";
+import { unconfirmedMediaCleanupCode } from "./errors.mjs";
 import { readMediaQueue } from "./queue.mjs";
 import { VAD_MODEL } from "./vad-model.mjs";
 import {
@@ -58,7 +59,9 @@ async function download(spec, signal, fetcher, timeoutMs = 120000) {
   }
 }
 export async function setupRecoveryVad({ config, signal, signalProcessGroup }, dependencies = {}) {
-  let written = 0;
+  let written = 0,
+    cleanupCode = null,
+    safetyBarrier = "unrun";
   try {
     return await (dependencies.lock ?? withMediaQueueLock)({
       statePath: config.statePath,
@@ -154,24 +157,52 @@ export async function setupRecoveryVad({ config, signal, signalProcessGroup }, d
             },
           );
         } catch (error) {
-          await persistMediaSafetyBarrier({ statePath: config.statePath, error });
+          cleanupCode = unconfirmedMediaCleanupCode(error);
+          try {
+            await persistMediaSafetyBarrier({ statePath: config.statePath, error });
+            if (cleanupCode) safetyBarrier = "retained";
+          } catch (barrierError) {
+            safetyBarrier = "write-failed";
+            throw barrierError;
+          }
           throw error;
         }
       },
     });
-  } catch {
+  } catch (error) {
+    const admissionBlocked = error?.code === "MEDIA_SAFETY_BARRIER";
+    const failureCode =
+      safetyBarrier === "write-failed"
+        ? "MEDIA_SAFETY_BARRIER_WRITE"
+        : (cleanupCode ??
+          (admissionBlocked ? "MEDIA_SAFETY_BARRIER" : "RECOVERY_VAD_SETUP_REFUSED"));
+    const action =
+      safetyBarrier === "write-failed"
+        ? "Owner: retain external containment; restore durable safety evidence/storage and verify owned process/browser cessation before any retry."
+        : cleanupCode || admissionBlocked
+          ? "Owner: retain external containment, verify owned process/browser cessation and inspect preserved evidence before explicitly clearing safety barriers and queue safety markers; do not retry setup automatically."
+          : "Inspect optional model/receipt and restore runtime/reserve; repeat npm run media:setup -- vad unchanged.";
     return capabilityResult(
       "media:setup:vad",
       [
         observation(
           "optional-vad",
           "blocked",
-          "RECOVERY_VAD_SETUP_REFUSED",
-          "Optional VAD preparation refused; retained bytes remain.",
-          "Inspect optional model/receipt and restore runtime/reserve; repeat npm run media:setup -- vad unchanged.",
+          failureCode,
+          cleanupCode
+            ? "Optional VAD preparation stopped; owned cleanup remains unconfirmed and retained bytes remain."
+            : "Optional VAD preparation refused; retained bytes remain.",
+          action,
         ),
       ],
-      { written, acousticVerification: "unrun" },
+      {
+        written,
+        failureCode,
+        cleanup: cleanupCode ? "unconfirmed" : "unrun",
+        cleanupCode,
+        safetyBarrier: admissionBlocked ? "blocks-admission" : safetyBarrier,
+        acousticVerification: "unrun",
+      },
     );
   }
 }

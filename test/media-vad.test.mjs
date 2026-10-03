@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, realpath } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setupRecoveryVad } from "../src/media/vad-setup.mjs";
+import { mediaSafetyPath } from "../src/media/safety.mjs";
 import { historicalDigest } from "../src/media/historical-files.mjs";
 import { verifyRecoveryVad, vadPaths, VAD_MODEL, VAD_RUNTIME } from "../src/media/vad.mjs";
 
@@ -258,4 +259,85 @@ test("changed executable refuses before optional capability execution", async (t
     "blocked",
   );
   assert.equal(probes, 0);
+});
+
+for (const code of ["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP"])
+  test(`optional setup reports typed ${code} and retains a barrier blocking the next attempt`, async (t) => {
+    const f = await fixture(t);
+    let downloads = 0;
+    const privateMarker =
+      "private fixture details /sensitive/session https://example.test/?token=secret";
+    const cause = Object.assign(new Error(privateMarker), { code });
+    const result = await setupRecoveryVad(
+      { config: f.config },
+      {
+        ...f.deps,
+        commandRunner: async () => {
+          throw new Error(privateMarker, { cause });
+        },
+        fetcher: async () => {
+          downloads++;
+          throw new Error();
+        },
+      },
+    );
+    assert.equal(result.status, "blocked");
+    assert.equal(result.checks[0].code, code);
+    assert.equal(result.evidence.failureCode, code);
+    assert.equal(result.evidence.cleanupCode, code);
+    assert.equal(result.evidence.cleanup, "unconfirmed");
+    assert.equal(result.evidence.safetyBarrier, "retained");
+    assert.match(result.checks[0].action, /do not retry setup automatically/);
+    assert.doesNotMatch(JSON.stringify(result), /sensitive|secret|example.test|fixture details/);
+    assert.equal(JSON.parse(await readFile(mediaSafetyPath(f.config.statePath))).code, code);
+    let runtimeChecks = 0;
+    const repeated = await setupRecoveryVad(
+      { config: f.config },
+      {
+        ...f.deps,
+        verifyRuntime: async () => {
+          runtimeChecks++;
+          return f.verified;
+        },
+      },
+    );
+    assert.equal(repeated.status, "blocked");
+    assert.equal(repeated.evidence.failureCode, "MEDIA_SAFETY_BARRIER");
+    assert.equal(repeated.evidence.safetyBarrier, "blocks-admission");
+    assert.equal(runtimeChecks, 0);
+    assert.equal(downloads, 0);
+    await assert.rejects(readFile(f.paths.model), { code: "ENOENT" });
+    assert.equal(
+      await readFile(join(f.verified.runtime.root, "manifest.json"), "utf8"),
+      "base evidence",
+    );
+  });
+
+test("optional setup preserves unconfirmed cleanup subtype when the durable barrier cannot be written", async (t) => {
+  const f = await fixture(t),
+    occupied = join(f.root, "occupied-parent");
+  await writeFile(occupied, "preserved fixture file");
+  const config = { ...f.config, statePath: join(occupied, "state.json") };
+  const result = await setupRecoveryVad(
+    { config },
+    {
+      ...f.deps,
+      lock: async ({ run }) => run(),
+      admission: async () => {},
+      commandRunner: async () => {
+        throw Object.assign(new Error("private fixture secret"), {
+          code: "MEDIA_PROCESS_CLEANUP",
+          globalSafety: true,
+        });
+      },
+    },
+  );
+  assert.equal(result.status, "blocked");
+  assert.equal(result.evidence.failureCode, "MEDIA_SAFETY_BARRIER_WRITE");
+  assert.equal(result.evidence.cleanupCode, "MEDIA_PROCESS_CLEANUP");
+  assert.equal(result.evidence.cleanup, "unconfirmed");
+  assert.equal(result.evidence.safetyBarrier, "write-failed");
+  assert.match(result.checks[0].action, /retain external containment/);
+  assert.doesNotMatch(JSON.stringify(result), /private fixture|secret|occupied-parent/);
+  assert.equal(await readFile(occupied, "utf8"), "preserved fixture file");
 });
