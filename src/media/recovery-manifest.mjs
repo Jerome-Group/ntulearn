@@ -14,7 +14,7 @@ import {
   pinRecoveryAbsence,
   assertRecoveryAbsences,
 } from "./recovery-authority.mjs";
-import { RECOVERY_POLICY } from "./recovery-policy.mjs";
+import { RECOVERY_POLICIES } from "./recovery-policy.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
 import { mediaRecordingStatus, mediaRecordingStatusPath } from "./status.mjs";
 import { publicMediaError } from "./errors.mjs";
@@ -36,7 +36,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   const manifest = JSON.parse(manifestFile.content.toString("utf8"));
   if (
     manifest.schemaVersion !== 1 ||
-    manifest.policy !== RECOVERY_POLICY ||
+    !RECOVERY_POLICIES.includes(manifest.policy) ||
     !Array.isArray(manifest.recordings) ||
     !manifest.recordings.length ||
     manifest.recordings.length > 64
@@ -249,7 +249,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   const id = createHash("sha256")
     .update(
       JSON.stringify({
-        policy: RECOVERY_POLICY,
+        policy: manifest.policy,
         budgets,
         recordings,
         protectedInputs,
@@ -261,7 +261,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   return {
     schemaVersion: 1,
     id,
-    policy: RECOVERY_POLICY,
+    policy: manifest.policy,
     budgets,
     recordings,
     protectedInputs,

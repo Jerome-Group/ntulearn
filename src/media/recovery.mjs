@@ -49,6 +49,7 @@ export async function recoverTranscriptSources(
       });
     await admission();
     const manifest = await readRecoveryManifest({ manifestPath, config, signal });
+    evidence.policy = manifest.policy;
     evidence.recordings = manifest.recordings.length;
     evidence.sourceReviewFlags = manifest.recordings.filter(
       (recording) => recording.sourceFlags.length,

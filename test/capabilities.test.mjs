@@ -89,3 +89,15 @@ test("source recovery indexes explicit unformatted authority and absence protect
   assert.match(variant.limits, /parent/);
   assert.ok(route.verification.tests.includes("test/media-recovery-incomplete.test.mjs"));
 });
+
+test("source recovery exposes both explicit decoder policies without changing the established example", () => {
+  const route = capabilityIndex("transcript-source-recovery").commands[0];
+  assert.equal(route.manifest.policy, "independent-context-v1");
+  assert.deepEqual(route.manifest.supportedPolicies, [
+    "independent-context-v1",
+    "independent-context-nonspeech-v1",
+  ]);
+  assert.match(route.limitations[0], /no post-generation filtering/);
+  const feature = capabilityIndex("transcript-source-recovery").features[0];
+  assert.ok(feature.verification.tests.includes("test/media-recovery-policy.test.mjs"));
+});

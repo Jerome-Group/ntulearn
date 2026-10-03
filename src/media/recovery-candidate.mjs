@@ -5,7 +5,6 @@ import { validateTranscript, assertFormattedTranscript } from "./transcript.mjs"
 import { historicalParagraphs, historicalTextFlags } from "./historical-format.mjs";
 import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
 import { recoveryFile, recoveryFailure } from "./recovery-files.mjs";
-import { RECOVERY_POLICY } from "./recovery-policy.mjs";
 
 export async function createRecoveryCandidate(
   { recording, manifest, config, runtime, output, execute, put, signal },
@@ -16,7 +15,7 @@ export async function createRecoveryCandidate(
     setup,
     paths: { ...runtime.runtime, work: join(output, "work") },
     preserveArtifacts: true,
-    asrPolicy: RECOVERY_POLICY,
+    asrPolicy: manifest.policy,
     commands: {
       ffmpeg: join(runtime.runtime.bin, setup.mediaTool.filename),
       ffprobe: config.media.tools.ffprobe,

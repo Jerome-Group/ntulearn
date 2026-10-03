@@ -107,3 +107,19 @@ test("completed-source authority keeps the original plan fingerprint shape", asy
       .slice(0, 24),
   );
 });
+
+test("selected nonspeech policy is preserved in admission and fingerprint; unknown policies refuse", async (t) => {
+  const f = await recoveryFixture(t),
+    previous = await readRecoveryManifest(f.options);
+  f.manifest.policy = "independent-context-nonspeech-v1";
+  await f.saveManifest();
+  const selected = await readRecoveryManifest(f.options);
+  assert.equal(selected.policy, f.manifest.policy);
+  assert.notEqual(selected.id, previous.id);
+  await assertRecoveryInputs(selected);
+  for (const unknown of [null, "independent-context-nonspeech-v2", "", {}]) {
+    f.manifest.policy = unknown;
+    await f.saveManifest();
+    await assert.rejects(readRecoveryManifest(f.options), { code: "RECOVERY_MANIFEST_INVALID" });
+  }
+});

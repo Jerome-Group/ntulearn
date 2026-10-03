@@ -1,3 +1,5 @@
+import { RECOVERY_POLICY, RECOVERY_POLICIES } from "../media/recovery-policy.mjs";
+
 const livePrerequisites = ["configured-courses", "Owner-approval", "saved-student-session"];
 const mediaPrerequisites = ["configured-media", "RAID0", "free-space-reserve", "prepared-runtime"];
 
@@ -560,7 +562,8 @@ const commands = [
     {
       manifest: {
         schemaVersion: 1,
-        policy: "independent-context-v1",
+        policy: RECOVERY_POLICY,
+        supportedPolicies: RECOVERY_POLICIES,
         maximumRecordings: 64,
         authorities: {
           default: "metadata-owned-original",
@@ -640,7 +643,7 @@ const commands = [
         },
       },
       limitations: [
-        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Context mitigation is unmeasured; native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
+        "Fresh ASR candidates retain every original and queue history. No canonical source replacement, automatic retry or acoustic/completeness claim. Explicit independent-context policies optionally suppress decoder nonspeech tokens during full-input generation; no post-generation filtering, VAD installation or quality claim. Native malformed/dropped segments, suspicious repetition and failed timing block that candidate. Explicit publish writes only the validated eligible subset and reports remaining review as blocked; edited evidence fails the whole publication. Partial durable output counts and unchanged repeat route remain in structured failure evidence.",
       ],
     },
   ),
