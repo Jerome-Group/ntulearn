@@ -16,6 +16,7 @@ import {
   assertCataloguePrivatePath,
 } from "./catalogue-profile.mjs";
 import { catalogueInventory } from "./catalogue-inventory.mjs";
+import { assertCatalogueBindings } from "./catalogue-course.mjs";
 import {
   catalogueTarget,
   publishCatalogueTarget,
@@ -310,14 +311,11 @@ export async function transcriptCatalogue(
 
 async function assertSnapshot(inventory, signal, { includeMedia = false, mediaReads } = {}) {
   signal?.throwIfAborted();
-  await assertCatalogueProfile(
-    inventory.profileBinding,
-    inventory.bindings.map((binding) => binding.logical),
-  );
+  await assertCatalogueBindings(inventory.bindings, {
+    media: mediaReads,
+    profileBinding: inventory.profileBinding,
+  });
   await assertRecoveryAbsences(inventory.absences, signal);
-  for (const binding of inventory.bindings)
-    if ((await realpath(binding.logical)) !== binding.canonical)
-      throw catalogueFailure("CATALOGUE_PARENT_CHANGED");
   for (const input of inventory.inputs) {
     const media = inventory.mediaIdentities.find((pin) => pin.path === input.path);
     if (media) {
@@ -343,8 +341,8 @@ async function assertSnapshot(inventory, signal, { includeMedia = false, mediaRe
   }
   const scanned = [];
   const scanReads = catalogueReads(signal);
-  for (const binding of inventory.bindings)
-    scanned.push(...(await scanCatalogue(binding.canonical, scanReads)));
+  for (const root of new Set(inventory.bindings.map((binding) => binding.canonical)))
+    scanned.push(...(await scanCatalogue(root, scanReads)));
   if (JSON.stringify(scanned.sort()) !== JSON.stringify(inventory.scannedPaths))
     throw catalogueFailure("CATALOGUE_INPUT_CHANGED");
   await assertRecoveryAbsences(inventory.absences, signal);

@@ -3,6 +3,7 @@ import { recordingDisposition } from "./disposition.mjs";
 import { mediaRecordingRoot } from "./storage.mjs";
 import { catalogueJson, catalogueFingerprint } from "./catalogue-files.mjs";
 import { assertCataloguePrivatePath } from "./catalogue-profile.mjs";
+import { assertCatalogueBindings } from "./catalogue-course.mjs";
 
 const inside = (root, path) => path.startsWith(root + sep);
 const values = (media) =>
@@ -20,19 +21,9 @@ export function catalogueMediaPath(value, roots) {
   }
   return null;
 }
-export async function catalogueRetainedMedia({
-  claims,
-  courses,
-  config,
-  store,
-  reads,
-  profileBinding,
-}) {
-  const roots = courses.map((course) => ({
-    logical: resolve(config.courses.find((c) => c.key === course.key).destination),
-    canonical: course.path,
-  }));
-  roots.push({ logical: resolve(config.media.mediaRoot), canonical: store });
+export async function catalogueRetainedMedia({ claims, store, reads, profileBinding, bindings }) {
+  const roots = bindings;
+  await assertCatalogueBindings(roots, { media: reads.media, profileBinding });
   const claimedPaths = new Map();
   for (const { course, job } of claims) {
     const checkpointFile =
@@ -85,8 +76,13 @@ export async function catalogueRetainedMedia({
       )
     )
       continue;
-    const configured = roots.find((root) => root.canonical === course.path);
-    if (![configured.logical, course.path].includes(resolve(job.placement?.destination ?? "")))
+    if (
+      !roots.some(
+        (root) =>
+          root.canonical === course.path &&
+          root.logical === resolve(job.placement?.destination ?? ""),
+      )
+    )
       continue;
     const recordRoot = mediaRecordingRoot(store, job.recordingId),
       stateFile = reads.files.get(join(recordRoot, "transcript.state.json")),
