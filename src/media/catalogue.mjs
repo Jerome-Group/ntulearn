@@ -263,6 +263,12 @@ export async function transcriptCatalogue(
             planId: id,
             reads,
             check,
+            signal,
+            checkExisting: async (request) => {
+              await assertCataloguePrivatePath(profileBinding, request.path);
+              await capacity.check(request);
+              await assertCataloguePrivatePath(profileBinding, request.path);
+            },
             checkCapacity: async (request) => {
               await check();
               await capacity.check(request);

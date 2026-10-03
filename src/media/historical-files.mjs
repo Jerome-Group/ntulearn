@@ -146,7 +146,15 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS, now = Date
 export async function publishHistoricalFile(
   path,
   content,
-  { reads, boundary, checkCapacity, expectedSha256, closeHandle = null, existingFile = null },
+  {
+    reads,
+    boundary,
+    checkCapacity,
+    expectedSha256,
+    closeHandle = null,
+    existingFile = null,
+    beforeStage = null,
+  },
 ) {
   reads.active();
   if (!insideHistoricalRoot(boundary, resolve(path))) throw historicalFailure();
@@ -163,6 +171,7 @@ export async function publishHistoricalFile(
   }
   if (existingFile && (await existingFile(path, content, expectedSha256))) return "existing";
   await reads.probe(() => checkCapacity?.({ path, boundary, bytes: content.length }));
+  await beforeStage?.();
   await reads.probe(() => mkdir(dirname(path), { recursive: true, mode: 0o700 }));
   const parent = dirname(path);
   const parentInfo = await reads.probe(() => lstat(parent));

@@ -244,7 +244,7 @@ test("resumed journal deadline reports fixed stage/cap and retains an unchanged 
     },
   );
   assert.equal(limited.checks[0].code, "CATALOGUE_LIMIT");
-  assert.equal(limited.evidence.stage, "snapshot");
+  assert.equal(limited.evidence.stage, "publication");
   assert.deepEqual(limited.evidence.limit, {
     kind: "elapsed-ms",
     observed: 120000,
@@ -309,4 +309,266 @@ test("public limit evidence retains only validated numeric counters and fixed ki
     for (const secret of [f.root, "private-id", "private raw exception", "private arbitrary kind"])
       assert.equal(JSON.stringify(result).includes(secret), false);
   }
+});
+
+test("verified catalogue reuse performs no staging and retains initial/final snapshot checks", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  const manifest = JSON.parse(await readFile(f.catalogue)),
+    target = manifest.targets[0];
+  const { catalogueReads } = await import("../src/media/catalogue-files.mjs");
+  const { publishCatalogueTarget } = await import("../src/media/catalogue-publication.mjs");
+  const reads = catalogueReads(),
+    originalProbe = reads.probe;
+  let stagingProbes = 0,
+    checks = 0;
+  reads.probe = async (operation) => {
+    const result = await originalProbe(operation);
+    const folders = [
+      join(f.config.courses[0].destination, "Transcript editions"),
+      join(f.config.courses[0].destination, "Transcript editions/.catalogue-history", manifest.id),
+    ];
+    for (const folder of folders)
+      if ((await readdir(folder)).some((name) => name.includes(".part-"))) stagingProbes++;
+    return result;
+  };
+  const requests = [],
+    progress = { written: 0, existing: 0, promoted: 0 };
+  await publishCatalogueTarget({
+    target,
+    planId: manifest.id,
+    reads,
+    progress,
+    check: async () => {
+      checks++;
+    },
+    checkCapacity: async (request) => {
+      requests.push(request);
+    },
+    checkExisting: async (request) => {
+      requests.push(request);
+    },
+  });
+  assert.equal(stagingProbes, 0);
+  assert.equal(checks, 2);
+  assert.equal(progress.written, 0);
+  assert.equal(progress.promoted, 0);
+  assert.equal(progress.existing, 4);
+  assert.equal(requests.length, 3);
+  for (const request of requests) {
+    assert.equal(request.boundary, target.boundary);
+    assert.equal(request.bytes, (await readFile(request.path)).length);
+  }
+});
+
+for (const boundary of ["new-stage", "final-snapshot"])
+  test(`source change after verified journal reuse refuses at ${boundary} and retains originals`, async (t) => {
+    const f = await fixture(t);
+    if (boundary === "new-stage") {
+      let first = true;
+      const interrupted = await transcriptCatalogue(
+        { ...f.options, mode: "publish" },
+        {
+          ...f.dependencies,
+          afterOutput: () => {
+            if (first) {
+              first = false;
+              throw new Error("fixture interruption");
+            }
+          },
+        },
+      );
+      assert.equal(interrupted.status, "failed");
+    } else
+      assert.equal(
+        (await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies)).status,
+        "passed",
+      );
+    const manifest = JSON.parse(await readFile(f.catalogue)),
+      history = join(
+        f.config.courses[0].destination,
+        "Transcript editions/.catalogue-history",
+        manifest.id,
+      );
+    const journal = await readFile(join(history, "journal.json"));
+    let changed = false;
+    const changedSource = f.raw.replace("First", "Other");
+    const result = await transcriptCatalogue(
+      { ...f.options, mode: "publish" },
+      {
+        ...f.dependencies,
+        afterOutput: async (path) => {
+          if (!changed && path === join(history, "journal.json")) {
+            changed = true;
+            await writeFile(f.sourcePath, changedSource);
+          }
+        },
+      },
+    );
+    assert.equal(changed, true);
+    assert.equal(result.checks[0].code, "CATALOGUE_INPUT_CHANGED");
+    assert.equal(result.evidence.written, 0);
+    assert.equal(result.evidence.promoted, 0);
+    assert.deepEqual(await readFile(join(history, "journal.json")), journal);
+    assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+    assert.equal(await readFile(f.sourcePath, "utf8"), changedSource);
+    if (boundary === "new-stage") {
+      for (const name of ["index.md", "complete.json"])
+        await assert.rejects(readFile(join(history, name)), { code: "ENOENT" });
+      assert.equal(
+        (await readdir(history)).some((name) => name.includes(".part-")),
+        false,
+      );
+    }
+  });
+
+test("explicit repeated publication retains full per-course/global snapshots with fewer synthetic checks", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  const repeated = await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies);
+  assert.equal(repeated.status, "passed");
+  assert.equal(repeated.evidence.written, 0);
+  assert.equal(repeated.evidence.promoted, 0);
+  assert.equal(repeated.evidence.snapshotChecks, 2 + 2 * f.config.courses.length);
+  assert.ok(repeated.evidence.snapshotInputChecks > 0);
+  assert.ok(repeated.evidence.snapshotScans > 0);
+  assert.equal(repeated.evidence.reads.timeoutMs, 120000);
+});
+
+test("positive reuse preserves foreign edited history and refuses parent retarget before staging", async (t) => {
+  for (const kind of ["history-index", "complete", "history-parent"]) {
+    const f = await fixture(t);
+    assert.equal(
+      (await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies)).status,
+      "passed",
+    );
+    const manifest = JSON.parse(await readFile(f.catalogue)),
+      history = join(
+        f.config.courses[0].destination,
+        "Transcript editions/.catalogue-history",
+        manifest.id,
+      ),
+      index = await readFile(f.index);
+    let editedPath;
+    const dependencies = { ...f.dependencies };
+    if (kind === "history-parent") {
+      let acted = false;
+      dependencies.createCapacity = async () => ({
+        check: async (request) => {
+          if (acted || request.path !== join(history, "journal.json")) return;
+          acted = true;
+          await rename(history, history + ".retained");
+          await symlink(history + ".retained", history);
+        },
+      });
+    } else {
+      editedPath = join(history, kind === "history-index" ? "index.md" : "complete.json");
+      await writeFile(editedPath, "Student foreign history bytes");
+    }
+    const refused = await transcriptCatalogue({ ...f.options, mode: "publish" }, dependencies);
+    assert.equal(refused.status, "failed");
+    assert.equal(refused.evidence.written, 0);
+    assert.equal(refused.evidence.promoted, 0);
+    assert.deepEqual(await readFile(f.index), index);
+    if (editedPath)
+      assert.equal(await readFile(editedPath, "utf8"), "Student foreign history bytes");
+    else assert.ok((await readdir(history + ".retained")).includes("journal.json"));
+    assert.equal(
+      (await readdir(kind === "history-parent" ? history + ".retained" : history)).some((name) =>
+        name.includes(".part-"),
+      ),
+      false,
+    );
+    assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  }
+});
+
+test("existing output reserve callback profile retarget refuses before byte reuse", async (t) => {
+  const f = await fixture(t);
+  f.config.profilePath = join(f.root, "profile");
+  await mkdir(f.config.profilePath);
+  const alternate = join(f.root, "alternate-profile");
+  await mkdir(alternate);
+  const options = { config: f.config, manifestPath: join(f.root, "profile-catalogue.json") };
+  assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+  assert.equal(
+    (await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  const index = await readFile(f.index);
+  let acted = false;
+  const refused = await transcriptCatalogue(
+    { ...options, mode: "publish" },
+    {
+      ...f.dependencies,
+      createCapacity: async () => ({
+        check: async (request) => {
+          if (acted || !request.path?.endsWith("journal.json")) return;
+          acted = true;
+          await rename(f.config.profilePath, f.config.profilePath + ".retained");
+          await symlink(alternate, f.config.profilePath);
+        },
+      }),
+    },
+  );
+  assert.equal(acted, true);
+  assert.equal(refused.checks[0].code, "CATALOGUE_PROFILE_BOUNDARY");
+  assert.equal(refused.evidence.written, 0);
+  assert.equal(refused.evidence.promoted, 0);
+  assert.deepEqual(await readFile(f.index), index);
+});
+
+test("descriptor-bound existing journal identity refuses identical replacement after positive byte read", async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  const manifest = JSON.parse(await readFile(f.catalogue)),
+    target = manifest.targets[0],
+    path = join(
+      f.config.courses[0].destination,
+      "Transcript editions/.catalogue-history",
+      manifest.id,
+      "journal.json",
+    );
+  const { catalogueReads } = await import("../src/media/catalogue-files.mjs");
+  const { publishCatalogueTarget } = await import("../src/media/catalogue-publication.mjs");
+  const reads = catalogueReads(),
+    originalRead = reads.read;
+  let replaced = false;
+  reads.read = async (candidate, options) => {
+    const file = await originalRead(candidate, options);
+    if (!replaced && candidate === path && options?.includeIdentity) {
+      replaced = true;
+      await rename(path, path + ".retained");
+      await writeFile(path, file.content);
+    }
+    return file;
+  };
+  const progress = { written: 0, existing: 0, promoted: 0 },
+    before = await readFile(path);
+  await assert.rejects(
+    publishCatalogueTarget({
+      target,
+      planId: manifest.id,
+      reads,
+      progress,
+      check: async () => {},
+      checkCapacity: async () => {},
+      checkExisting: async () => {},
+    }),
+    { code: "RECOVERY_INPUT_CHANGED" },
+  );
+  assert.equal(replaced, true);
+  assert.equal(progress.written, 0);
+  assert.equal(progress.promoted, 0);
+  assert.deepEqual(await readFile(path), before);
+  assert.deepEqual(await readFile(path + ".retained"), before);
 });
