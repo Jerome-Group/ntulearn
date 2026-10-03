@@ -71,12 +71,43 @@ Acquired artifacts are additive. Withdrawal upstream stops unfinished work after
 removes nothing already held; successful video, audio and transcript artifacts are never cleaned
 up automatically.
 
+## Admitted probe settlement and retained ownership
+
+A probe deadline bounds observation rather than proving filesystem settlement. Artifact/alias and
+capacity probes keep their existing deadlines, then separately await admitted I/O and descriptor
+closure for a bounded interval. Pending or failed cleanup stops the worker and retains durable
+admission evidence; late settlement cannot silently rearm acquisition. A positively settled expired
+probe retains its original timeout. This does not establish physical I/O cancellation or explain a
+historical stop whose cause was not retained.
+
+Every lock entrypoint first creates an exclusive, synced, positively closed own admission marker
+before probing foreign lock metadata. Pending probe cleanup retains that marker until a durable
+barrier is positively stored; barrier-write uncertainty cannot silently drop admission containment.
+Normal held-lock results remove only their token/inode-bound marker after positive settlement.
+Successful acquisition transfers protection to a durably armed queue owner before removal.
+Initial marker creation uncertainty requires failed external containment before any foreign probe;
+this does not prove physical I/O cancellation. Health/status observe fixed marker metadata only.
+
+New queue owners create a synced, positively closed fixed safety marker before any action. If a
+cleanup barrier cannot be stored or lock ownership/storage becomes uncertain, the lock remains.
+An armed owner surviving an unclean exit likewise needs Owner-qualified recovery, even after 48
+hours. Unknown owner metadata or marker observations cannot authorize stale reclamation. Only
+positively recognized legacy stale owners retain the previous reclamation policy. The stricter
+unclean-exit rule is necessary because writing a retention marker after storage fails cannot prove
+that the marker exists. Lock presence proves admission refusal, never an active process or cessation.
+
+The Owner must establish owned activity cessation and stable storage/evidence before explicitly
+removing a positively bound abandoned lock. No command automatically clears these markers or
+weakens source review/validation to recover. Refused/global-stop summaries retain cached queue
+counts with artifact verification explicitly unrun; they grant no new readiness evidence.
+
 ## Consequences
 
 - The codebase gains a second workflow and completeness axis rather than making `sync` unbounded.
 - Content-tree player media may consume Drive space; Media Gallery media consumes RAID0 space.
 - Private state may be deleted without losing meaning: source digests and non-secret recording
-  references in the artifacts reconstruct completed work.
+  references in the artifacts reconstruct completed work. Retained cleanup barriers and armed
+  owner receipts are admission evidence and require qualified recovery before deletion.
 - New provider shapes fail loudly as unsupported until research supplies an adapter.
 
 ## Revisit when

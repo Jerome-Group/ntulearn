@@ -274,7 +274,11 @@ function artifactRoot({ root, appearance, kind }) {
   return visible ? resolve(appearance.placement.destination) : root;
 }
 
-export async function assertMediaArtifactPath(path, root) {
+export async function assertMediaArtifactPath(
+  path,
+  root,
+  { active = () => {}, inspect = lstat } = {},
+) {
   const target = resolve(path);
   const boundary = resolve(root);
   if (target === boundary || !target.startsWith(`${boundary}${sep}`)) {
@@ -282,10 +286,12 @@ export async function assertMediaArtifactPath(path, root) {
   }
   let current = target;
   while (true) {
-    const info = await lstat(current).catch((error) => {
+    active();
+    const info = await inspect(current).catch((error) => {
       if (error.code === "ENOENT") return null;
       throw markGlobalMediaSafety(error);
     });
+    active();
     if (info?.isSymbolicLink()) {
       throw markGlobalMediaSafety(
         new Error(

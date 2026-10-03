@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
+import { mediaSafetyPath } from "../src/media/safety.mjs";
 import { runMediaProcess } from "../src/media/process.mjs";
 import { readMediaQueue, writeMediaQueue, updateMediaQueueJob } from "../src/media/queue.mjs";
 import {
@@ -663,7 +664,12 @@ test("records an overlapping run without starting another provider job", async (
   });
 
   assert.equal(digest.verdict, "yellow");
-  assert.match(digest.message, /another run is active/i);
+  assert.match(digest.message, /existing lock prevents admission/i);
+  assert.deepEqual(digest.admissionRefusal, {
+    code: "MEDIA_QUEUE_LOCK_HELD",
+    ownership: "unconfirmed",
+    action: "await-owned-settlement-or-owner-qualified-recovery",
+  });
 });
 
 test("keeps an explicit terminal failure red without retrying it", async () => {
@@ -958,7 +964,7 @@ test("cancels scratch growth globally and preserves the next queued appearance",
   assert.equal(held[1].lastError ?? null, null);
 });
 
-test("bounds an unresolved pre-job capacity probe, persists red, and recovers", async () => {
+test("unresolved pre-job capacity probe retains cleanup barrier and refuses later admission", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-media-capacity-unresolved-"));
   const statePath = join(root, "state.json");
   await writeQueue(statePath, COURSE, ["first", "next"]);
@@ -987,11 +993,18 @@ test("bounds an unresolved pre-job capacity probe, persists red, and recovers", 
   assert.equal(digest.verdict, "red");
   assert.deepEqual(acquired, []);
   const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
-  assert.match(held[0].lastError, /timed out.*retry/);
+  assert.equal(held[0].safetyFailure, "MEDIA_FILE_CLEANUP");
+  assert.equal(held[0].retryable, false);
   assert.equal(held[1].attempts ?? 0, 0);
+  assert.equal(
+    JSON.parse(await readFile(mediaSafetyPath(statePath), "utf8")).code,
+    "MEDIA_FILE_CLEANUP",
+  );
+  await unlink(mediaSafetyPath(statePath)); // Synthetic latch loss must not clear durable queue evidence.
   probe = async () => {};
-  await runMediaQueue(options);
-  assert.deepEqual(acquired, ["first", "next"]);
+  const refused = await runMediaQueue(options);
+  assert.equal(refused.globalStop, true);
+  assert.deepEqual(acquired, []);
 });
 
 test("bounds an unresolved final job capacity probe without crediting completion", async () => {
@@ -1022,7 +1035,8 @@ test("bounds an unresolved final job capacity probe without crediting completion
   assert.equal(digest.verdict, "red");
   assert.equal(digest.globalStop, true);
   const held = (await readMediaQueue({ statePath, courseKey: COURSE.key })).record.queue;
-  assert.match(held[0].lastError, /timed out.*retry/);
+  assert.equal(held[0].safetyFailure, "MEDIA_FILE_CLEANUP");
+  assert.equal(held[0].retryable, false);
   assert.equal(held[0].complete, false);
   assert.equal(held[1].attempts ?? 0, 0);
 });

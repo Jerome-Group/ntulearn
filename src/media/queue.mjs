@@ -380,9 +380,9 @@ function sanitizeJobState(update, { dropInvalidDurations = false } = {}) {
       if (typeof value !== "boolean") throw new Error(`Media queue ${field} must be boolean.`);
       safe[field] = value;
     } else if (field === "safetyFailure") {
-      if (!["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP"].includes(value))
+      if (!["MEDIA_PROCESS_CLEANUP", "MEDIA_BROWSER_CLEANUP", "MEDIA_FILE_CLEANUP"].includes(value))
         throw new Error(
-          "Media safety evidence must identify unconfirmed process or browser cleanup; inspect the retained barrier before recovery.",
+          "Media safety evidence must identify unconfirmed process, browser, or file cleanup; inspect the retained barrier before recovery.",
         );
       safe[field] = value;
     } else if (field === "attempts") {

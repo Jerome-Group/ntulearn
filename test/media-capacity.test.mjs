@@ -103,7 +103,7 @@ test("bounds unresolved space probes at initialization and subsequent checks, th
       },
     );
     const rejected = assert.rejects(running, {
-      code: "MEDIA_CAPACITY_TIMEOUT",
+      code: "MEDIA_FILE_CLEANUP",
       globalSafety: true,
     });
     await ready;
@@ -111,6 +111,9 @@ test("bounds unresolved space probes at initialization and subsequent checks, th
     await Promise.resolve();
     assert.equal(settled, false);
     t.mock.timers.tick(1);
+    for (let step = 0; step < 20; step++) await Promise.resolve();
+    assert.equal(settled, false);
+    t.mock.timers.tick(5000);
     await rejected;
   }
   await expiresAtDefaultDeadline(() => createMediaCapacity(media, options));

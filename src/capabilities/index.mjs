@@ -265,6 +265,8 @@ const routes = {
       "src/media/capacity.mjs",
       "src/media/capacity-monitor.mjs",
       "src/media/capacity-deadline.mjs",
+      "src/media/probe-settlement.mjs",
+      "src/media/lock-admission.mjs",
     ],
     [
       "test/media-worker.test.mjs",
@@ -282,6 +284,8 @@ const routes = {
       "test/media-capacity.test.mjs",
       "test/media-capacity-monitor.test.mjs",
       "test/media-capacity-deadline.test.mjs",
+      "test/media-probe-settlement.test.mjs",
+      "test/capability-media-admission.test.mjs",
     ],
   ],
   "media-runtime": [
@@ -343,6 +347,7 @@ const routes = {
       "src/capabilities/check-capture.mjs",
       "src/capabilities/check-evidence.mjs",
       "src/capabilities/health.mjs",
+      "src/capabilities/media-admission.mjs",
       "src/capabilities/status.mjs",
     ],
     [
@@ -352,6 +357,7 @@ const routes = {
       "test/capability-check-evidence.test.mjs",
       "test/capability-check-cli.test.mjs",
       "test/capability-health.test.mjs",
+      "test/capability-media-admission.test.mjs",
       "test/capability-status.test.mjs",
       "test/capability-contracts.test.mjs",
       "test/capability-result.test.mjs",
@@ -914,7 +920,14 @@ const commands = [
     "health",
     "capabilities",
     ["local-configuration"],
-    { reads: ["configuration", "filesystem-metadata", "runtime-manifest"] },
+    {
+      reads: [
+        "configuration",
+        "filesystem-metadata",
+        "runtime-manifest",
+        "private-admission-marker-metadata",
+      ],
+    },
     { kind: "health", output: "capability-result-v1", exitCodes: offlineCodes },
   ),
   command(
@@ -922,7 +935,15 @@ const commands = [
     "status",
     "capabilities",
     ["local-configuration"],
-    { reads: ["configuration", "local-queues", "sync-receipts", "local-digests"] },
+    {
+      reads: [
+        "configuration",
+        "local-queues",
+        "sync-receipts",
+        "local-digests",
+        "private-admission-marker-metadata",
+      ],
+    },
     { kind: "status", output: "capability-result-v1", exitCodes: offlineCodes },
   ),
   command(
@@ -1042,6 +1063,20 @@ export function capabilityIndex(selection) {
         : {}),
       ...(id === "media-worker"
         ? {
+            probeSafety: {
+              settlementMaximumMs: 5000,
+              settlementUsesShorterDeadline: true,
+              pendingOrFailedCleanup: "MEDIA_FILE_CLEANUP",
+              preprobeMarker: "media-lock-admission.json",
+              armedOwnerMarker: "safety-armed",
+              newArmedOwnerAutomaticStaleRearm: false,
+              legacyPolicy: "Only positively recognized legacy stale owners remain reclaimable.",
+              cachedSummary: { artifactVerification: "unrun", countsBasis: "retained-queue" },
+              recovery:
+                "Owner-qualified exact ownership, activity cessation and stable storage; no automatic clearing.",
+              limitations:
+                "Logical deadline/settlement observation does not prove physical cancellation; initial marker creation uncertainty requires external containment.",
+            },
             stopEvidence: {
               field: "stopFailures",
               fields: ["code", "stage"],

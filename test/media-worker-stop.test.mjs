@@ -343,13 +343,13 @@ test("fresh machine route describes current stop fields and their bounded author
   assert.match(feature.stopEvidence.safety, /no release/);
 });
 
-test("actual capacity deadline preserves its fixed timeout code without claiming pending probe settlement", async (t) => {
+test("unsettled capacity deadline reports file cleanup without hiding its capacity stage", async (t) => {
   const f = await fixture(t);
   const digest = await f.run({
     checkCapacity: async () => new Promise(() => {}),
     capacityCheckTimeoutMs: 20,
   });
-  assert.deepEqual(digest.stopFailures, [{ code: "MEDIA_CAPACITY_TIMEOUT", stage: "capacity" }]);
+  assert.deepEqual(digest.stopFailures, [{ code: "MEDIA_FILE_CLEANUP", stage: "capacity" }]);
   assert.equal(digest.verdict, "red");
 });
 
@@ -388,4 +388,46 @@ test("observed monitoring failure retains the capacity stage while a job is awai
   });
   assert.ok(probes >= 2);
   assert.deepEqual(digest.stopFailures, [{ code: "ENOSPC", stage: "capacity" }]);
+});
+
+test("positively settled expired capacity probe preserves the original timeout evidence", async (t) => {
+  const f = await fixture(t);
+  const digest = await f.run({
+    capacityCheckTimeoutMs: 20,
+    checkCapacity: () => new Promise((resolve) => globalThis.setTimeout(resolve, 30)),
+  });
+  assert.deepEqual(digest.stopFailures, [{ code: "MEDIA_CAPACITY_TIMEOUT", stage: "capacity" }]);
+  assert.equal(digest.globalStop, true);
+});
+
+test("global-stop untouched course counts are explicitly retained and artifact verification unrun", async (t) => {
+  const f = await fixture(t),
+    course = f.courses[1];
+  const directory = join(course.destination, "not-an-artifact.md");
+  await mkdir(directory, { recursive: true });
+  await updateMediaQueueJob({
+    statePath: f.statePath,
+    course,
+    courseKey: course.key,
+    recordingId: "fixture-recording",
+    update: {
+      complete: true,
+      stage: "complete",
+      transcript: { complete: true },
+      artifacts: { formattedTranscript: directory },
+    },
+  });
+  const digest = await f.run({
+    updateJob: async () => {
+      throw injectedError("EIO");
+    },
+  });
+  const run = await f.log(digest),
+    cached = run.courses[1];
+  assert.equal(digest.globalStop, true);
+  assert.equal(cached.completed, 1);
+  assert.equal(cached.artifactVerification, "unrun");
+  assert.equal(cached.countsBasis, "retained-queue");
+  assert.equal(cached.stopFailures, undefined);
+  assert.equal(cached.processed, 0);
 });

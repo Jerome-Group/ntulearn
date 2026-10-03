@@ -4,14 +4,22 @@ import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import { assertMediaArtifactPath, mediaRecordingRoot } from "./storage.mjs";
-import { markGlobalMediaSafety } from "./errors.mjs";
+import { markGlobalMediaSafety, unconfirmedMediaCleanupCode } from "./errors.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 import { withCapacityDeadline } from "./capacity-deadline.mjs";
+import { closeMediaProbeHandle } from "./probe-settlement.mjs";
+
+const EVIDENCE_IO = Object.freeze({ open, stat, assertPath: assertMediaArtifactPath });
 
 export async function mediaArtifactEvidenceUpdate(
   job,
-  { mediaRoot, course, resolveRoot = realpath } = {},
+  { mediaRoot, course, resolveRoot = realpath, io = EVIDENCE_IO, probeTimeoutMs = 5000 } = {},
 ) {
+  if (!Number.isSafeInteger(probeTimeoutMs) || probeTimeoutMs <= 0 || probeTimeoutMs > 5000)
+    throw new Error(
+      "Artifact evidence requires a positive probe deadline no longer than five seconds.",
+    );
+  const probe = { io, timeoutMs: probeTimeoutMs };
   if (job.safetyFailure !== undefined || !isMediaJobComplete(job)) return null;
   const artifacts = job.artifacts ?? {};
   const sourceRoot =
@@ -19,17 +27,17 @@ export async function mediaArtifactEvidenceUpdate(
   const destination = course?.destination;
   const raw =
     sourceRoot && artifacts.rawTranscript === resolve(sourceRoot, "transcript.raw.json")
-      ? await artifactBytes(artifacts.rawTranscript, mediaRoot)
+      ? await artifactBytes(artifacts.rawTranscript, mediaRoot, probe)
       : null;
-  const reference = await ownedFormattedReference(job, destination, resolveRoot);
-  const formatted = reference ? await artifactBytes(reference.path, reference.root) : null;
+  const reference = await ownedFormattedReference(job, destination, resolveRoot, probe);
+  const formatted = reference ? await artifactBytes(reference.path, reference.root, probe) : null;
   let sourceSha256 = job.sourceSha256;
   let formattedSha256 = job.formattedSha256;
   let aliasProof = !reference?.alias;
   if (raw && formatted && (reference?.alias || !sourceSha256 || !formattedSha256)) {
     const proofs = [];
     for (const filename of ["transcript.metadata.json", "transcript.state.json"]) {
-      const body = await artifactBytes(resolve(sourceRoot, filename), mediaRoot);
+      const body = await artifactBytes(resolve(sourceRoot, filename), mediaRoot, probe);
       let proof;
       try {
         proof = body ? JSON.parse(body.toString("utf8")) : null;
@@ -62,7 +70,8 @@ export async function mediaArtifactEvidenceUpdate(
     formattedSha256 ??= owned?.formattedSha256;
   }
   const bindingStable =
-    !reference?.alias || (await withCapacityDeadline(reference.unchanged, { timeoutMs: 5000 }));
+    !reference?.alias ||
+    (await withCapacityDeadline(reference.unchanged, { timeoutMs: probeTimeoutMs }));
   const sourceChanged = raw && sourceSha256 && digest(raw) !== sourceSha256;
   const formattedChanged = formatted && formattedSha256 && digest(formatted) !== formattedSha256;
   const proofMissing = raw && formatted && (!sourceSha256 || !formattedSha256);
@@ -105,7 +114,7 @@ export async function mediaArtifactEvidenceUpdate(
   };
 }
 
-async function ownedFormattedReference(job, destination, resolveRoot) {
+async function ownedFormattedReference(job, destination, resolveRoot, { io, timeoutMs }) {
   const path = job.artifacts?.formattedTranscript;
   if (
     typeof destination !== "string" ||
@@ -130,11 +139,14 @@ async function ownedFormattedReference(job, destination, resolveRoot) {
   )
     return null;
   return withCapacityDeadline(
-    async () => {
+    async (active) => {
       let actual, info;
       try {
+        active();
         actual = await resolveRoot(root);
+        active();
         if ((await resolveRoot(recorded)) !== actual) return null;
+        active();
         if (
           ![
             resolve(recorded, relative),
@@ -143,43 +155,56 @@ async function ownedFormattedReference(job, destination, resolveRoot) {
           ].includes(target)
         )
           return null;
-        info = await stat(actual);
+        info = await io.stat(actual);
+        active();
         if (!info.isDirectory()) return null;
-      } catch {
+      } catch (error) {
+        if (unconfirmedMediaCleanupCode(error)) throw error;
         return null;
       }
       const canonical = resolve(actual, relative);
-      await assertMediaArtifactPath(canonical, actual);
-      const unchanged = async () => {
+      active();
+      await io.assertPath(canonical, actual, { active });
+      active();
+      const unchanged = async (checkActive) => {
         try {
-          if ((await resolveRoot(recorded)) !== actual || (await resolveRoot(root)) !== actual)
-            return false;
-          const now = await stat(actual);
+          checkActive();
+          if ((await resolveRoot(recorded)) !== actual) return false;
+          checkActive();
+          if ((await resolveRoot(root)) !== actual) return false;
+          checkActive();
+          const now = await io.stat(actual);
+          checkActive();
           return now.dev === info.dev && now.ino === info.ino;
-        } catch {
+        } catch (error) {
+          if (unconfirmedMediaCleanupCode(error)) throw error;
           return false;
         }
       };
       return { path: canonical, root: actual, alias: true, unchanged };
     },
-    { timeoutMs: 5000 },
+    { timeoutMs },
   );
 }
 
-async function artifactBytes(path, root) {
+async function artifactBytes(path, root, { io, timeoutMs }) {
   if (typeof path !== "string" || !path.startsWith("/") || /[\0\r\n]|:\/\//.test(path)) return null;
   const target = resolve(path);
   const boundary = resolve(root);
   if (!target.startsWith(`${boundary}${sep}`)) return null;
   return withCapacityDeadline(
-    async () => {
-      await assertMediaArtifactPath(target, boundary);
-      const handle = await open(
+    async (active) => {
+      active();
+      await io.assertPath(target, boundary, { active });
+      active();
+      const handle = await io.open(
         target,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
       );
       try {
+        active();
         const before = await handle.stat();
+        active();
         if (!before.isFile() || before.size > 32 * 1024 ** 2)
           throw new Error("Artifact evidence is not a bounded regular file.");
         if (!before.size) return null;
@@ -187,16 +212,22 @@ async function artifactBytes(path, root) {
           buffer = Buffer.alloc(64 * 1024);
         let bytes = 0;
         while (true) {
+          active();
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+          active();
           if (!bytesRead) break;
           bytes += bytesRead;
           if (bytes > before.size) throw new Error("Artifact evidence grew during verification.");
           parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
         }
         const body = Buffer.concat(parts);
+        active();
         const after = await handle.stat();
-        await assertMediaArtifactPath(target, boundary);
-        const current = await stat(target);
+        active();
+        await io.assertPath(target, boundary, { active });
+        active();
+        const current = await io.stat(target);
+        active();
         if (
           body.length !== before.size ||
           after.mtimeMs !== before.mtimeMs ||
@@ -208,10 +239,10 @@ async function artifactBytes(path, root) {
           throw new Error("Artifact evidence changed during verification.");
         return body;
       } finally {
-        await handle.close();
+        await closeMediaProbeHandle(handle);
       }
     },
-    { timeoutMs: 5000 },
+    { timeoutMs },
   ).catch((error) => {
     if (error.code === "ENOENT") return null;
     const failure = new Error(

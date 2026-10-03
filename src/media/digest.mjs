@@ -21,6 +21,7 @@ export async function persistMediaDigest({
   courses,
   counts,
   globalStop,
+  lockRefused = false,
   stopFailures,
   stoppedAtBoundary,
   interrupted = false,
@@ -40,6 +41,15 @@ export async function persistMediaDigest({
     finishedAt: finishedAt.toISOString(),
     durationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
     globalStop,
+    ...(lockRefused === true
+      ? {
+          admissionRefusal: {
+            code: "MEDIA_QUEUE_LOCK_HELD",
+            ownership: "unconfirmed",
+            action: "await-owned-settlement-or-owner-qualified-recovery",
+          },
+        }
+      : {}),
     ...(globalStop ? { stopFailures: workerStopEvidence(stopFailures) } : {}),
     stoppedAtBoundary,
     interrupted,
@@ -61,6 +71,7 @@ export async function persistMediaDigest({
     runLog,
     counts: run.counts,
     globalStop,
+    ...(run.admissionRefusal ? { admissionRefusal: run.admissionRefusal } : {}),
     ...(globalStop ? { stopFailures: run.stopFailures } : {}),
     stoppedAtBoundary,
     interrupted,

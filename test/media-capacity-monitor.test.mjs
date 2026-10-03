@@ -69,7 +69,7 @@ test("bounds shutdown of an unresolved probe and reports a late rejection only o
   ]);
   assert.equal(failures.length, 1);
   assert.equal(failures[0].globalSafety, true);
-  assert.match(failures[0].message, /timed out.*retry/);
+  assert.equal(failures[0].code, "MEDIA_FILE_CLEANUP");
   rejectLate(new Error("late underlying filesystem rejection"));
   await Promise.resolve();
   await Promise.resolve();

@@ -179,8 +179,8 @@ test("media withdrawal serializes its transaction and retries without losing che
       );
       assert.equal(result.code, 1);
       assert.equal(result.stdout, "");
-      assert.match(result.stderr, /Another media queue run holds/);
-      assert.match(result.stderr, /Wait for the active run to finish, then retry/);
+      assert.match(result.stderr, /An existing media queue lock prevents admission/);
+      assert.match(result.stderr, /Confirm owned-run settlement/);
       assert.deepEqual(await readFile(at.queuePath), before);
       assert.deepEqual(await readdir(at.destination), files);
       assert.deepEqual(await readFile(ownerPath), owner);

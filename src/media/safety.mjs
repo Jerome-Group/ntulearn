@@ -32,15 +32,21 @@ export async function assertMediaSafetyAdmission({
   throw admissionFailure();
 }
 
-export async function persistMediaSafetyBarrier({ statePath, error, now = () => new Date() }) {
+export async function persistMediaSafetyBarrier({
+  statePath,
+  error,
+  now = () => new Date(),
+  createDirectory = mkdir,
+  openBarrier = open,
+}) {
   const code = unconfirmedMediaCleanupCode(error);
   if (!code) return;
   const path = mediaSafetyPath(statePath);
   let handle;
   try {
-    await mkdir(dirname(path), { recursive: true });
+    await createDirectory(dirname(path), { recursive: true });
     try {
-      handle = await open(
+      handle = await openBarrier(
         path,
         constants.O_WRONLY |
           constants.O_CREAT |
@@ -68,7 +74,23 @@ export async function persistMediaSafetyBarrier({ statePath, error, now = () => 
       ),
     );
   } finally {
+    await closeBarrier(handle);
+  }
+}
+
+async function closeBarrier(handle) {
+  try {
     await handle?.close();
+  } catch (cause) {
+    throw markGlobalMediaSafety(
+      Object.assign(
+        new Error(
+          "Media safety barrier descriptor closure is unconfirmed. Retain external containment and inspect storage before any retry.",
+          { cause },
+        ),
+        { code: "MEDIA_SAFETY_BARRIER_WRITE" },
+      ),
+    );
   }
 }
 
