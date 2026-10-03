@@ -120,7 +120,7 @@ export async function transcriptCatalogue(
         )
       )
         throw catalogueFailure("CATALOGUE_MANIFEST_PATH");
-      const content = json(manifest);
+      const content = JSON.stringify(manifest) + "\n";
       if (Buffer.byteLength(content) > HISTORICAL_LIMITS.fileBytes)
         throw catalogueFailure("CATALOGUE_LIMIT");
       catalogueJson({ content: Buffer.from(content) });
