@@ -67,3 +67,13 @@ test("source recovery separates read-only planning, private ASR candidates and O
   assert.equal(route.output, "capability-result-v1");
   assert.equal(route.machineInvocation, "npm run --silent media:recover");
 });
+
+test("production transcript route exposes zero-model formatting and durable review policy", () => {
+  const { formatting } = capabilityIndex("transcripts").features[0];
+  assert.equal(formatting.version, "source-paragraphs-v1");
+  assert.equal(formatting.modelCalls, 0);
+  assert.equal(formatting.reviewRequired.complete, false);
+  assert.equal(formatting.reviewRequired.retryable, false);
+  assert.equal(formatting.reviewRequired.queueOnlyClear, false);
+  assert.match(formatting.limitations, /acoustic/);
+});

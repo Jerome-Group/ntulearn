@@ -243,13 +243,27 @@ buffering. Caption capture failures remain visible while local ASR can supply a 
 browser reads have a logical drain deadline; the production client closes its owned page, without
 claiming physical I/O cancellation or universal process cleanup.
 
-The current formatter changes presentation only: punctuation, paragraph breaks and Markdown
-emphasis or list markers must preserve ordered source words, spelling, case, numbers, symbols and
-code-switching. It leaves recognition errors and spoken mathematics intact rather than inferring
-corrections or notation. Unsupported edits fall back to source wording and report the limitation.
-These lexical checks do not prove semantic equivalence or acoustic fidelity; changing the prompt
-alone does not establish improved model quality.
-The pinned formatter CLI mixes its display banner and rendered input into stdout, even when
+Ordinary production formatting uses bounded deterministic `source-paragraphs-v1` paragraphs, with
+no formatting model calls. It preserves source words, spelling, case, numbers, operators,
+code-switching, supported source speaker annotations, literal clock text and uncertainty. Native
+and raw segment timestamps stay in their original source; no heading, speaker or correction is
+invented. Source digests and formatter version still identify the separate derivative. Existing
+successful derivatives and user edits retain their ownership protections.
+
+Empty/banner/payload/control text and suspicious repetition require source review. Retained
+native/raw/media artifacts remain distinct from unavailable or unready formatted text; status and
+queue evidence expose review flags, `complete: false` and `retryable: false`. Routine work cannot
+clear or rearm those flags through a queue-only change. Review flags may have false positives;
+they permit no deletion, correction or automatic re-transcription. Use explicit source-preserving
+recovery for independently validated fresh candidates. Historical suspicious sources still require
+that review; paragraph readability proves no acoustic accuracy, fidelity or completeness.
+`npm run --silent capabilities -- transcripts` exposes the production policy and offline regression
+routes. Synthetic costs/model-call counts do not establish production throughput.
+
+Explicit local model evaluation retains its model formatter. Unsupported model edits fall back to
+source wording with limitations; lexical checks do not prove semantic equivalence. Runtime/model
+pins, reserve checks and Owner-started setup/install restrictions remain unchanged. The pinned
+formatter CLI mixes its display banner and rendered input into stdout, even when
 prompt display is disabled. Formatting therefore requires a separate assistant record with the
 exact known input prefix; ambiguous or missing records preserve source wording. This separates
 CLI display from candidate acquisition without relaxing transcript checks or proving model quality.

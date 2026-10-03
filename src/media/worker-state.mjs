@@ -11,7 +11,7 @@ export function resultUpdate(result, finishedAt) {
     complete,
     stage: stage ?? (complete ? "complete" : "failed"),
     verdict: complete ? (result.verdict ?? "green") : "red",
-    retryable: result.retryable ?? !complete,
+    retryable: requiresSourceReview(result) ? false : (result.retryable ?? !complete),
     limitations: safeLimitations(result.limitations, result.limitation),
     ...(result.provider ? { providerName: result.provider } : {}),
     ...(result.providerName ? { providerName: result.providerName } : {}),
@@ -57,6 +57,7 @@ export function checkpointUpdate({
       ? failureUpdate(failure, finishedAt)
       : resultUpdate(result ?? { complete: false }, finishedAt);
   if (base.safetyFailure) return base;
+  if (requiresSourceReview(base)) return { ...base, stage: "failed", retryable: false };
   return {
     ...base,
     complete: false,
@@ -72,11 +73,16 @@ export function checkpointUpdate({
 
 export function finishedJob(job) {
   return (
+    requiresSourceReview(job) ||
     job?.withdrawn === true ||
     job?.stage === "withdrawn" ||
     (job?.stage === "failed" && job?.retryable === false) ||
     isMediaJobComplete(job)
   );
+}
+
+function requiresSourceReview(job) {
+  return job?.transcript?.reviewRequired === true || Boolean(job?.transcript?.flags?.length);
 }
 
 export function artifactPaths(artifacts) {

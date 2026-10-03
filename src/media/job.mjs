@@ -2,9 +2,10 @@ import { createMediaArtifacts, restoreMedia } from "./artifacts.mjs";
 import { isGlobalMediaSafetyFailure, publicMediaError } from "./errors.mjs";
 import { providerForRecording } from "./external.mjs";
 import { createMediaOutcome } from "./outcome.mjs";
-import { parseProviderTranscript, validateTranscript } from "./transcript.mjs";
+import { parseProviderTranscript, validateTranscript, normalizeTranscript } from "./transcript.mjs";
 import { positiveDuration } from "./duration.mjs";
 import { safeNativeTranscriptBody } from "./native-transcript-safety.mjs";
+import { SOURCE_REVIEW_ACTION, validateSourceReviewFlags } from "./source-paragraphs.mjs";
 
 const REGENERATION_LIMITATION = "Formatted transcript needs explicit regeneration (agent-led).";
 
@@ -26,7 +27,8 @@ export async function runMediaJob({
   throwIfInterrupted(signal);
   const limitations = mediaLimitations(appearance);
   const activeProvider = provider ?? providerForRecording({ appearance, adapters });
-  let retryable = appearance.retryable === true;
+  let retryable = typeof appearance.retryable === "boolean" ? appearance.retryable : undefined;
+  let sourceReview = [];
   const artifacts = {};
   let providerName = appearance.providerName ?? activeProvider.name;
   const formatterVersion = nonEmpty(formatter?.version);
@@ -56,6 +58,7 @@ export async function runMediaJob({
       Object.assign(artifacts, existing.artifacts);
       providerName = existing.metadata?.provider ?? providerName;
       media = restoreMedia(existing.metadata?.media);
+      sourceReview = existing.metadata?.sourceReview ?? [];
       limitations.push(
         ...(Array.isArray(existing.metadata?.limitations) ? existing.metadata.limitations : []),
       );
@@ -64,7 +67,7 @@ export async function runMediaJob({
       }
     }
 
-    if (!existing || existing.replaceRawTranscript || !acquiredMedia) {
+    if (!sourceReview.length && (!existing || existing.replaceRawTranscript || !acquiredMedia)) {
       try {
         resolved = await activeProvider.resolve(appearance, { signal });
         limitations.push(...mediaLimitations(resolved));
@@ -98,6 +101,10 @@ export async function runMediaJob({
           }
 
           if (providerBody !== undefined) {
+            if (typeof formatter?.inspectNative === "function")
+              sourceReview = validateSourceReviewFlags(
+                formatter.inspectNative(providerBody, signal),
+              );
             artifacts.providerTranscript = await storage.write({
               appearance,
               kind: "provider-transcript",
@@ -107,12 +114,30 @@ export async function runMediaJob({
 
             try {
               const parsed = parseProviderTranscript(nativeTranscript);
+              if (typeof formatter?.inspect === "function")
+                sourceReview = [
+                  ...new Set([
+                    ...sourceReview,
+                    ...validateSourceReviewFlags(formatter.inspect(parsed, signal)).filter(
+                      (flag) => flag !== "invalid-source-structure",
+                    ),
+                  ]),
+                ];
               const checked = validateTranscript(parsed, {
                 duration,
                 speechDuration,
               });
               if (checked.valid) source = checked.transcript;
-              else limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+              else {
+                if (sourceReview.length) {
+                  try {
+                    source = normalizeTranscript(parsed);
+                  } catch {
+                    /* Native evidence remains retained when no canonical source can be made. */
+                  }
+                }
+                limitations.push(`Provider transcript rejected: ${checked.reason}.`);
+              }
             } catch (error) {
               throwIfGlobalSafety(error);
               throwIfInterrupted(signal);
@@ -129,7 +154,7 @@ export async function runMediaJob({
           const acquired = await activeProvider.media(resolved, { signal });
           throwIfInterrupted(signal);
           if (acquired?.kind === "video" || acquired?.kind === "audio") {
-            retryable ||= acquired.retryable === true;
+            retryable = acquired.retryable ?? retryable;
             limitations.push(...mediaLimitations(acquired));
             ({ acquiredMedia, media } = await retainMedia({
               appearance,
@@ -139,7 +164,7 @@ export async function runMediaJob({
               acquired,
             }));
           } else {
-            retryable ||= acquired?.retryable === true;
+            retryable = acquired?.retryable ?? retryable;
             limitations.push(...mediaLimitations(acquired, "Provider returned no usable media."));
           }
         } catch (error) {
@@ -158,7 +183,7 @@ export async function runMediaJob({
           throw new Error("Browser playback capture interrupted; retry after the checkpoint.");
         }
         if (captured?.kind === "video" || captured?.kind === "audio") {
-          retryable ||= captured.retryable === true;
+          retryable = captured.retryable ?? retryable;
           limitations.push(...mediaLimitations(captured));
           ({ acquiredMedia, media } = await retainMedia({
             appearance,
@@ -169,7 +194,7 @@ export async function runMediaJob({
           }));
         } else {
           captureFailed = true;
-          retryable ||= captured?.retryable === true;
+          retryable = captured?.retryable ?? retryable;
           limitations.push(
             ...mediaLimitations(captured, "Browser playback capture returned no usable media."),
           );
@@ -183,7 +208,7 @@ export async function runMediaJob({
       }
     }
 
-    if (!source) {
+    if (!source && !sourceReview.length) {
       const generated = await generateLocalTranscript({
         appearance,
         transcriber,
@@ -196,6 +221,40 @@ export async function runMediaJob({
       source = generated.source;
       asrReleased = generated.released;
       limitations.push(...generated.limitations);
+    }
+
+    if (source?.sourceKind !== "non-speech" && source && typeof formatter?.inspect === "function")
+      sourceReview = [
+        ...new Set([
+          ...sourceReview,
+          ...validateSourceReviewFlags(formatter.inspect(source, signal)),
+        ]),
+      ];
+
+    if (sourceReview.length) {
+      if (source && !artifacts.rawTranscript) {
+        const raw = await artifactsStore.writeSource(source);
+        artifacts.rawTranscript = raw.artifact;
+        sourceSha256 = raw.sourceSha256;
+      }
+      limitations.push(`${SOURCE_REVIEW_ACTION} Flags: ${sourceReview.join(", ")}.`);
+      return outcome.persist({
+        providerName,
+        media,
+        source,
+        sourceSha256,
+        artifacts,
+        limitations,
+        complete: false,
+        stage: "failed",
+        retryable: false,
+        sourceReview,
+        formatterVersion,
+        transcriber,
+        existingMetadata,
+        duration,
+        speechDuration,
+      });
     }
 
     if (source && existing?.artifacts.formattedTranscript) {
@@ -223,7 +282,7 @@ export async function runMediaJob({
         limitations,
         complete: !captureFailed,
         stage: captureFailed ? "red" : "complete",
-        retryable: retryable || undefined,
+        retryable,
         formatterVersion: existing.metadata?.formatterVersion ?? formatterVersion,
         existingMetadata: existing.metadata,
         duration,
@@ -257,6 +316,27 @@ export async function runMediaJob({
                   })
                 : null;
           if (!formatted) throw new Error("ASR resources were not released before formatting");
+          if (formatted.reviewRequired) {
+            sourceReview = validateSourceReviewFlags(formatted.flags, { required: true });
+            limitations.push(`${SOURCE_REVIEW_ACTION} Flags: ${sourceReview.join(", ")}.`);
+            return outcome.persist({
+              providerName,
+              media,
+              source,
+              sourceSha256,
+              artifacts,
+              limitations,
+              complete: false,
+              stage: "failed",
+              retryable: false,
+              sourceReview,
+              formatterVersion,
+              transcriber,
+              existingMetadata,
+              duration,
+              speechDuration,
+            });
+          }
           if (Array.isArray(formatted?.limitations)) limitations.push(...formatted.limitations);
           throwIfInterrupted(signal);
           artifacts.formattedTranscript = await artifactsStore.writeFormatted({
@@ -289,7 +369,7 @@ export async function runMediaJob({
             limitations,
             complete: !captureFailed,
             stage: captureFailed ? "red" : "complete",
-            retryable: retryable || undefined,
+            retryable,
             formatterVersion:
               source.sourceKind === "non-speech" ? "not used for non-speech" : formatterVersion,
             transcriber,
@@ -316,7 +396,7 @@ export async function runMediaJob({
       limitations,
       complete: false,
       stage: failureStage(limitations, captureFailed),
-      retryable: retryable || undefined,
+      retryable,
       formatterVersion,
       transcriber,
       existingMetadata,

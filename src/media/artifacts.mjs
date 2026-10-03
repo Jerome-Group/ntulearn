@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { basename } from "node:path";
 import {
   assertFormattedTranscript,
   rawTranscriptJson,
@@ -6,6 +7,7 @@ import {
   validateTranscript,
 } from "./transcript.mjs";
 import { positiveDuration } from "./duration.mjs";
+import { validateSourceReviewFlags } from "./source-paragraphs.mjs";
 
 export function createMediaArtifacts({ appearance, storage }) {
   return {
@@ -108,15 +110,29 @@ async function readExistingTranscript({ appearance, storage, regenerate }) {
         }
       : {}),
     ...(parsedMetadata ?? {}),
+    ...(state?.recordingId === appearance.recordingId && state?.transcript?.reviewRequired === true
+      ? { sourceReview: validateSourceReviewFlags(state.transcript.flags, { required: true }) }
+      : {}),
   };
   const mediaPath =
     state?.artifacts?.media ?? metadata.media?.video?.path ?? metadata.media?.audio?.path ?? null;
   const mediaArtifact = mediaPath ? { path: mediaPath, status: "existing" } : null;
+  let providerTranscript = null;
+  if (metadata.sourceReview?.length && typeof state?.artifacts?.providerTranscript === "string") {
+    providerTranscript = await storage.read({
+      appearance,
+      kind: "provider-transcript",
+      filename: basename(state.artifacts.providerTranscript),
+    });
+    if (providerTranscript && providerTranscript.path !== state.artifacts.providerTranscript)
+      throw new Error("Retained native source authority changed; inspect source review evidence.");
+  }
   const existingArtifacts = {
     ...(rawTranscript ? { rawTranscript } : {}),
     ...(mediaArtifact ? { media: mediaArtifact } : {}),
     ...(parsedMetadata ? { metadata: metadataArtifact } : {}),
     ...(stateArtifact ? { state: stateArtifact } : {}),
+    ...(providerTranscript ? { providerTranscript } : {}),
   };
   const retainedMedia = retainedMediaFromEvidence(state, metadata.media);
 
@@ -200,6 +216,8 @@ async function readExistingTranscript({ appearance, storage, regenerate }) {
     retainedMedia,
     artifacts: {
       rawTranscript,
+      ...(mediaArtifact ? { media: mediaArtifact } : {}),
+      ...(providerTranscript ? { providerTranscript } : {}),
       ...(formattedTranscript ? { formattedTranscript } : {}),
       ...(metadataIsCurrent ? { metadata: metadataArtifact } : {}),
       ...(stateArtifact ? { state: stateArtifact } : {}),
