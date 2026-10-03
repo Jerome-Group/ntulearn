@@ -73,6 +73,20 @@ jobs and artifacts, adds no partial jobs, and persists its latest red/incomplete
 refuses that course until discovery recovers; previously successful queue evidence cannot prove
 current coverage.
 
+`media:discover` reads enabled courses in separate, sequential canonical contexts. A confirmed
+blocked request keeps that course incomplete; only positive context closure permits its queue/status
+publication and the next course. The guard remains sticky within each context. Disabled courses
+open no browser. SIGINT/SIGTERM starts owned closure immediately once a client is available and requires both
+positive context closure and pending read settlement before queue-lock release/reporting. Startup
+launch cannot be physically cancelled before a context is returned; unresolved launch keeps the lock held. Allocated-context startup cleanup opts into the same 30-second logical close deadline; default login/sync/verify startup cleanup remains unchanged. Close/read settlement failure or a 30-second
+logical deadline for either settlement stops the batch and retains a durable safety barrier before release; it does
+not prove physical browser cessation. The Owner must retain containment and verify cessation before
+clearing safety evidence. Reports account completed/refused/not-attempted courses and keep partial
+outcomes. Exit 0 means the requested discovery outcomes passed, 1 means incomplete/interrupted or
+failed (including held-lock/safety admission), and 2 means invalid extra arguments.
+Omitting the course retains the established all-course selection. Content/Gallery authority and transcript/media
+readiness remain separate. Shared-session sync/verify/renumber and login semantics remain unchanged.
+
 Discovery includes folder bodies and media descriptors alongside content links and embeds.
 Positive MIME/type evidence distinguishes media from documents. Malformed or addressless embeds
 remain unresolved so missing information stays visible; unresolved resources are not automatically

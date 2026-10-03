@@ -130,12 +130,14 @@ test("media discovery refuses a held queue lock before entering the session boun
     run: async () => {
       const ownerPath = join(mediaQueueLockPath(at.statePath), "owner.json");
       const owner = await readFile(ownerPath);
-      const result = await runCliWithEnvironment(at.env, "media-discover", "SYNTHETIC");
+      const result = await runCliWithEnvironment(at.env, "media-discover");
       assert.equal(result.code, 1);
-      assert.equal(result.stdout, "");
-      assert.match(result.stderr, /Another media queue run holds/);
-      assert.match(result.stderr, /Wait for the active run to finish, then retry/);
-      assert.doesNotMatch(result.stderr, /URL-encoded|\n\s+at /);
+      assert.equal(result.stderr, "");
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.failureCode, "MEDIA_QUEUE_LOCK_HELD");
+      assert.match(report.action, /Wait for the active run/);
+      assert.equal(report.notAttempted.length, 1);
+      assert.doesNotMatch(result.stdout, /URL-encoded|owner.json|chrome-profile/);
       assert.deepEqual(await readFile(at.queuePath), before);
       assert.deepEqual(await readdir(at.destination), files);
       assert.deepEqual(await readFile(ownerPath), owner);
@@ -143,7 +145,9 @@ test("media discovery refuses a held queue lock before entering the session boun
     },
   });
   const released = await runCliWithEnvironment(at.env, "media-discover", "SYNTHETIC");
-  assert.match(released.stderr, /profile path is URL-encoded/);
+  assert.equal(released.code, 0);
+  assert.equal(released.stderr, "");
+  assert.equal(JSON.parse(released.stdout).courses[0].skipped, true);
   assert.deepEqual(await readFile(at.queuePath), before);
   await assert.rejects(readdir(mediaQueueLockPath(at.statePath)), { code: "ENOENT" });
   await assert.rejects(readdir(at.profilePath), { code: "ENOENT" });

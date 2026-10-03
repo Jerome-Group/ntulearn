@@ -13,10 +13,8 @@ import { loadConfig, selectCourses } from "./config.mjs";
 import { diagnosticAddress } from "./ntulearn/sign-in.mjs";
 import { walkCourses } from "./courses.mjs";
 import { discoverContentRecordings } from "./media/discovery.mjs";
-import { discoverCourseMedia } from "./media/workflow.mjs";
 import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
 import { withMediaQueueLock } from "./media/lock.mjs";
-import { writeMediaCourseStatus } from "./media/status.mjs";
 import { writeLine } from "./output.mjs";
 import { setupMediaRuntime } from "./media/setup.mjs";
 import { MEDIA_RUN_MODES } from "./media/worker.mjs";
@@ -179,29 +177,31 @@ async function mediaWorker([mode = "scheduled", priorityCourseKey = null, ...une
   }
 }
 
-async function mediaDiscover(config, key) {
-  return withMediaQueueLock({
-    statePath: config.statePath,
-    run: async () => {
-      const { courses, refused } = await eachCourse(config, key, async ({ client, course }) => {
-        const discovery = await discoverCourseMedia({ client, course });
-        if (!discovery.skipped) {
-          const saved = await writeMediaQueue({
-            statePath: config.statePath,
-            course,
-            discovery,
-          });
-          discovery.queuePath = saved.path;
-        } else {
-          const status = await writeMediaCourseStatus({ course, discovery });
-          if (status) discovery.statusPath = status.path;
-        }
-        return discovery;
-      });
-      await writeLine(stdout, asJson({ courses, ...(refused.length ? { refused } : {}) }));
-      return courses.some((course) => course.complete === false) ? 1 : 0;
-    },
-  });
+async function mediaDiscover(config, key, ...unexpected) {
+  if (unexpected.length) {
+    await writeLine(stderr, USAGE);
+    return 2;
+  }
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      Object.assign(new Error("Media discovery interrupted."), { code: "MEDIA_INTERRUPTED" }),
+    );
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
+  try {
+    const { runMediaDiscovery } = await import("./media/discover-run.mjs");
+    const report = await runMediaDiscovery({
+      config,
+      key: key ?? "all",
+      signal: controller.signal,
+    });
+    await writeLine(stdout, asJson(report));
+    return report.exitCode;
+  } finally {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  }
 }
 
 async function mediaRetry([mode, courseKey, selector, confirmation, ...unexpected]) {
