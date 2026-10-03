@@ -333,6 +333,9 @@ evidence; successful lexical checks and conditional alignment never turn that bl
 Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the
 signed-in course surface, exhausts its visible `Load More`/pagination controls, and refuses to
 queue any appearance until the discovered visible count matches the Gallery's displayed total.
+Count equality alone cannot resolve unknown pagination: a completed append requires a stable
+displayed total and observed growth retaining every prior recording identity. Live failure cause
+and recovery remain unproven until an authorised guarded rediscovery succeeds.
 Gallery order is retained; repeated provider entries remain separate appearances, and sanitized
 creation-time/title names receive a collision number only when necessary. Kaltura provider media,
 provider transcripts, normalized sources, and working artifacts stay under the RAID0 Media store.

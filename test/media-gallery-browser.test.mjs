@@ -59,6 +59,86 @@ test("stops cumulative Load More pagination when the displayed total is reached"
   assert.equal(result.at(-1).entries.length, 2);
 });
 
+test("confirmed cumulative growth reaches exhaustion with the extractor's explicit unknown mode", async () => {
+  const cards = [galleryCard("first", "Lecture one"), galleryCard("second", "Lecture two")];
+  let clicks = 0;
+  const more = galleryElement({}, "Load more");
+  const document = {
+    body: { innerText: "2 Media" },
+    querySelectorAll(selector) {
+      if (selector.startsWith("[data-total")) return [];
+      if (selector === "button,a,[role='button']") return [more];
+      return cards.slice(0, clicks + 1).map((card) => card.anchor);
+    },
+  };
+  const pages = await collectMediaGalleryPages({
+    readPage: async () => runInNewContext(`(${extractGallerySnapshot.toString()})()`, { document }),
+    clickLoadMore: async () => {
+      clicks++;
+      return clicks === 1 ? { mode: "append" } : false;
+    },
+  });
+  assert.equal(clicks, 1);
+  assert.equal(pages[0].paginationMode, "unknown");
+  assert.equal(pages.at(-1).paginationMode, "append");
+  assert.equal(pages.at(-1).hasMore, false);
+  assert.equal(pages.at(-1).entries.length, 2);
+});
+
+test("unknown pagination never exhausts from equal counts without cumulative append evidence", async (t) => {
+  const first = { id: "first" },
+    second = { id: "second" },
+    third = { id: "third" };
+  for (const [name, before, after, mode] of [
+    ["plateau", [first, second], [first, second], "append"],
+    ["replacement", [first], [second, third], "append"],
+    ["duplicate growth", [first], [first, first], "append"],
+    ["missing identity", [{}], [{}, second], "append"],
+    ["empty initial page", [], [first, second], "append"],
+    ["replacement control", [first], [first, second], "replace"],
+    ["unknown control", [first], [first, second], "unknown"],
+  ]) {
+    await t.test(name, async () => {
+      let clicks = 0;
+      await assert.rejects(
+        collectMediaGalleryPages({
+          readPage: async () => ({
+            paginationMode: "unknown",
+            displayedCount: 2,
+            entries: clicks ? after : before,
+            hasMore: true,
+          }),
+          clickLoadMore: async () => (++clicks === 1 ? { mode } : false),
+        }),
+        { code: "GALLERY_PAGINATION_CONTROL_UNAVAILABLE" },
+      );
+    });
+  }
+});
+
+test("changed totals and explicit replacement modes override an append handoff", async (t) => {
+  for (const [name, mode, count] of [
+    ["changed total", "unknown", 1],
+    ["replacement snapshot", "replace", 2],
+  ]) {
+    await t.test(name, async () => {
+      let clicks = 0;
+      await assert.rejects(
+        collectMediaGalleryPages({
+          readPage: async () => ({
+            paginationMode: clicks ? mode : "unknown",
+            displayedCount: clicks ? 2 : count,
+            entries: clicks ? [{ id: "first" }, { id: "second" }] : [{ id: "first" }],
+            hasMore: true,
+          }),
+          clickLoadMore: async () => (++clicks === 1 ? { mode: "append" } : false),
+        }),
+        { code: "GALLERY_PAGINATION_CONTROL_UNAVAILABLE" },
+      );
+    });
+  }
+});
+
 test("treats an initial cumulative Gallery page at its displayed total as exhausted", async () => {
   let clicks = 0;
 
