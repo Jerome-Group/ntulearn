@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { capabilityIndex } from "./capabilities/index.mjs";
 import { capabilityResult, observation } from "./capabilities/result.mjs";
-import { runRepositoryChecks } from "./capabilities/check.mjs";
+import { runRepositoryChecks, parseCheckArguments } from "./capabilities/check.mjs";
+import { createCheckCapture } from "./capabilities/check-capture.mjs";
 import { localHealth } from "./capabilities/health.mjs";
 import { localStatus } from "./capabilities/status.mjs";
 import { createInterface } from "node:readline/promises";
@@ -654,7 +655,12 @@ function provenanceUnavailable(error) {
 }
 
 async function offlineCommand(name, argumentsForCommand) {
-  if (argumentsForCommand.length > (name === "capabilities" || name === "check" ? 1 : 0)) {
+  const checkArguments = name === "check" ? parseCheckArguments(argumentsForCommand) : null;
+  if (
+    name === "check"
+      ? !checkArguments
+      : argumentsForCommand.length > (name === "capabilities" ? 1 : 0)
+  ) {
     await writeLine(
       stdout,
       asJson({
@@ -707,9 +713,10 @@ async function offlineCommand(name, argumentsForCommand) {
   } else if (name === "check") {
     result = await runRepositoryChecks({
       root: ROOT,
-      selection: argumentsForCommand[0],
+      ...checkArguments,
       node: process.execPath,
       run: checkRunner,
+      evidenceOptions: { ownerUid: process.getuid?.() },
     });
   } else {
     const options = {
@@ -723,7 +730,7 @@ async function offlineCommand(name, argumentsForCommand) {
   return result.exitCode ?? 0;
 }
 
-function checkRunner(command, argumentsFor, { cwd, timeout }) {
+function checkRunner(command, argumentsFor, { cwd, timeout, retainOutput = false }) {
   return new Promise((done) => {
     const child = spawn(command, argumentsFor, {
       cwd,
@@ -731,6 +738,13 @@ function checkRunner(command, argumentsFor, { cwd, timeout }) {
       detached: true,
     });
     const parts = { stdout: "", stderr: "" };
+    const capture = retainOutput ? createCheckCapture() : null;
+    let completed = false;
+    const complete = (result) => {
+      if (completed) return;
+      completed = true;
+      done({ ...result, ...(capture ? { rawOutput: capture.result() } : {}) });
+    };
     let timedOut = false;
     let stopped = false;
     const stop = () => {
@@ -745,16 +759,17 @@ function checkRunner(command, argumentsFor, { cwd, timeout }) {
     }, timeout);
     for (const key of ["stdout", "stderr"])
       child[key].on("data", (chunk) => {
+        if (!completed) capture?.append(key, chunk);
         parts[key] += chunk.toString();
         if (parts[key].length > 2 * 1024 * 1024) stop();
       });
     child.once("error", () => {
       clearTimeout(timer);
-      done({ exitCode: 1, ...parts, timedOut });
+      complete({ exitCode: 1, ...parts, timedOut });
     });
     child.once("close", (code) => {
       clearTimeout(timer);
-      done({ exitCode: code ?? 1, ...parts, timedOut });
+      complete({ exitCode: code ?? 1, ...parts, timedOut });
     });
   });
 }

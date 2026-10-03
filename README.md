@@ -45,8 +45,36 @@ identifiers, raw errors and log contents are excluded.
 the existing `npm test`, `npm run lint` and `npm run format:check` tools plus ESM syntax and catalog
 contracts, without browser/network tests. Each check is bounded to two minutes and all selected
 checks report even after another fails. Evidence includes elapsed time, exit code and output hash;
-failed tool details can be read locally by running the indexed tool command. No TypeScript is
-present: syntax, lint, runtime contracts and fixture/process regressions are the applicable checks.
+the default reports no raw output. A repeat that passes does not explain an earlier failure.
+For original failure evidence, request a fresh private directory through the same CI/agent entrypoint:
+
+```bash
+npm run --silent check -- test --evidence .scratch/check-evidence-investigation1
+npm run --silent check -- --evidence .scratch/check-evidence-investigation2
+```
+
+Only fresh direct children named `check-evidence-` followed by 1–80 letters/digits/underscores/hyphens
+under this checkout's `.scratch` are permitted. Occupied/foreign/profile/runtime/symlink targets refuse;
+no configuration, profile or runtime contents are inspected. Created directories are 0700 and files
+0600. Parent/descriptor identities and retained file bytes are checked; these bounded observations
+cannot promise atomic exclusion of every external filesystem mutation.
+The JSON locator `requested-private-evidence/test-001` means `test-001.invocation.json`,
+`test-001.stdout.log` and `test-001.stderr.log` in the directory you requested. It contains only fixed
+filenames, digests, byte counts and exit codes; never the requested path/name, command arguments or raw
+assertions. Inspect these private files before retrying. Raw logs are not uploaded or printed by this
+route; CI may explicitly use the same flag without changing its entrypoint or publishing artifacts.
+Each stdout/stderr prefix is limited to 2 MiB; truncation and the full captured bytes/digest are separate.
+Invocation metadata is 64 KiB, the result snapshot 128 KiB, at most 17 files/21 MiB. Evidence I/O is
+bounded to 5 seconds per operation, 30 seconds cumulative (excluding check execution), plus up to
+5 seconds for positive settlement. Existing check deadlines, output stop limits and exit codes remain.
+Evidence failures remain separate from original check failures. Unconfirmed I/O/cleanup stops further
+checks/evidence writes, retains partial files and requires inspection before retry; it grants no green
+result. `run.result.json` is a snapshot marked pending final settlement, not a completion grant. The
+returned `complete` and cleanup observations are authoritative for evidence settlement. No file is
+replaced or pruned; recovery requires a fresh requested directory. Old digest-only failures cannot
+recover their original assertions and are not retroactively claimed fixed by a later passing run.
+
+No TypeScript is present: syntax, lint, runtime contracts and fixture/process regressions are the applicable checks.
 
 ```bash
 npm run login                 # refresh the NTU SSO/MFA session
