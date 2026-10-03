@@ -41,15 +41,7 @@ export async function runProductionMedia({
       try {
         await runner?.close?.();
       } catch (cause) {
-        const error = markGlobalMediaSafety(
-          Object.assign(
-            new Error(
-              "Media browser cleanup is unconfirmed. Inspect the owned session before retrying.",
-              { cause },
-            ),
-            { code: "MEDIA_BROWSER_CLEANUP" },
-          ),
-        );
+        const error = mediaBrowserCleanupFailure(cause);
         await persistMediaSafetyBarrier({ statePath: config.statePath, error, now });
         throw error;
       }
@@ -85,13 +77,20 @@ export async function runProductionMedia({
   const runJob = async (appearance, context) => {
     context.signal?.throwIfAborted();
     if (appearance.provider === "unsupported") return unsupportedResult(appearance);
-    runner ??= await createJobRunner({
-      config,
-      runtime,
-      capacity,
-      capacityCheckTimeoutMs,
-      signalProcessGroup,
-    });
+    try {
+      runner ??= await createJobRunner({
+        config,
+        runtime,
+        capacity,
+        capacityCheckTimeoutMs,
+        signalProcessGroup,
+      });
+    } catch (cause) {
+      if (cause?.code !== "NTULEARN_BROWSER_CLEANUP") throw cause;
+      const error = mediaBrowserCleanupFailure(cause);
+      await persistMediaSafetyBarrier({ statePath: config.statePath, error, now });
+      throw error;
+    }
     context.signal?.throwIfAborted();
     return runner.run(appearance, context);
   };
@@ -123,6 +122,18 @@ export async function runProductionMedia({
   }
 }
 
+function mediaBrowserCleanupFailure(cause) {
+  return markGlobalMediaSafety(
+    Object.assign(
+      new Error(
+        "Media browser cleanup is unconfirmed. Inspect the owned session before retrying.",
+        { cause },
+      ),
+      { code: "MEDIA_BROWSER_CLEANUP" },
+    ),
+  );
+}
+
 export async function createProductionJobRunner({
   config,
   runtime,
@@ -146,7 +157,7 @@ export async function createProductionJobRunner({
     checkCapacity: capacity.check,
     capacityCheckTimeoutMs,
   });
-  const client = await open(config.profilePath);
+  const client = await open(config.profilePath, { signalOwner: "caller" });
 
   return {
     async run(appearance, jobContext) {

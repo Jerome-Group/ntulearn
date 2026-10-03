@@ -208,6 +208,9 @@ const routes = {
     [
       "src/media/worker.mjs",
       "src/media/production.mjs",
+      "src/ntulearn/client.mjs",
+      "src/ntulearn/session.mjs",
+      "src/cli.mjs",
       "src/media/lock.mjs",
       "src/media/process.mjs",
       "src/media/digest.mjs",
@@ -224,6 +227,8 @@ const routes = {
       "test/media-worker.test.mjs",
       "test/media-transcript-evidence.test.mjs",
       "test/media-production.test.mjs",
+      "test/media-signal-ownership.test.mjs",
+      "test/session.test.mjs",
       "test/media-safety.test.mjs",
       "test/media-errors.test.mjs",
       "test/media-queue.test.mjs",
@@ -441,7 +446,7 @@ const commands = [
       risk: "media-acquisition",
       limitations: [
         "Scheduled mode works only 00:00–03:59 Asia/Singapore; manual mode ignores the overnight boundary.",
-        "Manual priority reorders all enabled courses; SIGINT/SIGTERM await owned cleanup and report interruption separately from the overnight boundary.",
+        "Manual priority reorders all enabled courses; media owns browser SIGINT/SIGTERM so checkpoint, browser cleanup, queue-lock release and final digest can settle. Login/nonmedia browser defaults remain unchanged; cleanup failure still blocks readiness.",
       ],
     },
   ),
