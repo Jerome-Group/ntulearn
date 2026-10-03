@@ -25,7 +25,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:format-unassociated -- <plan|apply|verify> <private-plan> [PUBLISH_UNASSOCIATED_REVIEW_EDITIONS (apply only)] | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -383,6 +383,7 @@ async function main([name, ...argumentsForCommand]) {
   if (name === "media-worker") return mediaWorker(argumentsForCommand);
   if (name === "media-catalogue") return mediaCatalogue(argumentsForCommand);
   if (name === "media-format") return mediaFormat(argumentsForCommand);
+  if (name === "media-format-unassociated") return mediaFormatUnassociated(argumentsForCommand);
   if (name === "media-recover") return mediaRecover(argumentsForCommand);
   if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
@@ -552,6 +553,63 @@ async function mediaFormat([mode, manifestPath, ...unexpected]) {
         "failed",
         "HISTORICAL_FORMAT_FAILED",
         "Historical formatting did not execute; no raw exception exposed.",
+        "Inspect local configuration and private input evidence, then retry plan.",
+      ),
+    ]);
+  } finally {
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", interrupt);
+  }
+  await writeLine(stdout, asJson(result));
+  return result.exitCode;
+}
+
+async function mediaFormatUnassociated([mode, manifestPath, confirmation, ...unexpected]) {
+  const controller = new globalThis.AbortController();
+  const interrupt = () =>
+    controller.abort(
+      new Error(
+        "Standalone formatting interrupted; preserve retained evidence and inspect before retry.",
+      ),
+    );
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  let result;
+  try {
+    const { unassociatedTranscripts, UNASSOCIATED_CONFIRMATION } =
+      await import("./media/unassociated-format.mjs");
+    if (
+      !["plan", "apply", "verify"].includes(mode) ||
+      !manifestPath ||
+      unexpected.length ||
+      (mode === "apply" ? confirmation !== UNASSOCIATED_CONFIRMATION : confirmation !== undefined)
+    ) {
+      result = capabilityResult("media:format-unassociated", [
+        observation(
+          "arguments",
+          "blocked",
+          "UNASSOCIATED_FORMAT_USAGE",
+          "Invalid standalone formatting arguments.",
+          "Run: npm run --silent media:format-unassociated -- <plan|apply|verify> <private-plan>; apply requires PUBLISH_UNASSOCIATED_REVIEW_EDITIONS.",
+        ),
+      ]);
+    } else {
+      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+      result = await unassociatedTranscripts({
+        mode,
+        manifestPath: resolve(manifestPath),
+        confirmation,
+        config,
+        signal: controller.signal,
+      });
+    }
+  } catch {
+    result = capabilityResult("media:format-unassociated", [
+      observation(
+        "configuration",
+        "blocked",
+        "UNASSOCIATED_FORMAT_CONFIGURATION",
+        "Standalone formatting did not execute; no raw exception exposed.",
         "Inspect local configuration and private input evidence, then retry plan.",
       ),
     ]);

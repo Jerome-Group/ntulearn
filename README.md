@@ -1000,6 +1000,40 @@ repeat route. Unchanged retries reuse identical files. Changed input evidence re
 course roots and Media store accessible, run `npm run media:format -- plan /absolute/private/plan.json`,
 then explicitly authorized `npm run media:format -- apply /absolute/private/plan.json`;
 `npm run media:format -- verify /absolute/private/plan.json` checks the published editions. Plan includes disabled courses, native/raw sources and unassociated derivatives.
+
+Valid raw transcripts with no retained metadata sibling can also receive explicit standalone review
+reading, without a course guess:
+
+```sh
+npm run --silent media:format-unassociated -- plan /absolute/private/standalone-plan.json
+npm run --silent media:format-unassociated -- apply /absolute/private/standalone-plan.json PUBLISH_UNASSOCIATED_REVIEW_EDITIONS
+npm run --silent media:format-unassociated -- verify /absolute/private/standalone-plan.json
+```
+
+Apply is Owner-only. This source-only route scans the configured Media store, excludes `.runtime`
+and its own reading store, and accounts for metadata-present sources without reading their metadata;
+use the existing course route for those sources. Metadata absence never proves that a source has no
+course association elsewhere. Every published reading says **association unverified by this edition,
+review only**; course catalogue preference, queues, status and original/user-edited files stay unchanged.
+Suspicious repetition remains verbatim and flagged. Invalid/empty/native-unsafe sources get no reading;
+unknown timing remains unknown. No model, ASR, upstream, source-correctness, media-readiness or acoustic
+claim is made.
+
+The fresh plan must be outside the Media store and physical/logical profile, with a canonical parent. The dedicated `.data` state namespace and operational safety/queue/lock/watchdog/log/digest names are refused before ordinary plan publication, including physical aliases.
+Immutable editions, original raw-source links, source SHA/provenance and a review index live under
+`MediaRoot/Unassociated/Review/<plan-id>/`. Opaque source IDs use pinned path+SHA, never titles, dates or
+course guesses. Occupied different files and stale source/metadata-absence/parent/descriptor proofs
+refuse; repeat unchanged apply positively verifies exact existing bytes, descriptor/parent/source/plan pins before returning without publication mkdir, staging or byte writes (lock bookkeeping remains separate). Keep the private plan to verify or resume exclusive
+partial outputs. This does not reconcile differing catalogue and historical inventory counts.
+
+Bounds remain finite: 4 MiB per raw/plan/output file, 256 MiB read/output budget, 20,000 scanned entries,
+depth 16, 4,096 file hashes, 100,000 identity checks and 120 seconds per operation. Individual I/O has
+5 seconds plus up to 5 seconds for positive settlement. Unconfirmed read/write/descriptor cleanup
+retains a durable safety barrier before apply-lock release; failed barrier storage retains admission
+containment and requires external qualification. Plan and verify can exceptionally write that barrier.
+Elapsed deadlines do not prove physical I/O cancellation. Apply checks RAID0/reserve on each destination
+write; ordinary formatting never installs assets or invokes a model.
+
 No model, browser, network or acoustic reference is required. Apply requires RAID0, the configured
 free-space reserve and exclusive media locking. It never changes original sources, original derivatives,
 queues, state or media status. Keep private manifests and receipts out of the public repository.

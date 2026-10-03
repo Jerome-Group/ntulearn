@@ -132,7 +132,7 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
 export async function publishHistoricalFile(
   path,
   content,
-  { reads, boundary, checkCapacity, expectedSha256 },
+  { reads, boundary, checkCapacity, expectedSha256, closeHandle = null, existingFile = null },
 ) {
   reads.active();
   if (!insideHistoricalRoot(boundary, resolve(path))) throw historicalFailure();
@@ -147,6 +147,7 @@ export async function publishHistoricalFile(
     if (info && (!info.isDirectory() || info.isSymbolicLink())) throw historicalFailure();
     ancestor = dirname(ancestor);
   }
+  if (existingFile && (await existingFile(path, content, expectedSha256))) return "existing";
   await reads.probe(() => checkCapacity?.({ path, boundary, bytes: content.length }));
   await reads.probe(() => mkdir(dirname(path), { recursive: true, mode: 0o700 }));
   const parent = dirname(path);
@@ -173,7 +174,13 @@ export async function publishHistoricalFile(
   await assertParent();
   const partial = path + ".part-" + randomUUID();
   const handle = await open(partial, "wx", 0o600);
-  const owned = await handle.stat();
+  let owned;
+  try {
+    owned = await handle.stat();
+  } catch (error) {
+    if (closeHandle) await closeHandle(handle);
+    throw error;
+  }
   async function assertOwned(candidate) {
     await assertParent();
     const info = await reads.probe(() => lstat(candidate));
@@ -183,6 +190,7 @@ export async function publishHistoricalFile(
   try {
     await assertOwned(partial);
     await handle.writeFile(content);
+    if (closeHandle) reads.active();
     await handle.sync();
     await assertOwned(partial);
     reads.active();
@@ -199,7 +207,8 @@ export async function publishHistoricalFile(
     await assertOwned(path);
     return "written";
   } finally {
-    await handle.close().catch(() => {});
+    if (closeHandle) await closeHandle(handle);
+    else await handle.close().catch(() => {});
     // Uncertain directory or staging identity retains evidence; never unlink a replacement.
     await assertOwned(partial);
     await unlink(partial);
