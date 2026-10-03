@@ -1,10 +1,11 @@
 import { dirname, basename, join, resolve } from "node:path";
-import { realpath } from "node:fs/promises";
 import { assertCatalogueProfile } from "./catalogue-profile.mjs";
+import { catalogueCourseAliases, assertCatalogueBindings } from "./catalogue-course.mjs";
 import { catalogueRetainedMedia } from "./catalogue-media.mjs";
 import { historicalInventory } from "./historical-inventory.mjs";
 import { historicalDigest, insideHistoricalRoot } from "./historical-files.mjs";
 import { readMediaQueue } from "./queue.mjs";
+import { queueCourseBoundary } from "./queue-course.mjs";
 import { mediaRecordingRoot } from "./storage.mjs";
 import { mediaRecordingStatus } from "./status.mjs";
 import { validateSourceReviewFlags } from "./source-paragraphs.mjs";
@@ -55,11 +56,21 @@ export async function catalogueInventory({
     reports = [],
     paths = [],
     unassociated = [];
+  const bindings = config.courses.map((course) => ({
+    logical: resolve(course.destination),
+    canonical: courses.find((item) => item.key === course.key).path,
+  }));
+  bindings.push({
+    logical: resolve(config.media.mediaRoot),
+    canonical: historical.roots.find((root) => !root.courseKey).path,
+  });
   for (const course of config.courses) {
+    const boundary = queueCourseBoundary({ course });
     const loaded = await readMediaQueue({
       statePath: config.statePath,
       courseKey: course.key,
       course,
+      boundary,
       read: async (path) => {
         const file = await reads.optional(path);
         if (file) return file.content;
@@ -72,8 +83,21 @@ export async function catalogueInventory({
         throw Object.assign(new Error("Absent"), { code: "ENOENT" });
       },
     });
-    for (const job of loaded.record?.queue ?? [])
-      claims.push({ job, course: courses.find((item) => item.key === course.key) });
+    const current = courses.find((item) => item.key === course.key);
+    for (const binding of await catalogueCourseAliases({
+      course,
+      root: current.path,
+      queue: loaded.record?.queue,
+      boundary,
+      reads,
+      profileBinding,
+    })) {
+      const existing = bindings.find((item) => item.logical === binding.logical);
+      if (existing && existing.canonical !== binding.canonical)
+        throw catalogueFailure("CATALOGUE_COURSE_BOUNDARY");
+      if (!existing) bindings.push(binding);
+    }
+    for (const job of loaded.record?.queue ?? []) claims.push({ job, course: current });
   }
   for (const root of historical.roots) paths.push(...(await scanCatalogue(root.path, reads)));
   for (const path of paths.filter((path) => path.endsWith("/recovery.json"))) {
@@ -98,11 +122,10 @@ export async function catalogueInventory({
   }
   const retainedMedia = await catalogueRetainedMedia({
     claims,
-    courses,
-    config,
     store: historical.roots.find((root) => !root.courseKey).path,
     reads,
     profileBinding,
+    bindings,
   });
   const mediaIdentities = retainedMedia.identities;
   const usedPaths = new Set(),
@@ -347,17 +370,8 @@ export async function catalogueInventory({
       )
     )
       unassociated.push({ path, kind: "paragraph", reason: "unproven-association" });
-  // Logical configured aliases are rechecked independently of canonical content hashes.
-  const bindings = await Promise.all(
-    config.courses.map(async (course) => ({
-      logical: resolve(course.destination),
-      canonical: await reads.probe(() => realpath(course.destination)),
-    })),
-  );
-  bindings.push({
-    logical: resolve(config.media.mediaRoot),
-    canonical: await reads.probe(() => realpath(config.media.mediaRoot)),
-  });
+  // Configured and positively accepted retained aliases are pinned independently of content.
+  await assertCatalogueBindings(bindings, { media: reads.media, profileBinding });
   for (const course of courses)
     course.counts = {
       appearances:

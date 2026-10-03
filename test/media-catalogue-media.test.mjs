@@ -11,6 +11,7 @@ import {
   utimes,
   truncate,
   open,
+  unlink,
 } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import {
 import { catalogueMediaPath } from "../src/media/catalogue-media.mjs";
 import { mediaSafetyPath } from "../src/media/safety.mjs";
 import { withMediaQueueLock } from "../src/media/lock.mjs";
+import { isGlobalMediaSafetyFailure } from "../src/media/errors.mjs";
 async function fixture(t, { formatted = true } = {}) {
   const f = await historicalFixture(t),
     mediaPath = join(f.config.courses[0].destination, "Lecture.mp4");
@@ -219,6 +221,215 @@ test("configured course aliases normalize only their positively bound root", asy
   const result = await transcriptCatalogue({ config: f.config, mode: "inspect" });
   assert.equal(result.status, "passed");
   assert.equal(result.catalogue.courses[0].recordings[0].mediaPath, f.mediaPath);
+});
+async function retainedCourseAlias(f) {
+  const alias = join(f.root, "retained-course-alias");
+  await symlink(f.config.courses[0].destination, alias);
+  const queue = JSON.parse(await readFile(f.queuePath));
+  queue.queue[0].placement.destination = alias;
+  queue.queue[0].media.video.path = join(alias, "Lecture.mp4");
+  await writeFile(f.queuePath, JSON.stringify(queue));
+  for (const path of [f.metadataPath, f.statePath]) {
+    const producer = JSON.parse(await readFile(path));
+    producer.media.video.path = join(alias, "Lecture.mp4");
+    await writeFile(path, JSON.stringify(producer));
+  }
+  return alias;
+}
+test("retained placement alias differs from configured spelling and links canonical owned media", async (t) => {
+  const f = await fixture(t, { formatted: false });
+  await retainedCourseAlias(f);
+  const protectedPaths = [f.queuePath, f.statePath, f.metadataPath, f.mediaPath, f.originalPath];
+  const before = await Promise.all(protectedPaths.map((path) => readFile(path)));
+  const options = { config: f.config, manifestPath: f.manifestPath };
+  const inspected = await transcriptCatalogue({ ...options, mode: "inspect" });
+  assert.equal(inspected.status, "passed", JSON.stringify(inspected));
+  const recording = inspected.catalogue.courses[0].recordings[0];
+  assert.equal(recording.mediaAccess.status, "verified");
+  assert.equal(recording.mediaPath, f.mediaPath);
+  assert.equal(recording.reading, "incomplete");
+  assert.equal(recording.media.complete, false);
+  assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+  assert.equal(
+    (await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies)).status,
+    "passed",
+  );
+  assert.equal((await transcriptCatalogue({ ...options, mode: "verify" })).status, "passed");
+  const index = await readFile(
+    join(f.config.courses[0].destination, "Transcript editions/index.md"),
+    "utf8",
+  );
+  assert.match(index, /Retained media.*Lecture\.mp4/);
+  assert.ok(!index.includes("retained-course-alias"));
+  const repeat = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
+  assert.equal(repeat.status, "passed");
+  assert.equal(repeat.evidence.written, 0);
+  assert.equal(repeat.evidence.promoted, 0);
+  assert.deepEqual(await Promise.all(protectedPaths.map((path) => readFile(path))), before);
+});
+test("current and retained aliases of one course share one canonical verification scan", async (t) => {
+  const f = await fixture(t, { formatted: false });
+  await retainedCourseAlias(f);
+  const current = join(f.root, "current-course-alias");
+  await symlink(f.config.courses[0].destination, current);
+  f.config.courses[0].destination = current;
+  const state = JSON.parse(await readFile(f.statePath));
+  state.media.video.path = join(current, "Lecture.mp4");
+  await writeFile(f.statePath, JSON.stringify(state));
+  const options = { config: f.config, manifestPath: f.manifestPath };
+  assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+  const published = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
+  assert.equal(published.status, "passed");
+  assert.equal(published.evidence.retainedMediaAccess, 1);
+  assert.equal((await transcriptCatalogue({ ...options, mode: "verify" })).status, "passed");
+});
+for (const mutation of ["foreign", "missing", "runtime", "profile"])
+  test(`${mutation} retained course alias refuses before any media content read`, async (t) => {
+    const f = await fixture(t, { formatted: false });
+    const alias = await retainedCourseAlias(f);
+    if (mutation === "foreign" || mutation === "missing") {
+      await unlink(alias);
+      if (mutation === "foreign") await symlink(f.config.courses[1].destination, alias);
+    } else {
+      const parent = join(f.root, mutation === "runtime" ? ".runtime" : "profile");
+      await mkdir(parent);
+      const nested = join(parent, "legacy");
+      await rename(alias, nested);
+      if (mutation === "profile") f.config.profilePath = parent;
+      const queue = JSON.parse(await readFile(f.queuePath));
+      queue.queue[0].placement.destination = nested;
+      await writeFile(f.queuePath, JSON.stringify(queue));
+    }
+    const media = createCatalogueMediaReads();
+    let hashes = 0;
+    const result = await transcriptCatalogue(
+      { config: f.config, mode: "inspect" },
+      {
+        mediaReads: {
+          ...media,
+          read: async (...args) => {
+            hashes++;
+            return media.read(...args);
+          },
+        },
+      },
+    );
+    assert.equal(result.status, "failed");
+    assert.equal(result.evidence.written, 0);
+    assert.equal(result.evidence.promoted, 0);
+    assert.equal(hashes, 0);
+  });
+test("unknown media aliases are not resolved from an accepted course placement", async (t) => {
+  const f = await fixture(t, { formatted: false });
+  await retainedCourseAlias(f);
+  const unknown = join(f.root, "undeclared-media-alias");
+  await symlink(f.config.courses[0].destination, unknown);
+  const queue = JSON.parse(await readFile(f.queuePath));
+  queue.queue[0].media.video.path = join(unknown, "Lecture.mp4");
+  await writeFile(f.queuePath, JSON.stringify(queue));
+  for (const path of [f.metadataPath, f.statePath]) {
+    const producer = JSON.parse(await readFile(path));
+    producer.media.video.path = join(unknown, "Lecture.mp4");
+    await writeFile(path, JSON.stringify(producer));
+  }
+  const media = createCatalogueMediaReads();
+  let hashes = 0;
+  const result = await transcriptCatalogue(
+    { config: f.config, mode: "inspect" },
+    {
+      mediaReads: {
+        ...media,
+        read: async (...args) => {
+          hashes++;
+          return media.read(...args);
+        },
+      },
+    },
+  );
+  assert.equal(result.status, "passed");
+  assert.equal(result.catalogue.courses[0].recordings[0].mediaAccess.status, "unproven");
+  assert.equal(hashes, 0);
+});
+for (const mutation of ["retargeted", "missing"])
+  test(`${mutation} retained alias after plan refuses before index publication`, async (t) => {
+    const f = await fixture(t, { formatted: false });
+    const alias = await retainedCourseAlias(f);
+    const options = { config: f.config, manifestPath: f.manifestPath };
+    assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+    await unlink(alias);
+    if (mutation === "retargeted") await symlink(f.config.courses[1].destination, alias);
+    const result = await transcriptCatalogue({ ...options, mode: "publish" }, f.dependencies);
+    assert.equal(result.status, "blocked");
+    assert.equal(result.evidence.written, 0);
+    assert.equal(result.evidence.promoted, 0);
+    await assert.rejects(
+      lstat(join(f.config.courses[0].destination, "Transcript editions/index.md")),
+      { code: "ENOENT" },
+    );
+  });
+test("retargeted retained alias during publication retains evidence and stops before index promotion", async (t) => {
+  const f = await fixture(t, { formatted: false });
+  const alias = await retainedCourseAlias(f);
+  const options = { config: f.config, manifestPath: f.manifestPath };
+  assert.equal((await transcriptCatalogue({ ...options, mode: "plan" })).status, "passed");
+  let changed = false;
+  const result = await transcriptCatalogue(
+    { ...options, mode: "publish" },
+    {
+      ...f.dependencies,
+      afterOutput: async () => {
+        if (changed) return;
+        changed = true;
+        await unlink(alias);
+        await symlink(f.config.courses[1].destination, alias);
+      },
+    },
+  );
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].code, "CATALOGUE_PARENT_CHANGED");
+  assert.ok(result.evidence.written > 0);
+  assert.equal(result.evidence.promoted, 0);
+  await assert.rejects(
+    lstat(join(f.config.courses[0].destination, "Transcript editions/index.md")),
+    { code: "ENOENT" },
+  );
+});
+test("alias retargeting during a canonical media read cannot return verified access", async (t) => {
+  const f = await fixture(t, { formatted: false });
+  const alias = await retainedCourseAlias(f);
+  const media = createCatalogueMediaReads();
+  const paths = [];
+  const result = await transcriptCatalogue(
+    { config: f.config, mode: "inspect" },
+    {
+      mediaReads: {
+        ...media,
+        read: async (path, ...args) => {
+          paths.push(path);
+          await unlink(alias);
+          await symlink(f.config.courses[1].destination, alias);
+          return media.read(path, ...args);
+        },
+      },
+    },
+  );
+  assert.equal(result.status, "failed");
+  assert.equal(result.checks[0].code, "CATALOGUE_PARENT_CHANGED");
+  assert.deepEqual(paths, [f.mediaPath]);
+  assert.equal(result.evidence.written, 0);
+});
+test("unsettled catalogue metadata probes require the same global cleanup barrier as media reads", async () => {
+  const media = createCatalogueMediaReads(undefined, {
+    limits: { ...CATALOGUE_MEDIA_LIMITS, fileTimeoutMs: 10, cleanupTimeoutMs: 10 },
+  });
+  await assert.rejects(
+    media.probe(() => new Promise(() => {})),
+    (error) => {
+      assert.equal(error.code, "MEDIA_FILE_CLEANUP");
+      assert.equal(isGlobalMediaSafetyFailure(error), true);
+      return true;
+    },
+  );
 });
 test("distinct current recordings cannot share a declared or physically aliased media file", async (t) => {
   const f = await fixture(t),

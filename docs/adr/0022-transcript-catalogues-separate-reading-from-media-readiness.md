@@ -41,6 +41,12 @@ A dangling alias refuses; an ordinary sibling outside the profile remains a vali
 Immutable history and managed promotions each check the actual destination boundary and byte budget,
 independently of the media admission reserve. Historical paragraph media links remain unproven unless
 current recovery ownership supplies positive media evidence; text proofs cannot invent that ownership.
+Retained queue placements may preserve an earlier spelling of the configured course directory.
+The existing queue course boundary must positively bind that spelling to the current physical course
+before catalogue paths normalize its prefix. The catalogue carries and rechecks these bindings rather
+than discarding owned recordings by string inequality or resolving arbitrary media aliases. Multiple
+accepted aliases share one canonical scan; a foreign, missing, profile/runtime or retargeted binding
+refuses access/publication. Bound alias probes retain the media reader's unknown-cleanup barrier.
 Unassociated retained evidence is counted and reported without guessed course placement. Inspection
 reads only bounded configured local roots; it cannot establish unseen upstream recording completeness.
 Its stdout is private metadata, while actions emit bounded structured evidence without source text.

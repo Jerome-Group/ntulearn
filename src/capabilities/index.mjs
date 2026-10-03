@@ -169,6 +169,7 @@ const routes = {
       "src/media/catalogue-safety.mjs",
       "src/media/catalogue-profile.mjs",
       "src/media/catalogue-inventory.mjs",
+      "src/media/catalogue-course.mjs",
       "src/media/catalogue-editions.mjs",
       "src/media/vad-model.mjs",
       "src/media/catalogue-publication.mjs",

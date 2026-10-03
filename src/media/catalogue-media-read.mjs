@@ -116,6 +116,7 @@ export function createCatalogueMediaReads(
   }
   return {
     active,
+    probe: bounded,
     evidence: () => ({
       readBytes: bytes,
       hashes,

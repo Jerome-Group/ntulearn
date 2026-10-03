@@ -1015,7 +1015,11 @@ settlement. Confirmed settlement preserves the original failure; unknown cleanup
 `MEDIA_FILE_CLEANUP` and durably blocks admission before publication lock release. This exceptional
 safety-evidence write can occur in any mode. Barrier storage failure requires external containment;
 late I/O settlement never clears it automatically. Metadata retains its 256 MiB/120 s budget; existing recovery validators are
-unchanged. Configured root aliases normalize to their pinned physical roots; profile/runtime paths
+unchanged. Configured root aliases and retained placement aliases positively accepted by the current
+queue's physical course boundary normalize to the pinned course root. Unknown media aliases are never
+resolved into authority. Accepted aliases are rechecked before access and every publication check;
+equivalent aliases share one canonical inventory scan. Alias checks use the media reader's bounded
+I/O settlement and cleanup barrier. Profile/runtime paths
 and foreign media paths are excluded before media reads. Full media SHA checks at admission/final
 publication and parent/descriptor identity checks before writes refuse mutation, replacement or
 retargeting. Deadlines bound the operation's result; physical filesystem I/O cancellation and universal
