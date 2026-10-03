@@ -1,8 +1,16 @@
+import { workerStopEvidence } from "./worker-stop.mjs";
 import { recordingDisposition } from "./disposition.mjs";
 import { safeLimitations } from "./worker-state.mjs";
 import { isMediaJobComplete } from "./completeness.mjs";
 
-export function courseSummary({ course, queuePath, queue, processed, discovery }) {
+export function courseSummary({
+  course,
+  queuePath,
+  queue,
+  processed,
+  discovery,
+  stopFailures = [],
+}) {
   const counts = countQueue(queue);
   const limitation = queue
     .flatMap((job) => safeLimitations(job.limitations, job.limitation))
@@ -16,6 +24,7 @@ export function courseSummary({ course, queuePath, queue, processed, discovery }
     processed,
     ...counts,
     ...(limitation ? { limitation } : {}),
+    ...(stopFailures.length ? { stopFailures: workerStopEvidence(stopFailures) } : {}),
   };
 }
 
