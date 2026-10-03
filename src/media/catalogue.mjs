@@ -43,6 +43,7 @@ export async function transcriptCatalogue(
   dependencies = {},
 ) {
   const progress = { written: 0, existing: 0, promoted: 0, publication: "unrun" };
+  let reads;
   try {
     if (
       !["inspect", "plan", "publish", "verify"].includes(mode) ||
@@ -50,7 +51,7 @@ export async function transcriptCatalogue(
       (selectionPath && mode !== "plan")
     )
       throw catalogueFailure("CATALOGUE_ARGUMENTS");
-    const reads = catalogueReads(signal);
+    reads = catalogueReads(signal);
     const profileBinding = await catalogueProfileBinding(config.profilePath);
     await assertCatalogueProfile(profileBinding, [
       ...config.courses.map((course) => course.destination),
@@ -62,9 +63,9 @@ export async function transcriptCatalogue(
       selectionPath,
     ].filter(Boolean))
       await assertCataloguePrivatePath(profileBinding, resolve(privatePath));
-    const readPrivate = async (privatePath) => {
+    const readPrivate = async (privatePath, options) => {
       await assertCataloguePrivatePath(profileBinding, privatePath);
-      return reads.read(privatePath);
+      return reads.read(privatePath, options);
     };
     if (mode === "inspect") {
       const inventory = await catalogueInventory({ config, reads, signal, profileBinding });
@@ -117,19 +118,21 @@ export async function transcriptCatalogue(
       const content = json(manifest);
       if (Buffer.byteLength(content) > HISTORICAL_LIMITS.fileBytes)
         throw catalogueFailure("CATALOGUE_LIMIT");
-      await assertSnapshot(inventory, signal);
-      await assertCataloguePrivatePath(profileBinding, path);
-      await publishHistoricalFile(path, Buffer.from(content), {
-        reads,
-        boundary: parent,
-        expectedSha256: historicalDigest(content),
-      });
+      catalogueJson({ content: Buffer.from(content) });
       const proof = json({
         schemaVersion: 1,
         policy: CATALOGUE_POLICY,
         path,
         planId: manifest.id,
         sha256: historicalDigest(content),
+      });
+      catalogueJson({ content: Buffer.from(proof) });
+      await assertSnapshot(inventory, signal);
+      await assertCataloguePrivatePath(profileBinding, path);
+      await publishHistoricalFile(path, Buffer.from(content), {
+        reads,
+        boundary: parent,
+        expectedSha256: historicalDigest(content),
       });
       await assertCataloguePrivatePath(profileBinding, path + ".catalogue-plan.json");
       await publishHistoricalFile(path + ".catalogue-plan.json", Buffer.from(proof), {
@@ -139,7 +142,7 @@ export async function transcriptCatalogue(
       });
       return result(mode, inventory, { planId: manifest.id });
     }
-    const retained = await readPrivate(path),
+    const retained = await readPrivate(path, { includeIdentity: true }),
       manifest = catalogueJson(retained),
       { id, ...body } = manifest;
     if (
@@ -148,7 +151,7 @@ export async function transcriptCatalogue(
       id !== historicalDigest(JSON.stringify(body)).slice(0, 24)
     )
       throw catalogueFailure("CATALOGUE_MANIFEST_CHANGED");
-    const planReceipt = await readPrivate(path + ".catalogue-plan.json");
+    const planReceipt = await readPrivate(path + ".catalogue-plan.json", { includeIdentity: true });
     if (
       planReceipt.content.toString("utf8") !==
       json({
@@ -194,10 +197,18 @@ export async function transcriptCatalogue(
         reads.active();
         await capacity?.check({ boundary: config.media.mediaRoot });
         await assertSnapshot(inventory, signal, { includeMedia: includeMedia === true });
-        if ((await readPrivate(path + ".catalogue-plan.json")).sha256 !== planReceipt.sha256)
-          throw catalogueFailure("CATALOGUE_MANIFEST_CHANGED");
-        if ((await readPrivate(path)).sha256 !== retained.sha256)
-          throw catalogueFailure("CATALOGUE_MANIFEST_CHANGED");
+        for (const pin of [planReceipt, retained]) {
+          await assertCataloguePrivatePath(profileBinding, pin.path);
+          try {
+            await assertRecoveryFileIdentity(pin, signal);
+            if (includeMedia && (await readPrivate(pin.path)).sha256 !== pin.sha256)
+              throw catalogueFailure("CATALOGUE_MANIFEST_CHANGED");
+            await assertRecoveryFileIdentity(pin, signal);
+          } catch (error) {
+            if (error.code === "HISTORICAL_READ_LIMIT" || signal?.aborted) throw error;
+            throw catalogueFailure("CATALOGUE_MANIFEST_CHANGED");
+          }
+        }
       };
       await check(true);
       for (const target of manifest.targets) {
@@ -219,7 +230,7 @@ export async function transcriptCatalogue(
       }
       await check(true);
       progress.publication = mode === "publish" ? "published" : "verified";
-      return result(mode, inventory, { planId: id, ...progress });
+      return result(mode, inventory, { planId: id, ...progress, reads: reads.evidence() });
     };
     if (mode === "publish")
       return await (dependencies.lock ?? withMediaQueueLock)({
@@ -235,11 +246,14 @@ export async function transcriptCatalogue(
       });
     return await execute();
   } catch (error) {
-    const code = /^CATALOGUE_[A-Z_]+$|^MEDIA_[A-Z_]+$/.test(error.code ?? "")
-      ? error.code
-      : signal?.aborted
-        ? "CATALOGUE_INTERRUPTED"
-        : "CATALOGUE_EVIDENCE_INVALID";
+    const code =
+      error.code === "HISTORICAL_READ_LIMIT"
+        ? "CATALOGUE_LIMIT"
+        : /^CATALOGUE_[A-Z_]+$|^MEDIA_[A-Z_]+$/.test(error.code ?? "")
+          ? error.code
+          : signal?.aborted
+            ? "CATALOGUE_INTERRUPTED"
+            : "CATALOGUE_EVIDENCE_INVALID";
     return capabilityResult(
       `media:catalogue:${mode}`,
       [
@@ -258,6 +272,7 @@ export async function transcriptCatalogue(
         acousticVerification: "unrun",
         mediaReadiness: "unclaimed",
         physicalIoCancellation: "unclaimed",
+        ...(reads ? { reads: reads.evidence() } : {}),
       },
     );
   }
