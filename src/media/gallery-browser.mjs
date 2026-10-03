@@ -3,6 +3,7 @@ import { discoverMediaGallery, isMediaCourseEnabled } from "./gallery.mjs";
 import { setTimeout, clearTimeout } from "node:timers";
 import { closeCourseAnnouncement, assertCourseAnnouncementGuard } from "./course-announcement.mjs";
 import { galleryFailure, GALLERY_WAIT_LIMITS } from "./gallery-diagnostic.mjs";
+import { observedGalleryLaunch } from "./gallery-launch.mjs";
 
 const MAX_GALLERY_PAGES = 100;
 const MAX_CONTENT_LOADS = 100;
@@ -29,12 +30,16 @@ const MONTHS = new Map([
   ["december", "12"],
 ]);
 
-export async function readKalturaMediaGallery({ page, course }) {
+export async function readKalturaMediaGallery({ page, course, snapshot }) {
   if (!isMediaCourseEnabled(course)) return discoverMediaGallery({ course, pages: null });
 
   let stage = "opening";
   try {
-    const surface = await openGallerySurface(page, course.courseId);
+    await assertCourseAnnouncementGuard(page);
+    const launch = observedGalleryLaunch({ snapshot, course });
+    const surface = launch
+      ? await openObservedGallery(page, launch.url)
+      : await openGallerySurface(page, course.courseId);
     if (!surface) {
       await assertCourseAnnouncementGuard(page);
       return absentGallery();
@@ -64,6 +69,13 @@ export async function readKalturaMediaGallery({ page, course }) {
     const failure = galleryFailure(publicErrorCode(cause, page), { ...error?.diagnostic, stage });
     return inaccessibleGallery(failure);
   }
+}
+async function openObservedGallery(page, url) {
+  if (typeof page?.goto !== "function") throw galleryFailure("GALLERY_LAUNCH_REFUSED");
+  await guardedGalleryRead(page, () => page.goto(url, { waitUntil: "domcontentloaded" }));
+  const surface = await findGalleryFrame(page);
+  await assertCourseAnnouncementGuard(page);
+  return surface;
 }
 
 async function guardedGalleryRead(page, operation) {

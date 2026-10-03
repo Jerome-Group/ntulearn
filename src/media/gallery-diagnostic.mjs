@@ -1,6 +1,10 @@
 export const GALLERY_WAIT_LIMITS = Object.freeze({ clickTimeoutMs: 5000, updateTimeoutMs: 5000 });
 
 const FAILURES = Object.freeze({
+  GALLERY_LAUNCH_REFUSED: [
+    "opening",
+    "Current Gallery launch metadata is malformed, ambiguous, signed, foreign or conflicts with its course/content/placement claims. Do not guess a route or fall back after refusal; inspect current visible metadata and retry fresh discovery.",
+  ],
   GALLERY_NOTICE_UNRECOGNIZED: [
     "opening",
     "Visible course dialog is unknown, multiple or malformed. Leave it untouched; Owner inspect the visible course page before retrying discovery.",

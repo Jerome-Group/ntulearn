@@ -376,8 +376,21 @@ arbitrary other contexts, external page-route overrides or detached/unknown serv
 no browser/security setting. Close an affected owned context and inspect the fixed diagnostic before
 retrying. No request URLs, headers, payloads or browser logs are retained in diagnostics. Legacy context-less offline adapters preserve fixture behavior only; they establish no production request-guard authority. Context-bearing production pages require positive routing and service-worker absence APIs.
 
-Enabled `pilot` and `active` courses can use the separate Media Gallery workflow. It opens the
-signed-in course surface, exhausts its visible `Load More`/pagination controls, and refuses to
+Enabled `pilot` and `active` courses share one canonical course snapshot between content and Gallery
+inside the guarded owned page lifetime. The guard is confirmed before metadata or attachment reads.
+A unique Gallery item's supplied `contentDetail` or placement `launchLink` can open directly when its
+same-origin `launchPlacement` endpoint and exact course/content/placement claims agree. Equivalent
+fields deduplicate; a present placement object and its exact supplied placement ID are mandatory.
+Missing or malformed placement proof refuses; values are never invented. Only the observed four query
+keys and `wrapped=true` are accepted. Titles select where to inspect; they grant no navigation authority.
+Sticky guard evidence is rechecked after owned page closure settles, before admitting a result.
+Page cleanup uncertainty keeps the global safety barrier and stops later courses.
+Source limits are 20,000 items, 4,096 characters per title, 32 detail entries, 64 launch fields and 8,192
+characters per link. Malformed, ambiguous, signed, foreign or conflicting links refuse without guessing
+or legacy fallback. Genuinely absent launch metadata retains the signed-in course surface route.
+Supplied addresses remain ephemeral and never enter diagnostics or queues. This is access/navigation
+proof, not evidence that the upstream endpoint completes without blocked background writes.
+The workflow exhausts visible `Load More`/pagination controls and refuses to
 queue any appearance until the discovered visible count matches the Gallery's displayed total.
 Count equality alone cannot resolve unknown pagination: a completed append requires a stable
 displayed total and observed growth retaining every prior recording identity. Live failure cause

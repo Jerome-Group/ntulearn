@@ -32,7 +32,7 @@ for (const signalName of ["SIGINT", "SIGTERM"])
     );
     await writeFile(
       join(root, "src/ntulearn/client.mjs"),
-      `import {writeFile} from 'node:fs/promises';export async function openClient(_path,options){if(options.signalOwner!=='caller')throw new Error('Missing caller ownership');let rejectRead,timer;return {readCourse:async()=>{process.stdout.write('READY\\n');await new Promise((resolve,reject)=>{rejectRead=reject;timer=setTimeout(()=>reject(new Error('Fixture expired')),2000)})},close:async()=>{await new Promise(resolve=>setTimeout(resolve,10));clearTimeout(timer);rejectRead?.(new Error('Owned context closed'));await writeFile(${JSON.stringify(marker)},JSON.stringify({closed:true}))}}}`,
+      `import {writeFile} from 'node:fs/promises';export async function openClient(_path,options){if(options.signalOwner!=='caller')throw new Error('Missing caller ownership');let rejectRead,timer;const context={route:async()=>{},serviceWorkers:()=>[]};return {withBrowserPage:async read=>read({context:()=>context}),readCourse:async()=>{process.stdout.write('READY\\n');await new Promise((resolve,reject)=>{rejectRead=reject;timer=setTimeout(()=>reject(new Error('Fixture expired')),2000)})},close:async()=>{await new Promise(resolve=>setTimeout(resolve,10));clearTimeout(timer);rejectRead?.(new Error('Owned context closed'));await writeFile(${JSON.stringify(marker)},JSON.stringify({closed:true}))}}}`,
     );
     const bootstrap = join(root, "bootstrap.mjs");
     await writeFile(
