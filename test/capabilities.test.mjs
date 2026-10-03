@@ -52,3 +52,18 @@ test("explicit retry exposes read-only plan and confirmed Owner state mutation s
   assert.deepEqual(route.exitCodes, { 0: "passed", 1: "failed", 2: "blocked-or-unrun-or-usage" });
   assert.match(route.limitations[0], /no acquisition, transcription or completeness/);
 });
+
+test("source recovery separates read-only planning, private ASR candidates and Owner publication", () => {
+  const route = capabilityIndex("transcript-source-recovery").commands[0];
+  assert.equal(route.id, "media-recover");
+  assert.equal(route.effects.network, false);
+  assert.equal(route.effects.browser, false);
+  assert.equal(route.operations.plan.ownerOnly, false);
+  assert.deepEqual(route.operations.plan.writes, []);
+  assert.equal(route.operations.run.ownerOnly, true);
+  assert.equal(route.operations.run.runtime, true);
+  assert.equal(route.operations.publish.ownerOnly, true);
+  assert.equal(route.operations.publish.runtime, false);
+  assert.equal(route.output, "capability-result-v1");
+  assert.equal(route.machineInvocation, "npm run --silent media:recover");
+});

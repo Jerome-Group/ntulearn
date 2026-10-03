@@ -6,6 +6,7 @@ import { cleanLocalFormatterOutput, createLocalFormatter } from "./formatter.mjs
 import { assertFormattedTranscript } from "./transcript.mjs";
 import { readFormatterAssistant } from "./formatter-output.mjs";
 import { transcriptSegmentTime } from "./production-values.mjs";
+import { asrPolicyArguments } from "./recovery-policy.mjs";
 
 const HOUR_MS = 60 * 60 * 1_000;
 
@@ -28,7 +29,7 @@ export function createProductionLocalModels(context) {
 
 async function transcribe(
   { media, signal },
-  { paths, commands, models, runProcess, preserveArtifacts = false },
+  { paths, commands, models, runProcess, preserveArtifacts = false, asrPolicy = null },
 ) {
   const directory = await mkdtemp(join(paths.work, "asr-"));
   const audio = join(directory, "audio.flac");
@@ -55,7 +56,19 @@ async function transcribe(
     );
     await runProcess(
       commands.whisper,
-      ["-m", models.asr, "-f", audio, "-oj", "-of", output, "-np", "-l", "auto"],
+      [
+        "-m",
+        models.asr,
+        "-f",
+        audio,
+        "-oj",
+        "-of",
+        output,
+        "-np",
+        "-l",
+        "auto",
+        ...asrPolicyArguments(asrPolicy),
+      ],
       { signal, timeoutMs: 8 * HOUR_MS, label: "Whisper transcription" },
     );
     return normalizeWhisper(JSON.parse(await readFile(`${output}.json`, "utf8")));

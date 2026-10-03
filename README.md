@@ -713,6 +713,56 @@ npm run format:check          # prettier
 `AGENTS.md` is the instruction file for agents and contributors both; `CONTRIBUTING.md` is how
 work flows here, and `MAP.md` says where everything lives.
 
+## Fresh ASR source candidates
+
+Severe source repetition needs a new recognition attempt, not deletion of repeated words by the
+formatter. `npm run --silent capabilities -- transcript-source-recovery` exposes a separate offline
+route. The private manifest selects existing owned sources and retained media by exact identity and
+SHA-256. It never admits a missing canonical source or guesses ownership from a filename.
+
+```bash
+npm run --silent media:recover -- plan /absolute/private/recovery.json
+# Owner-authorized recognition into a fresh directory under the configured Media store:
+npm run --silent media:recover -- run /absolute/private/recovery.json /absolute/Media/fresh-candidates
+# Owner-authorized publication of eligible candidates; repeats reuse identical editions:
+npm run --silent media:recover -- publish /absolute/private/recovery.json /absolute/Media/fresh-candidates
+```
+
+The manifest has `schemaVersion: 1`, `policy: "independent-context-v1"`, `recordings` and `budgets`.
+Every recording has `courseKey`, `recordingId`, `source: {path, sha256}` and `media: {path, sha256}`.
+Paths are absolute or relative to the manifest directory, and resolve to canonical physical files.
+Sources must be `transcript.raw.json` in the recording's canonical store; current queue, metadata,
+state and original derivative digests must establish unique course/recording/media ownership.
+Budgets are positive integers: `maxRecordingSeconds` (maximum 28,800), `maxInputBytes` and
+`maxOutputBytes` (each maximum 34,359,738,368), `jobTimeoutMs` (maximum 86,400,000) and
+`processTimeoutMs` (maximum 28,800,000 and no greater than the job timeout). Up to 64 recordings
+are selected; byte admission is aggregate. Bounded file reads have five-second logical deadlines,
+not physical I/O cancellation guarantees. Long recordings still require responsive storage.
+
+Plan writes nothing. Run requires the existing verified runtime, RAID0 reserve, exclusive media
+locking and durable safety admission. It performs one recognition job at a time, retaining native
+Whisper output, normalized sources, paragraph candidates and private provenance in an exclusive
+directory. Interrupts await owned process settlement; unconfirmed cleanup retains a durable barrier
+that blocks later recovery. No browser, upstream access, download or new model asset is involved.
+
+The explicit candidate policy sets Whisper's retained text context to zero while preserving its
+decoder thresholds and temperature fallback. This is an unmeasured mitigation, not a quality claim.
+Native malformed or dropped segments, payload/banner text, empty output, suspicious repetition and
+failed timing prevent publication. Repeated words remain in review candidates; they are never
+silently stripped. Acoustic verification remains unrun and media readiness remains unclaimed.
+
+Publish rechecks every original and candidate hash, copies only the validated eligible subset's source/native/provenance files beside
+fresh lecture paragraph editions and creates a course index under `Transcript editions/asr-recovery-v1-<run-id>/`.
+The index names the course and lecture and links the stable NTULearn course, current media status,
+originals, original sources, retained media, new candidate sources and provenance/limitations. Review
+candidates remain unpublished and are listed as blocked; mixed publication returns exit 2 with exact
+published/review counts. Edited or unverified candidate evidence fails publication rather than being
+silently skipped. An all-review batch writes nothing. Original sources,
+media, derivatives, user edits and queue history remain unchanged; no canonical source is replaced
+or automatically rearmed. Occupied different bytes are refused. Partial exclusive publications remain
+visible; structured failure evidence retains written/existing/published counts and the unchanged
+repeat route. Unchanged retries reuse identical files. Changed input evidence requires a new plan/run.
+
 ## Historical transcript editions
 
 `npm run --silent capabilities -- historical-transcripts` exposes the offline repair route. With the configured
