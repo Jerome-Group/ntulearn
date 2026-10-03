@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup -- \[vad\] \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \[RECOVER_TRANSCRIPT_SOURCES\|PUBLISH_RECOVERED_EDITIONS\] \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup -- \[vad\] \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -643,6 +643,51 @@ test("explicit retry rejects extra arguments before loading a configuration", as
   assert.equal(result.code, 2);
   assert.equal(result.stderr, "");
   assert.equal(JSON.parse(result.stdout).checks[0].code, "MEDIA_RETRY_ARGUMENTS");
+});
+
+test("source recovery help and index describe accepted token-free arguments", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-cli-recovery-help-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const env = { ...process.env, NTULEARN_CONFIG_PATH: join(root, "absent-config.json") };
+  const help = await runCliWithEnvironment(env);
+  assert.equal(help.code, 1);
+  assert.equal(help.stdout, "");
+  assert.match(
+    help.stderr,
+    /npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:catalogue/,
+  );
+  assert.doesNotMatch(help.stderr, /RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS/);
+
+  const index = await runCliWithEnvironment(env, "capabilities", "transcript-source-recovery");
+  assert.equal(index.code, 0);
+  assert.equal(index.stderr, "");
+  const recovery = JSON.parse(index.stdout).commands.find(({ id }) => id === "media-recover");
+  assert.deepEqual(recovery.arguments, [
+    "<plan|run|publish>",
+    "<private-manifest>",
+    "[candidate-directory (run/publish only)]",
+  ]);
+
+  for (const mode of ["plan", "run", "publish"]) {
+    const args = ["media-recover", mode, "private-manifest"];
+    if (mode !== "plan") args.push("private-candidate-directory");
+    const accepted = await runCliWithEnvironment(env, ...args);
+    assert.equal(accepted.code, 2);
+    assert.equal(accepted.stderr, "");
+    assert.equal(JSON.parse(accepted.stdout).checks[0].code, "RECOVERY_CONFIG_UNAVAILABLE");
+    if (mode === "plan") continue;
+    const token = mode === "run" ? "RECOVER_TRANSCRIPT_SOURCES" : "PUBLISH_RECOVERED_EDITIONS";
+    const rejected = await runCliWithEnvironment(env, ...args, token);
+    assert.equal(rejected.code, 2);
+    assert.equal(rejected.stderr, "");
+    const check = JSON.parse(rejected.stdout).checks[0];
+    assert.equal(check.code, "RECOVERY_ARGUMENTS");
+    assert.equal(
+      check.action,
+      "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]",
+    );
+  }
+  assert.deepEqual(await readdir(root), []);
 });
 
 test("source recovery CLI refuses malformed arguments and masks unavailable configuration", async () => {
