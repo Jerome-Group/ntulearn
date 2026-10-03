@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { lstat, realpath, mkdir, open, rename, unlink } from "node:fs/promises";
 import { historicalDigest, publishHistoricalFile } from "./historical-files.mjs";
+import { assertRecoveryFileIdentity } from "./recovery-files.mjs";
 import { catalogueFailure, catalogueJson, CATALOGUE_POLICY } from "./catalogue-files.mjs";
 
-async function optional(path, reads) {
+async function optional(path, reads, options) {
   try {
-    return await reads.read(path);
+    return await reads.read(path, options);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     return null;
@@ -95,13 +96,18 @@ export async function publishCatalogueTarget({
   reads,
   check,
   checkCapacity,
+  checkExisting,
+  signal,
   progress,
   afterOutput,
 }) {
   await check();
   await assertDirectory(target.parent, reads);
-  await reads.probe(() => mkdir(dirname(target.path), { recursive: true, mode: 0o700 }));
-  const parent = await directoryProof(target.path, reads);
+  let parent = await directoryProof(target.path, reads);
+  if (parent.path !== dirname(target.path)) {
+    await reads.probe(() => mkdir(dirname(target.path), { recursive: true, mode: 0o700 }));
+    parent = await directoryProof(target.path, reads);
+  }
   if (parent.path !== dirname(target.path)) throw catalogueFailure();
   const history = join(parent.path, ".catalogue-history", planId);
   const receipt = {
@@ -114,20 +120,41 @@ export async function publishCatalogueTarget({
   };
   const journal = { ...receipt, prior: target.prior };
   const put = async (path, content) => {
-    await check();
     await assertDirectory(parent, reads);
     const outcome = await publishHistoricalFile(path, Buffer.from(content), {
       reads,
       boundary: target.boundary,
       expectedSha256: historicalDigest(content),
       checkCapacity,
+      beforeStage: check,
+      existingFile: checkExisting
+        ? async (candidate, expected, digest) => {
+            await assertDirectory(parent, reads);
+            await checkExisting({
+              path: candidate,
+              boundary: target.boundary,
+              bytes: expected.length,
+            });
+            await assertDirectory(parent, reads);
+            const existing = await optional(candidate, reads, { includeIdentity: true });
+            if (!existing) return false;
+            if (existing.sha256 !== digest || !existing.content.equals(expected))
+              throw catalogueFailure();
+            await assertRecoveryFileIdentity(existing, signal);
+            await assertDirectory(parent, reads);
+            await assertRecoveryFileIdentity(existing, signal);
+            return true;
+          }
+        : null,
     });
     progress[outcome]++;
-    const directory = await open(dirname(path), "r");
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
+    if (outcome === "written") {
+      const directory = await open(dirname(path), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
     }
     await afterOutput?.(path);
   };
@@ -169,10 +196,10 @@ export async function publishCatalogueTarget({
     }
   }
   await put(join(history, "index.md"), target.content);
-  await check();
   const expectedIndex = current?.sha256 ?? null,
     expectedReceipt = receiptFile?.sha256 ?? null;
   if (!alreadyNew) {
+    await check();
     await promoteManaged(target.path, target.content, {
       reads,
       parent,
@@ -185,8 +212,8 @@ export async function publishCatalogueTarget({
   }
   const actual = await reads.read(target.path);
   if (actual.sha256 !== target.sha256) throw catalogueFailure("CATALOGUE_INDEX_EDITED");
-  await check();
   if (receiptFile?.content.toString("utf8") !== json(receipt)) {
+    await check();
     await promoteManaged(target.path + ".catalogue.json", json(receipt), {
       reads,
       parent,
@@ -199,6 +226,7 @@ export async function publishCatalogueTarget({
   } else progress.existing++;
   await put(join(history, "complete.json"), json(receipt));
   await verifyCatalogueTarget({ target, planId, reads });
+  await check();
 }
 
 async function promoteManaged(

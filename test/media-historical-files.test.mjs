@@ -148,3 +148,44 @@ test("read limit evidence distinguishes file bytes, aggregate bytes and elapsed 
     timeoutMs: 1000,
   });
 });
+
+test("beforeStage runs after positive reuse and before any directory or staging mutation", async (t) => {
+  const f = await historicalFixture(t),
+    parent = join(f.root, "guarded-new-directory"),
+    path = join(parent, "edition.md"),
+    content = Buffer.from("Source words");
+  const calls = [],
+    reads = historicalReads();
+  const options = {
+    reads,
+    boundary: f.root,
+    expectedSha256: historicalDigest(content),
+    existingFile: async () => {
+      calls.push("existing");
+      return false;
+    },
+    checkCapacity: async () => {
+      calls.push("capacity");
+    },
+    beforeStage: async () => {
+      calls.push("guard");
+      throw new Error("fixture source changed");
+    },
+  };
+  await assert.rejects(publishHistoricalFile(path, content, options), /fixture source changed/);
+  assert.deepEqual(calls, ["existing", "capacity", "guard"]);
+  assert.equal((await readdir(f.root)).includes("guarded-new-directory"), false);
+  calls.length = 0;
+  assert.equal(
+    await publishHistoricalFile(path, content, {
+      ...options,
+      existingFile: async () => {
+        calls.push("existing");
+        return true;
+      },
+    }),
+    "existing",
+  );
+  assert.deepEqual(calls, ["existing"]);
+  assert.equal((await readdir(f.root)).includes("guarded-new-directory"), false);
+});
