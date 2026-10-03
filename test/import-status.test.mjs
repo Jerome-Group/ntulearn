@@ -348,3 +348,38 @@ async function noOp() {}
 function capture(writes) {
   return async (path, source) => writes.push({ path, value: JSON.parse(source) });
 }
+
+test("publishes optional source-edition outcome counters while retaining legacy v1 compatibility", async () => {
+  const writes = [];
+  await withImportStatus({
+    destination: "/course",
+    attempt: async () => ({
+      ...RESULT,
+      newEditions: 2,
+      reusedFiles: 3,
+      unresolvedIdentity: 1,
+      publicationConflicts: 1,
+      failures: [{ error: "identity unresolved" }],
+    }),
+    clock: sequence("2026-09-08T00:00:00.000Z", "2026-09-08T00:01:00.000Z"),
+    read: missing,
+    write: capture(writes),
+    createDestination: noOp,
+  });
+  const receipt = writes.at(-1).value;
+  assert.equal(receipt.status, "partial");
+  assert.equal(receipt.counts.newEditions, 2);
+  assert.equal(receipt.counts.reusedFiles, 3);
+  assert.equal(receipt.counts.unresolvedIdentity, 1);
+  assert.equal(receipt.counts.publicationConflicts, 1);
+  assert.equal(isValidImportStatus(receipt, receipt.finishedAt), true);
+  assert.equal(isValidImportStatus(FIXTURE, FIXTURE.finishedAt), true);
+  for (const value of [-1, 1.5, "1"])
+    assert.equal(
+      isValidImportStatus(
+        { ...receipt, counts: { ...receipt.counts, newEditions: value } },
+        receipt.finishedAt,
+      ),
+      false,
+    );
+});

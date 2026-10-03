@@ -446,17 +446,28 @@ afterwards is hand work.
 Incremental and **additive**: unchanged downloads are skipped, and nothing is ever deleted, so a
 run that sees less than the last one leaves the earlier files where they are. Occupied course files
 are retained: differing downloaded bytes or generated text produce an actionable failure and a partial
-receipt, including annotated stand-ins and earlier-number placements. Sync does not overwrite them,
-create rescue copies or rename anything. Compare the retained file with NTULearn and choose an empty
-destination before retrying — [ADR-0016](docs/adr/0016-occupied-course-files-require-manual-conflict-resolution.md).
-Identical bytes are accepted without a write. Recorded actual byte counts avoid repeated downloads
-when upstream sizes are inaccurate; these cached size checks do not prove content freshness or
-integrity. Legacy records without byte counts are fetched and compared again. Page text and
-announcements become Markdown; attachments keep their original file type. Each course gets a
-`Course.md` overview and an `Announcements/` folder, and the content tree is reproduced as
-numbered folders in NTULearn's own order. `Sync status.json`, `Last synced.md` and separate media
-status publications remain machine-owned operational records and are rewritten; keep annotations
-in course artifacts instead.
+receipt, including annotated stand-ins and earlier-number placements. Sync never overwrites or renames
+occupied files. Distinct attachments whose names collide receive stable identity suffixes; revised
+announcements receive immutable identity/digest editions alongside the original, with retained-original links when available
+and upstream-course links. Existing legacy files and user edits remain intact. Edited editions or
+occupied different suffixes remain conflicts; compare them with NTULearn before retrying.
+[ADR-0019](docs/adr/0019-source-editions-add-distinct-identities-and-announcement-revisions.md) narrowly
+extends [ADR-0016](docs/adr/0016-occupied-course-files-require-manual-conflict-resolution.md).
+
+Positive identity/path/SHA-256 evidence preserves recorded placements through reorder, later siblings
+and removed siblings. Exclusive checksum-named records under `Source editions/<identity>/` keep that
+placement evidence in the course destination; each identity admits at most 128 records of 64 KiB each.
+New suffixed filename leaves stay within 160 UTF-8 bytes. Missing/ambiguous identities and malformed
+provenance refuse rather than guess. Losing State never grants ownership to an ambiguous legacy file.
+Sync checks current digests before reusing source files; inaccurate upstream sizes do not trigger a
+second download. Query/session-bearing addresses are hashed in new attachment cache records rather
+than retained. CLI results and the compatible version-1 receipt expose `newEditions`, `reusedFiles`,
+`unresolvedIdentity` and `publicationConflicts`. Verify shares placement resolution and checks presence;
+it reads bounded source-placement metadata, never State or current source bytes, and proves neither
+freshness, fidelity nor exhaustive upstream visibility. Page text and announcements remain Markdown;
+attachments retain their original type. Course overview, announcements and numbered course folders
+keep their established layout. Machine receipts, stamps and media statuses remain operational
+publications; put annotations in course artifacts instead.
 
 A file already in the destination under an earlier number is left where it is rather than written a
 second time. A name carries its item's position in the course, so one item inserted upstream moves

@@ -1,5 +1,7 @@
 # Occupied course files require manual conflict resolution
 
+**Narrowed by [ADR-0019](0019-source-editions-add-distinct-identities-and-announcement-revisions.md):** exclusive names for distinct colliding attachment identities and announcement revisions only. Overwrite, rename and pruning prohibitions remain.
+
 A sync creates an absent course artifact or accepts identical bytes; it never replaces different
 occupied bytes. A differing attachment, page, announcement, overview or stand-in produces an
 actionable failure and a partial receipt. The existing file stays untouched. An earlier-number
