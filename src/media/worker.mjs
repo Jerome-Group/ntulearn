@@ -257,7 +257,14 @@ async function runMediaQueueUnlocked({
         ? {
             globalStop: false,
             stoppedAtBoundary: false,
-            summary: await summarizeUnprocessedCourse({ statePath, course, readQueue, media }),
+            summary: await summarizeUnprocessedCourse({
+              statePath,
+              course,
+              readQueue,
+              media,
+              updateJob: globalStop ? undefined : updateJob,
+              now: readNow,
+            }),
           }
         : await runCourse({
             statePath,
@@ -323,21 +330,35 @@ async function runMediaQueueUnlocked({
   });
 }
 
-async function summarizeUnprocessedCourse({ statePath, course, readQueue, media }) {
+async function summarizeUnprocessedCourse({ statePath, course, readQueue, media, updateJob, now }) {
   try {
     const loaded = await readQueue({ statePath, courseKey: course.key, course });
     const record = loaded?.record;
     if (!record || !Array.isArray(record.queue)) return missingQueueSummary(course, loaded?.path);
     if (record.complete !== true) return discoveryIncompleteSummary(course, loaded.path, record);
+    const queue = [];
+    for (const job of record.queue) {
+      const evidence = await mediaArtifactEvidenceUpdate(job, {
+        mediaRoot: media?.mediaRoot,
+        course,
+      });
+      if (evidence?.artifacts && updateJob) {
+        const result = await persistJobUpdate({
+          updateJob,
+          statePath,
+          course,
+          job,
+          update: evidence,
+          now,
+        });
+        if (result.error) throw result.error;
+        queue.push(result.job);
+      } else queue.push({ ...job, ...evidence });
+    }
     return courseSummary({
       course,
       queuePath: loaded.path,
-      queue: await Promise.all(
-        record.queue.map(async (job) => ({
-          ...job,
-          ...(await mediaArtifactEvidenceUpdate(job, { mediaRoot: media?.mediaRoot, course })),
-        })),
-      ),
+      queue,
       processed: 0,
       discovery: record,
     });
