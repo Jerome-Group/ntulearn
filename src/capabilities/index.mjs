@@ -89,6 +89,7 @@ const routes = {
       "src/media/captions.mjs",
       "src/media/production-youtube.mjs",
       "src/media/production-kaltura.mjs",
+      "src/media/production-remux.mjs",
       "src/media/kaltura-responses.mjs",
     ],
     [
@@ -99,6 +100,7 @@ const routes = {
       "test/kaltura.test.mjs",
       "test/kaltura-responses.test.mjs",
       "test/media-production-kaltura.test.mjs",
+      "test/media-production-remux.test.mjs",
       "test/youtube.test.mjs",
       "test/direct.test.mjs",
     ],

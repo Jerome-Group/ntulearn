@@ -100,7 +100,17 @@ async function remux({
   try {
     await context.runProcess(
       context.commands.ffmpeg,
-      ["-nostats", "-y", "-i", input, ...argumentsFor, output],
+      [
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-nostats",
+        "-y",
+        "-i",
+        input,
+        ...argumentsFor,
+        output,
+      ],
       {
         signal,
         timeoutMs: 4 * HOUR_MS,

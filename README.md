@@ -362,6 +362,15 @@ That diagnostic property does not permit checkpoint recovery after unsafe cleanu
 to 8 MiB stdout and 256 KiB stderr, with smaller protocol-specific stdout bounds; overflow
 fails rather than returning truncated successful output.
 
+Kaltura, direct and YouTube remuxes use FFmpeg `-hide_banner -loglevel warning -nostats`:
+routine banner, progress and HLS segment information are suppressed; warning/error diagnostics
+remain within the same 256 KiB stderr bound. Codec/container and audio handling remain unchanged.
+Native failures, output overflow, interruption and unconfirmed cleanup still refuse acquisition;
+public errors identify the stage and remedy without raw diagnostics or signed source URLs.
+`test/media-production-remux.test.mjs`, indexed under media acquisition, qualifies every route
+offline. A locally generated HLS fixture can qualify installed tooling separately; neither fixture
+evidence nor an acquired file proves an actual source retry, transcript fidelity or completeness.
+
 Runtime daemonization or descendants creating another session/process group (including
 `setsid` or independently detached children) are unsupported. Such descendants can outlive a
 successful parent and are outside the original-group evidence: successful cleanup does not
