@@ -97,3 +97,54 @@ test("publication retains its staged bytes when the parent changes after opening
   assert.match(partials[0], /^edition\.md\.part-/);
   assert.equal(await readFile(join(retained, partials[0]), "utf8"), content.toString());
 });
+
+test("read limit evidence distinguishes file bytes, aggregate bytes and elapsed time without exposing inputs", async (t) => {
+  const f = await historicalFixture(t),
+    path = join(f.root, "bounded-read");
+  await writeFile(path, "12345");
+  for (const [limits, expected] of [
+    [
+      { fileBytes: 4, totalBytes: 20, timeoutMs: 1000 },
+      { kind: "file-bytes", observed: 5, maximum: 4 },
+    ],
+    [
+      { fileBytes: 5, totalBytes: 4, timeoutMs: 1000 },
+      { kind: "read-bytes", observed: 5, maximum: 4 },
+    ],
+  ]) {
+    const reads = historicalReads({ limits });
+    await assert.rejects(reads.read(path), (error) => {
+      assert.equal(error.code, "HISTORICAL_READ_LIMIT");
+      assert.deepEqual(error.limit, expected);
+      return true;
+    });
+    assert.equal(reads.evidence().readBytes, 0);
+  }
+  let time = 500;
+  const reads = historicalReads({
+    now: () => time,
+    limits: { fileBytes: 5, totalBytes: 9, timeoutMs: 1000 },
+  });
+  await reads.read(path);
+  await assert.rejects(reads.read(path), (error) => {
+    assert.deepEqual(error.limit, { kind: "read-bytes", observed: 10, maximum: 9 });
+    return true;
+  });
+  time += 1000;
+  assert.throws(
+    () => reads.active(),
+    (error) => {
+      assert.equal(error.code, "HISTORICAL_READ_LIMIT");
+      assert.deepEqual(error.limit, { kind: "elapsed-ms", observed: 1000, maximum: 1000 });
+      return true;
+    },
+  );
+  assert.deepEqual(reads.evidence(), {
+    readBytes: 5,
+    readFiles: 1,
+    maximumReadBytes: 9,
+    maximumFileBytes: 5,
+    elapsedMs: 1000,
+    timeoutMs: 1000,
+  });
+});

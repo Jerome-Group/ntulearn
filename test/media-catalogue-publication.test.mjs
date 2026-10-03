@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import { readFile, writeFile, readdir, mkdir, rename, symlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -208,4 +209,104 @@ test("unknown staging replacement refuses cleanup and retains foreign bytes rath
   assert.equal(await readFile(foreign, "utf8"), "Foreign replacement stage");
   assert.ok(result.evidence.written > 0);
   assert.equal(result.evidence.promoted, 0);
+});
+
+test("resumed journal deadline reports fixed stage/cap and retains an unchanged plan for eventual explicit resume", async (t) => {
+  const f = await fixture(t);
+  let steps = 0;
+  const interrupted = await transcriptCatalogue(
+    { ...f.options, mode: "publish" },
+    {
+      ...f.dependencies,
+      afterOutput: () => {
+        if (++steps === 4) throw new Error("synthetic interruption");
+      },
+    },
+  );
+  assert.equal(interrupted.checks[0].code, "CATALOGUE_EVIDENCE_INVALID");
+  const manifest = JSON.parse(await readFile(f.catalogue));
+  const history = join(
+    f.config.courses[0].destination,
+    "Transcript editions/.catalogue-history",
+    manifest.id,
+  );
+  const journal = await readFile(join(history, "journal.json"));
+  const plan = await readFile(f.catalogue);
+  let time = 1000;
+  const limited = await transcriptCatalogue(
+    { ...f.options, mode: "publish" },
+    {
+      ...f.dependencies,
+      now: () => time,
+      afterOutput: () => {
+        time += 120000;
+      },
+    },
+  );
+  assert.equal(limited.checks[0].code, "CATALOGUE_LIMIT");
+  assert.equal(limited.evidence.stage, "snapshot");
+  assert.deepEqual(limited.evidence.limit, {
+    kind: "elapsed-ms",
+    observed: 120000,
+    maximum: 120000,
+  });
+  assert.equal(limited.evidence.reads.elapsedMs, 120000);
+  assert.equal(limited.evidence.reads.timeoutMs, 120000);
+  assert.equal(limited.evidence.existing, 1);
+  assert.ok(limited.evidence.snapshotChecks > 0);
+  assert.ok(limited.evidence.snapshotInputChecks > 0);
+  assert.ok(limited.evidence.snapshotScans > 0);
+  assert.match(limited.checks[0].action, /explicitly retrying the same plan/);
+  assert.deepEqual(await readFile(join(history, "journal.json")), journal);
+  assert.deepEqual(await readFile(f.catalogue), plan);
+  const resumed = await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies);
+  assert.equal(resumed.status, "passed");
+  assert.equal((await transcriptCatalogue({ ...f.options, mode: "verify" })).status, "passed");
+  assert.equal(await readFile(f.originalPath, "utf8"), f.original);
+  assert.equal(await readFile(f.sourcePath, "utf8"), f.raw);
+});
+
+test("refused manifest bytes expose fixed cap and stage without private filenames", async (t) => {
+  const f = await fixture(t);
+  const bytes = 16 * 1024 ** 2 + 1;
+  await writeFile(f.catalogue, Buffer.alloc(bytes, 0x20));
+  const result = await transcriptCatalogue({ ...f.options, mode: "publish" }, f.dependencies);
+  assert.equal(result.checks[0].code, "CATALOGUE_LIMIT");
+  assert.equal(result.evidence.stage, "manifest-read");
+  assert.deepEqual(result.evidence.limit, {
+    kind: "file-bytes",
+    observed: bytes,
+    maximum: bytes - 1,
+  });
+  assert.equal(result.evidence.reads.readBytes, 0);
+  assert.equal(result.evidence.written, 0);
+  assert.equal(result.evidence.promoted, 0);
+  assert.equal(JSON.stringify(result).includes(f.root), false);
+  assert.equal((await readFile(f.catalogue)).length, bytes);
+});
+
+test("public limit evidence retains only validated numeric counters and fixed kinds", async (t) => {
+  const f = await fixture(t);
+  for (const [kind, expected] of [
+    ["read-bytes", { kind: "read-bytes", observed: 9, maximum: 8 }],
+    ["private arbitrary kind", undefined],
+  ]) {
+    const result = await transcriptCatalogue(
+      { ...f.options, mode: "publish" },
+      {
+        ...f.dependencies,
+        admission: async () => {
+          throw Object.assign(new Error("private raw exception"), {
+            code: "HISTORICAL_READ_LIMIT",
+            limit: { kind, observed: 9, maximum: 8, path: f.root, id: "private-id" },
+          });
+        },
+      },
+    );
+    assert.equal(result.checks[0].code, "CATALOGUE_LIMIT");
+    assert.equal(result.evidence.stage, "admission");
+    assert.deepEqual(result.evidence.limit, expected);
+    for (const secret of [f.root, "private-id", "private raw exception", "private arbitrary kind"])
+      assert.equal(JSON.stringify(result).includes(secret), false);
+  }
 });

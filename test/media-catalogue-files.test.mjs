@@ -98,3 +98,31 @@ test("bounded reader refuses oversize evidence, changed bytes and aborted inspec
   await writeFile(f.originalPath, "x".repeat(16 * 1024 ** 2 + 1));
   await assert.rejects(catalogueReads().file(f.originalPath));
 });
+
+test("scan refusals report unchanged depth and entry caps with numeric observations", async (t) => {
+  const f = await historicalFixture(t),
+    root = f.config.courses[0].destination;
+  let directory = root;
+  for (let depth = 0; depth < 17; depth++) {
+    directory = join(directory, "nested");
+    await mkdir(directory);
+  }
+  await assert.rejects(scanCatalogue(root, catalogueReads()), (error) => {
+    assert.equal(error.code, "CATALOGUE_LIMIT");
+    assert.deepEqual(error.limit, { kind: "scan-depth", observed: 17, maximum: 16 });
+    return true;
+  });
+  let probes = 0;
+  const reads = {
+    probe: async () => {
+      if (++probes === 1) return root;
+      if (probes === 2) return Array.from({ length: 20001 }, (_, index) => `item-${index}`);
+      return { isSymbolicLink: () => false, isDirectory: () => false, isFile: () => true };
+    },
+  };
+  await assert.rejects(scanCatalogue(root, reads), (error) => {
+    assert.equal(error.code, "CATALOGUE_LIMIT");
+    assert.deepEqual(error.limit, { kind: "scan-entries", observed: 20001, maximum: 20000 });
+    return true;
+  });
+});

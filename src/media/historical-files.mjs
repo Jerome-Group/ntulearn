@@ -14,35 +14,47 @@ export const HISTORICAL_LIMITS = Object.freeze({
   timeoutMs: 120000,
 });
 export const historicalDigest = (value) => createHash("sha256").update(value).digest("hex");
-export const historicalFailure = (code) =>
+export const historicalFailure = (code, limit) =>
   Object.assign(
     new Error(
       "Historical formatting evidence changed or exceeds its bounds. Inspect the private plan and retained files, then retry plan; originals are retained.",
     ),
-    code ? { code } : {},
+    { ...(code ? { code } : {}), ...(limit ? { limit } : {}) },
   );
 export const insideHistoricalRoot = (root, path) => path.startsWith(root + sep);
 
-export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
+export function historicalReads({ signal, limits = HISTORICAL_LIMITS, now = Date.now } = {}) {
   let entries = 0,
     bytes = 0,
     files = 0;
-  const deadline = Date.now() + limits.timeoutMs;
+  const started = now(),
+    deadline = started + limits.timeoutMs;
+  const elapsedMs = () =>
+    Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(now() - started)));
+  const limitFailure = (kind, observed, maximum) =>
+    historicalFailure("HISTORICAL_READ_LIMIT", { kind, observed, maximum });
   function active() {
     signal?.throwIfAborted();
-    if (Date.now() >= deadline) throw historicalFailure("HISTORICAL_READ_LIMIT");
+    if (now() >= deadline) throw limitFailure("elapsed-ms", elapsedMs(), limits.timeoutMs);
   }
   const probe = (operation) => {
     active();
     return withEvaluationRead(operation, {
       signal,
-      timeoutMs: Math.max(1, Math.min(5000, deadline - Date.now())),
+      timeoutMs: Math.max(1, Math.min(5000, deadline - now())),
     });
   };
   return {
     active,
     probe,
-    evidence: () => ({ readBytes: bytes, readFiles: files, maximumReadBytes: limits.totalBytes }),
+    evidence: () => ({
+      readBytes: bytes,
+      readFiles: files,
+      maximumReadBytes: limits.totalBytes,
+      maximumFileBytes: limits.fileBytes,
+      elapsedMs: elapsedMs(),
+      timeoutMs: limits.timeoutMs,
+    }),
     async read(path, { includeIdentity = false } = {}) {
       return probe(async () => {
         if ((await realpath(path)) !== path) throw historicalFailure();
@@ -53,8 +65,10 @@ export function historicalReads({ signal, limits = HISTORICAL_LIMITS } = {}) {
         try {
           const before = await handle.stat();
           if (!before.isFile()) throw historicalFailure();
-          if (before.size > limits.fileBytes || bytes + before.size > limits.totalBytes)
-            throw historicalFailure("HISTORICAL_READ_LIMIT");
+          if (before.size > limits.fileBytes)
+            throw limitFailure("file-bytes", before.size, limits.fileBytes);
+          if (bytes + before.size > limits.totalBytes)
+            throw limitFailure("read-bytes", bytes + before.size, limits.totalBytes);
           const parts = [];
           let received = 0;
           const buffer = Buffer.alloc(Math.min(limits.fileBytes + 1, 64 * 1024));
