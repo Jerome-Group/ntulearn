@@ -888,3 +888,43 @@ relevant file, 256 MiB of admitted reads/output per operation and a 120-second l
 The bounded owned-fixture check is `node --test test/media-historical.test.mjs test/media-historical-format.test.mjs test/media-historical-files.test.mjs test/media-historical-inventory.test.mjs`.
 Use `npm run --silent media:format -- <plan|apply|verify> /absolute/private/plan.json` when
 consuming the structured JSON result; exit 0 means passed, 1 failed and 2 usage/blocked.
+
+### Stable transcript catalogue
+
+`npm run --silent media:catalogue -- inspect` reads configured local evidence and emits a **private**
+metadata report with course/recording titles, reading editions, source flags, current media verdicts
+and local provenance links. No transcript bodies or session contents are emitted. It uses no browser,
+network or model. All configured courses and unassociated retained evidence are accounted for within
+bounded local roots; unseen upstream recordings remain outside this authority. Recognized recordings,
+unresolved review appearances and positively classified non-recordings have separate course counts and
+sections. Queue legacy-path fallback remains supported. A configured profile's physical metadata boundary
+(including an absent leaf's physical ancestor) is pinned and rechecked before inventory; overlapping
+course/media roots refuse without reading profile contents. Explicit manifest, selection and plan-receipt
+paths receive the same logical/physical exclusion before their first content read or write; safe siblings
+remain usable.
+
+`npm run --silent media:catalogue -- plan /absolute/private/catalogue.json` writes an exclusive plan
+and its producer receipt. Optional final argument is a private JSON array of explicit selections:
+`[{"recordingId":"<local-recording-identity>","sha256":"<eligible-edition-digest>"}]`. Select only when
+inspect reports distinct eligible candidates; equivalent content and source/native/ownership proofs group automatically.
+Use inspect's `selectionSha256` to distinguish equal reading bytes with different proof; a plain content hash
+is accepted only when it uniquely identifies an eligible proof group. Recovered verified
+candidates precede current-source paragraph editions. Source flags exclude paragraph preference;
+unknown recovery timing refuses. Reading verification is lexical/provenance evidence, with acoustic
+verification unrun; canonical source review and media readiness stay separate.
+
+Owner publication: `npm run --silent media:catalogue -- publish /absolute/private/catalogue.json PUBLISH_TRANSCRIPT_CATALOGUE`.
+It requires an idle exclusive queue lock, accessible RAID0/reserve and unchanged plan inputs. Each course
+gets `Transcript editions/index.md`, managed producer evidence and immutable `.catalogue-history/`
+snapshots/beforeimages. Every immutable and promoted output checks its actual course destination and
+byte budget as well as the media admission reserve. Unknown or student-edited index/edition bytes refuse. No original transcript,
+raw source, queue or status is changed. Sync never publishes the catalogue automatically.
+
+`npm run --silent media:catalogue -- verify /absolute/private/catalogue.json` checks current inputs,
+linked editions, producer evidence and index history. Actions return bounded structured JSON: exits
+0 passed, 1 failed, 2 blocked/usage. An interrupted journalled publication can repeat the same unchanged
+plan; input changes require a fresh plan path. Preserve plans, receipts, history and candidate evidence.
+Generation-time recovery queue hashes do not replace current per-recording catalogue ownership checks;
+recovery run/publication keeps its stricter whole-manifest pins. Current media gets full SHA checks at
+admission/final publication and bounded descriptor-bound identity checks between promotions. Historical paragraph links prove retained text/provenance; retained media links remain unproven unless
+independent current recovery ownership supplies positive media evidence. See ADR-0022 for preservation/race limits.

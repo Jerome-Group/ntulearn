@@ -34,6 +34,10 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
   const path = resolve(manifestPath);
   const manifestFile = await recoveryFile(path, { maximumBytes: 256 * 1024, signal });
   const manifest = JSON.parse(manifestFile.content.toString("utf8"));
+  return inspectManifest({ manifest, manifestFile, path, config, signal });
+}
+
+async function inspectManifest({ manifest, manifestFile, path, config, signal }) {
   if (
     manifest.schemaVersion !== 1 ||
     !RECOVERY_POLICIES.includes(manifest.policy) ||
@@ -56,7 +60,7 @@ export async function readRecoveryManifest({ manifestPath, config, signal }) {
     jobs = [],
     queues = new Map(),
     protectedAbsences = [],
-    protectedInputs = [fingerprint(manifestFile)];
+    protectedInputs = manifestFile ? [fingerprint(manifestFile)] : [];
   for (const course of config.courses) {
     const destination = await realpath(course.destination);
     if (courses.has(course.key)) throw recoveryFailure();
@@ -293,4 +297,56 @@ export async function assertRecoveryInputs(manifest, signal, { includeMedia = tr
       throw recoveryFailure("RECOVERY_INPUT_CHANGED");
   }
   await assertRecoveryAbsences(manifest.protectedAbsences, signal);
+}
+
+// Catalogue admission uses current per-recording proof, not the generation-time queue snapshot.
+// The run/publication reader above keeps its original whole-manifest checks unchanged.
+export async function readCurrentRecoveryOwnership({ recording, policy, config, signal }) {
+  const path = join(await realpath(config.media.mediaRoot), "catalogue-current.json");
+  const entry = {
+    courseKey: recording.courseKey,
+    recordingId: recording.recordingId,
+    source: recording.source,
+    media: recording.media,
+  };
+  if (recording.authority === INCOMPLETE_RECOVERY_AUTHORITY) {
+    const state = await recoveryFile(recording.state.path, { signal });
+    const queue = await recoveryFile(mediaQueuePath(config.statePath, recording.courseKey), {
+      signal,
+    });
+    entry.authority = {
+      kind: INCOMPLETE_RECOVERY_AUTHORITY,
+      state: fingerprint(state),
+      queue: fingerprint(queue),
+      metadata: { path: recording.metadata.path, absent: true },
+      original: { path: recording.original.path, absent: true },
+    };
+  }
+  const result = await inspectManifest({
+    manifest: {
+      schemaVersion: 1,
+      policy,
+      budgets: { ...RECOVERY_MAXIMUM_BUDGETS },
+      recordings: [entry],
+    },
+    path,
+    config,
+    signal,
+  });
+  const current = result.recordings[0];
+  for (const key of ["source", "media", "metadata", "original"]) {
+    if (JSON.stringify(current[key]) !== JSON.stringify(recording[key]))
+      throw recoveryFailure("RECOVERY_INPUT_CHANGED");
+  }
+  const media = await recoveryFile(current.media.path, {
+    maximumBytes: current.media.bytes,
+    signal,
+    retain: false,
+    includeIdentity: true,
+  });
+  if (media.sha256 !== current.media.sha256 || media.bytes !== current.media.bytes)
+    throw recoveryFailure("RECOVERY_INPUT_CHANGED");
+  await assertRecoveryInputs(result, signal, { includeMedia: false });
+  result.mediaIdentity = { path: media.path, identity: media.identity };
+  return result;
 }
