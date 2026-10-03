@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile, writeFile, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, unlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -214,12 +214,14 @@ test("expired mandatory verification publishes global red and never composes acq
   assert.equal(acquisitions, 1);
 });
 
-test("keeps full startup verification mandatory when capacity initialization stalls", async () => {
+test("keeps full startup verification mandatory when capacity initialization stalls", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-production-capacity-stall-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
   let runtimeVerifications = 0;
   const result = await Promise.race([
     runProductionMedia({
       config: {
-        statePath: "/unused/synthetic-state.json",
+        statePath: join(root, "state.json"),
         courses: [course("SYNTHETIC")],
         media: {},
       },
@@ -242,7 +244,7 @@ test("keeps full startup verification mandatory when capacity initialization sta
   assert.equal(runtimeVerifications, 1);
   assert.equal(result.digest.globalStop, true);
   assert.equal(result.exitCode, 1);
-  assert.match(result.digest.message, /timed out.*retry/);
+  assert.equal(result.digest.stopFailures[0].code, "MEDIA_FILE_CLEANUP");
 });
 
 test("cancellation during preflight settles verification and prevents acquisition", async () => {

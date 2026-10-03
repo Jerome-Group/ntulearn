@@ -1,3 +1,4 @@
+import { mediaAdmissionObservation } from "./media-admission.mjs";
 import { lstat, realpath, statfs } from "node:fs/promises";
 import { relative, isAbsolute, join } from "node:path";
 import { loadConfig } from "../config.mjs";
@@ -45,6 +46,7 @@ export async function localHealth({
   ];
   if (!loaded.config) return capabilityResult("health", [...checks, loaded.check]);
   const config = loaded.config;
+  checks.push(await mediaAdmissionObservation(config.statePath, inspect));
   checks.push(
     observation(
       "configuration",

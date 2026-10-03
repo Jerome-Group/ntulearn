@@ -65,7 +65,8 @@ export async function runMediaQueue(options = {}) {
       run: () => runMediaQueueUnlocked({ ...options, lock: null }),
     });
   } catch (error) {
-    if (error?.code !== "MEDIA_QUEUE_LOCK_HELD") throw error;
+    const admissionSafety = ["MEDIA_SAFETY_BARRIER", "MEDIA_FILE_CLEANUP"].includes(error?.code);
+    if (error?.code !== "MEDIA_QUEUE_LOCK_HELD" && !admissionSafety) throw error;
     const startedAt = validDate(readNow(), "media queue start");
     const finishedAt = validDate(readNow(), "media queue finish");
     return persistMediaDigest({
@@ -76,11 +77,15 @@ export async function runMediaQueue(options = {}) {
       startedAt,
       finishedAt,
       courses: [],
-      globalStop: false,
+      globalStop: admissionSafety,
+      ...(admissionSafety ? { stopFailures: [workerStopFailure(error, "admission")] } : {}),
       stoppedAtBoundary: false,
       interrupted: Boolean(signal?.aborted),
-      verdict: "yellow",
-      message: "Media queue skipped: another run is active.",
+      verdict: admissionSafety ? "red" : "yellow",
+      lockRefused: !admissionSafety,
+      message: admissionSafety
+        ? publicMediaError(error)
+        : "Media queue skipped: an existing lock prevents admission. Confirm owned-run settlement before retrying.",
       summarizeCounts,
       write,
     });
@@ -126,11 +131,22 @@ async function runMediaQueueUnlocked({
   try {
     await assertMediaSafetyAdmission({ statePath, courses, readQueue });
   } catch (error) {
+    await persistMediaSafetyBarrier({ statePath, error, now: readNow });
     for (const course of selectedCourses)
-      await persistRedCourseStatus({ course, now: readNow, error });
+      await persistRedCourseStatus({ statePath, course, now: readNow, error });
     const summaries = [];
     for (const course of selectedCourses)
-      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue, media }));
+      summaries.push(
+        (
+          await summarizeUnprocessedCourse({
+            statePath,
+            course,
+            readQueue,
+            media,
+            inspectArtifacts: false,
+          })
+        ).summary,
+      );
     return persistMediaDigest({
       statePath,
       interruptionReason: signal?.aborted ? publicMediaError(signal.reason) : undefined,
@@ -212,6 +228,7 @@ async function runMediaQueueUnlocked({
       await Promise.all(
         selectedCourses.map((course) =>
           persistRedCourseStatus({
+            statePath,
             course,
             discovery: { complete: false, verdict: "red", limitations: [message] },
             queue: [],
@@ -221,7 +238,17 @@ async function runMediaQueueUnlocked({
       );
     const summaries = [];
     for (const course of selectedCourses) {
-      summaries.push(await summarizeUnprocessedCourse({ statePath, course, readQueue, media }));
+      summaries.push(
+        (
+          await summarizeUnprocessedCourse({
+            statePath,
+            course,
+            readQueue,
+            media,
+            inspectArtifacts: false,
+          })
+        ).summary,
+      );
     }
     return persistMediaDigest({
       statePath,
@@ -258,18 +285,15 @@ async function runMediaQueueUnlocked({
   for (const course of selectedCourses) {
     const outcome =
       globalStop || stoppedAtBoundary || interrupted
-        ? {
-            globalStop: false,
-            stoppedAtBoundary: false,
-            summary: await summarizeUnprocessedCourse({
-              statePath,
-              course,
-              readQueue,
-              media,
-              updateJob: globalStop ? undefined : updateJob,
-              now: readNow,
-            }),
-          }
+        ? await summarizeUnprocessedCourse({
+            statePath,
+            course,
+            readQueue,
+            media,
+            updateJob: globalStop ? undefined : updateJob,
+            inspectArtifacts: !globalStop,
+            now: readNow,
+          })
         : await runCourse({
             statePath,
             course,
@@ -338,18 +362,36 @@ async function runMediaQueueUnlocked({
   });
 }
 
-async function summarizeUnprocessedCourse({ statePath, course, readQueue, media, updateJob, now }) {
+async function summarizeUnprocessedCourse({
+  statePath,
+  course,
+  readQueue,
+  media,
+  updateJob,
+  now,
+  inspectArtifacts = true,
+}) {
+  let failureStage = "queue-read";
   try {
     const loaded = await readQueue({ statePath, courseKey: course.key, course });
     const record = loaded?.record;
-    if (!record || !Array.isArray(record.queue)) return missingQueueSummary(course, loaded?.path);
-    if (record.complete !== true) return discoveryIncompleteSummary(course, loaded.path, record);
+    if (!record || !Array.isArray(record.queue))
+      return summaryOutcome(missingQueueSummary(course, loaded?.path), false, inspectArtifacts);
+    if (record.complete !== true)
+      return summaryOutcome(
+        discoveryIncompleteSummary(course, loaded.path, record),
+        false,
+        inspectArtifacts,
+      );
+    failureStage = "artifact-evidence";
     const queue = [];
     for (const job of record.queue) {
-      const evidence = await mediaArtifactEvidenceUpdate(job, {
-        mediaRoot: media?.mediaRoot,
-        course,
-      });
+      const evidence = inspectArtifacts
+        ? await mediaArtifactEvidenceUpdate(job, {
+            mediaRoot: media?.mediaRoot,
+            course,
+          })
+        : null;
       if (evidence?.artifacts && updateJob) {
         const result = await persistJobUpdate({
           updateJob,
@@ -363,16 +405,30 @@ async function summarizeUnprocessedCourse({ statePath, course, readQueue, media,
         queue.push(result.job);
       } else queue.push({ ...job, ...evidence });
     }
-    return courseSummary({
+    const summary = courseSummary({
       course,
       queuePath: loaded.path,
       queue,
       processed: 0,
       discovery: record,
     });
+    return summaryOutcome(summary, false, inspectArtifacts);
   } catch (error) {
-    return queueReadFailureSummary(course, publicMediaError(error));
+    await persistMediaSafetyBarrier({ statePath, error, now });
+    const summary = queueReadFailureSummary(course, publicMediaError(error));
+    const globalStop = isGlobalMediaSafetyFailure(error);
+    if (inspectArtifacts && globalStop)
+      summary.stopFailures = [workerStopFailure(error, failureStage)];
+    return summaryOutcome(summary, globalStop, inspectArtifacts);
   }
+}
+
+function summaryOutcome(summary, globalStop = false, inspectArtifacts = true) {
+  if (!inspectArtifacts) {
+    summary.artifactVerification = "unrun";
+    summary.countsBasis = "retained-queue";
+  }
+  return { summary, globalStop, stoppedAtBoundary: false };
 }
 
 export function isOvernightWindow(value, timeZone = null) {
@@ -412,8 +468,10 @@ async function runCourse({
   try {
     loaded = await readQueue({ statePath, courseKey: course.key, course });
   } catch (error) {
+    await persistMediaSafetyBarrier({ statePath, error, now });
     if (isGlobalMediaSafetyFailure(error)) addWorkerStopFailure(stopFailures, error, "queue-read");
     await persistRedCourseStatus({
+      statePath,
       stopFailures,
       course,
       discovery: { complete: false, verdict: "red" },
@@ -433,6 +491,7 @@ async function runCourse({
   const record = loaded?.record;
   if (!record || !Array.isArray(record.queue)) {
     await persistRedCourseStatus({
+      statePath,
       course,
       discovery: {
         complete: false,
@@ -484,9 +543,18 @@ async function runCourse({
         Object.assign(job, reconciled.job);
       }
     } catch (error) {
+      await persistMediaSafetyBarrier({ statePath, error, now });
       globalStop = true;
       addWorkerStopFailure(stopFailures, error, "artifact-evidence");
-      await persistRedCourseStatus({ stopFailures, course, discovery: record, queue, now, error });
+      await persistRedCourseStatus({
+        statePath,
+        stopFailures,
+        course,
+        discovery: record,
+        queue,
+        now,
+        error,
+      });
       break;
     }
     if (finishedJob(job)) continue;
@@ -519,8 +587,10 @@ async function runCourse({
       return { error };
     });
     if (active.error) {
+      await persistMediaSafetyBarrier({ statePath, error: active.error, now });
       addWorkerStopFailure(stopFailures, active.error, "queue-active");
       await persistRedCourseStatus({
+        statePath,
         stopFailures,
         course,
         discovery: record,
@@ -613,8 +683,10 @@ async function runCourse({
         now,
       }).catch((error) => ({ error }));
       if (failed.error) {
+        await persistMediaSafetyBarrier({ statePath, error: failed.error, now });
         addWorkerStopFailure(stopFailures, failed.error, "queue-failure");
         await persistRedCourseStatus({
+          statePath,
           stopFailures,
           course,
           discovery: record,
@@ -644,9 +716,11 @@ async function runCourse({
         }),
       }).catch((error) => ({ error }));
       if (saved.error) {
+        await persistMediaSafetyBarrier({ statePath, error: saved.error, now });
         globalStop = true;
         addWorkerStopFailure(stopFailures, saved.error, "queue-interruption");
         await persistRedCourseStatus({
+          statePath,
           stopFailures,
           course,
           discovery: record,
@@ -667,9 +741,11 @@ async function runCourse({
         now,
       }).catch((error) => ({ error }));
       if (checkpoint.error) {
+        await persistMediaSafetyBarrier({ statePath, error: checkpoint.error, now });
         globalStop = true;
         addWorkerStopFailure(stopFailures, checkpoint.error, "queue-checkpoint");
         await persistRedCourseStatus({
+          statePath,
           stopFailures,
           course,
           discovery: record,
@@ -693,9 +769,11 @@ async function runCourse({
         now,
       }).catch((error) => ({ error }));
       if (failed.error) {
+        await persistMediaSafetyBarrier({ statePath, error: failed.error, now });
         globalStop = true;
         addWorkerStopFailure(stopFailures, failed.error, "queue-failure");
         await persistRedCourseStatus({
+          statePath,
           stopFailures,
           course,
           discovery: record,
@@ -716,6 +794,7 @@ async function runCourse({
         { mediaRoot: media?.mediaRoot, course },
       );
     } catch (error) {
+      await persistMediaSafetyBarrier({ statePath, error, now });
       evidenceAfterRun = failureUpdate(error, finishedAt);
       globalStop = isGlobalMediaSafetyFailure(error);
       if (globalStop) addWorkerStopFailure(stopFailures, error, "artifact-evidence");
@@ -729,9 +808,11 @@ async function runCourse({
       now,
     }).catch((error) => ({ error }));
     if (completed.error) {
+      await persistMediaSafetyBarrier({ statePath, error: completed.error, now });
       globalStop = true;
       addWorkerStopFailure(stopFailures, completed.error, "queue-result");
       await persistRedCourseStatus({
+        statePath,
         stopFailures,
         course,
         discovery: record,
@@ -759,9 +840,18 @@ async function runCourse({
           await writeMediaRecordingStatus({ appearance: job, now, mediaRoot: media?.mediaRoot });
       }
     } catch (error) {
+      await persistMediaSafetyBarrier({ statePath, error, now });
       globalStop = true;
       addWorkerStopFailure(stopFailures, error, statusStage);
-      await persistRedCourseStatus({ stopFailures, course, discovery: record, queue, now, error });
+      await persistRedCourseStatus({
+        statePath,
+        stopFailures,
+        course,
+        discovery: record,
+        queue,
+        now,
+        error,
+      });
     }
   }
 
@@ -792,6 +882,7 @@ async function persistJobUpdate({ updateJob, statePath, course, job, update, now
 }
 
 async function persistRedCourseStatus({
+  statePath,
   course,
   discovery = {},
   queue = [],
@@ -813,8 +904,9 @@ async function persistRedCourseStatus({
     },
     queue,
     now,
-  }).catch((statusError) => {
+  }).catch(async (statusError) => {
     if (stopFailures?.length) addWorkerStopFailure(stopFailures, statusError, "course-status");
+    await persistMediaSafetyBarrier({ statePath, error: statusError, now });
   });
 }
 

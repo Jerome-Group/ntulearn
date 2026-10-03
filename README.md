@@ -490,6 +490,36 @@ and inherited pipes, while checking original-group cancellation and an unrelated
 explicit `independentlyDetached: failed/unsupported` evidence keeps that limitation visible; a
 passing boundary test is not a passing universal termination criterion.
 
+Artifact and capacity probes retain their original deadlines. On expiry, the worker separately awaits
+positive settlement for at most five seconds (or the shorter probe deadline); it discards late results.
+A positively settled probe still reports the original capacity timeout. Pending I/O or failed descriptor
+closure reports `MEDIA_FILE_CLEANUP`, stops acquisition, and durably refuses future admission before
+queue-lock release. Existing source-review flags and queue evidence remain; late settlement never
+automatically clears a safety barrier. Refused/global-stop summaries do not start artifact probes; `artifactVerification: "unrun"` and
+`countsBasis: "retained-queue"` identify cached queue counts, without fresh readiness claims.
+This bounds logical waits and admitted-operation settlement observation, without proving physical
+filesystem cancellation, exhaustive process cessation, or the cause of a historical worker stop.
+
+Before foreign lock metadata is probed, every queue-lock entrypoint exclusively creates a synced,
+positively closed `media-lock-admission.json` marker with a private token and descriptor-bound identity.
+A pending metadata/read/close probe retains that marker until a durable safety barrier is confirmed;
+barrier-write uncertainty keeps the marker. An occupied/unknown marker refuses every later lock
+entrypoint without foreign lock mutation or stale reclamation. Normal held-lock results release only
+their own verified marker after positive probe settlement; successful acquisition transfers admission
+to the durably armed queue owner before removing the marker. Initial marker creation uncertainty
+requires failed external containment before any foreign probe, without a universal physical I/O claim.
+Offline health/status observe only fixed marker presence/counts; presence grants no active-process or
+cessation claim. Owner-qualified recovery must bind the exact marker/token/inode and owned activity,
+not clear arbitrary foreign evidence.
+
+Before a new queue owner starts work, its private lock receives a synced, positively closed fixed
+`safety-armed` marker and owner receipt. Success and ordinary failure release that owner normally.
+`MEDIA_SAFETY_BARRIER_WRITE` uncertainty retains its lock; armed locks, unreadable/unknown receipts
+and uncertain marker checks never rearm after 48 hours. Positively recognized legacy stale receipts
+retain their old policy. An unclean exit of a newly armed owner also needs explicit qualified recovery:
+confirm owned activity has ceased and storage/evidence is stable before the Owner removes only that
+positively bound abandoned lock. No automatic clearing or process-cessation inference is provided.
+
 ## Scheduling the media worker
 
 The checked-in example is `config/com.jerome-group.ntulearn.media-worker.example.plist`. Copy it

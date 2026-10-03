@@ -6,7 +6,7 @@ test("returns responsive capacity evidence and globally rejects an unresolved pr
   assert.equal(await withCapacityDeadline(async () => 200, { timeoutMs: 10 }), 200);
   await assert.rejects(
     withCapacityDeadline(() => new Promise(() => {}), { timeoutMs: 10 }),
-    (error) => error.code === "MEDIA_CAPACITY_TIMEOUT" && error.globalSafety === true,
+    (error) => error.code === "MEDIA_FILE_CLEANUP" && error.globalSafety === true,
   );
   assert.throws(() => withCapacityDeadline(async () => {}, { timeoutMs: 0 }), /positive deadline/);
 });

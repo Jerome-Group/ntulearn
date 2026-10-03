@@ -419,7 +419,7 @@ test("bounds unresolved prewrite and promotion guards without replacing held art
           globalThis.setTimeout(() => reject(new Error("fixture exceeded bound")), 150),
         ),
       ]),
-      (error) => error.globalSafety === true && /timed out.*retry/.test(error.message),
+      (error) => error.globalSafety === true && error.code === "MEDIA_FILE_CLEANUP",
     );
     releaseLate();
     await new Promise((resolve) => globalThis.setImmediate(resolve));

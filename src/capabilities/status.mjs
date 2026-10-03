@@ -1,3 +1,5 @@
+import { lstat } from "node:fs/promises";
+import { mediaAdmissionObservation } from "./media-admission.mjs";
 import { dirname, join } from "node:path";
 import { isValidImportStatus, IMPORT_STATUS_FILENAME } from "../sync/import-status.mjs";
 import { mediaQueuePath } from "../media/queue.mjs";
@@ -13,6 +15,7 @@ export async function localStatus({
   configPath,
   load,
   read = readEvidence,
+  inspect = lstat,
   now = () => new Date(),
 }) {
   const loaded = await readLocalConfig(root, configPath, load);
@@ -80,6 +83,7 @@ export async function localStatus({
           ? "passed"
           : "unrun";
   const checks = [
+    await mediaAdmissionObservation(config.statePath, inspect),
     observation(
       "sync-receipts",
       receiptStatus,

@@ -80,3 +80,28 @@ test("a barrier write failure refuses normal retry with an actionable containmen
   );
   assert.equal(await readFile(occupiedParent, "utf8"), "retained Owner bytes");
 });
+
+test("barrier descriptor-close failure remains failed containment after successful write and sync", async () => {
+  const events = [];
+  await assert.rejects(
+    persistMediaSafetyBarrier({
+      statePath: "/synthetic/state.json",
+      error: { code: "MEDIA_FILE_CLEANUP" },
+      createDirectory: async () => {},
+      openBarrier: async () => ({
+        writeFile: async () => {
+          events.push("write");
+        },
+        sync: async () => {
+          events.push("sync");
+        },
+        close: async () => {
+          events.push("close");
+          throw new Error("synthetic close refusal");
+        },
+      }),
+    }),
+    (error) => error.code === "MEDIA_SAFETY_BARRIER_WRITE" && error.globalSafety === true,
+  );
+  assert.deepEqual(events, ["write", "sync", "close"]);
+});

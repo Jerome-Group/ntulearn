@@ -9,8 +9,8 @@ const RECOVERY = "Free space or restore the mounted storage, then retry the medi
 
 export function createMediaCapacity(media, { timeoutMs = 5_000, ...options } = {}) {
   return withCapacityDeadline(
-    () =>
-      initializeCapacity(media, options, timeoutMs).catch((error) => {
+    (active) =>
+      initializeCapacity(media, options, timeoutMs, active).catch((error) => {
         if (error.globalSafety) throw error;
         throw safety("Media capacity initialization could not verify mounted storage.", error);
       }),
@@ -22,17 +22,18 @@ async function initializeCapacity(
   media,
   { volumeRoot = MEDIA_VOLUME_ROOT, courses = [], statfs = readSpace },
   timeoutMs,
+  active,
 ) {
   const mediaRoot = assertMediaRoot(media?.mediaRoot, volumeRoot);
   const reserve = media.freeSpaceReserveBytes;
   if (!Number.isSafeInteger(reserve) || reserve <= 0)
     throw safety("Media reserve is not configured.");
-  const volume = await snapshot(resolve(volumeRoot));
-  const store = await snapshot(mediaRoot);
+  const volume = await snapshot(resolve(volumeRoot), active);
+  const store = await snapshot(mediaRoot, active);
   if (
     !inside(volume.canonical, store.canonical) ||
     store.canonical === volume.canonical ||
-    !(await stat(mediaRoot)).isDirectory()
+    !(await inspectedStat(mediaRoot, active)).isDirectory()
   ) {
     throw safety("Media store is unavailable or outside its verified volume.");
   }
@@ -53,32 +54,40 @@ async function initializeCapacity(
     ...courses.map((course) => course.destination).filter(Boolean),
   ]) {
     const path = resolve(root);
-    roots.set(path, await snapshot(path));
+    roots.set(path, await snapshot(path, active));
   }
 
   function check(request) {
-    return withCapacityDeadline(() => inspectCapacity(request), { timeoutMs });
+    return withCapacityDeadline((checkActive) => inspectCapacity(request, checkActive), {
+      timeoutMs,
+    });
   }
 
-  async function inspectCapacity({ path = mediaRoot, boundary = mediaRoot, bytes = 0 } = {}) {
+  async function inspectCapacity(
+    { path = mediaRoot, boundary = mediaRoot, bytes = 0 } = {},
+    active,
+  ) {
     try {
       if (!Number.isSafeInteger(bytes) || bytes < 0) throw safety("Media write size is unknown.");
-      if (!sameSnapshot(await snapshot(resolve(volumeRoot)), volume))
+      if (!sameSnapshot(await snapshot(resolve(volumeRoot), active), volume))
         throw safety("Media volume changed after runtime verification.");
       for (const root of monitored) {
-        await unchanged(root);
-        await assertMediaArtifactPath(join(root, ".capacity-probe"), mediaRoot);
+        await unchanged(root, active);
+        await assertMediaArtifactPath(join(root, ".capacity-probe"), mediaRoot, { active });
       }
       const destination = resolve(boundary);
       if (!roots.has(destination)) throw safety("Media destination was not verified for this run.");
-      await unchanged(destination);
+      await unchanged(destination, active);
       const target = resolve(path);
       await assertMediaArtifactPath(
         target === destination ? join(target, ".capacity-probe") : target,
         destination,
+        { active },
       );
-      const { ancestor } = await existingAncestor(target);
+      const { ancestor } = await existingAncestor(target, active);
+      active();
       const evidence = await statfs(ancestor, { bigint: true });
+      active();
       const available = availableBytes(evidence);
       if (available < BigInt(reserve) + BigInt(bytes)) {
         throw safety(
@@ -91,13 +100,14 @@ async function initializeCapacity(
     }
   }
 
-  async function unchanged(root) {
+  async function unchanged(root, active) {
     const path = resolve(root);
-    if (!sameSnapshot(await snapshot(path), roots.get(path)))
+    if (!sameSnapshot(await snapshot(path, active), roots.get(path)))
       throw safety("Media canonical storage path changed during this run.");
   }
 
   await check();
+  active();
   return {
     check,
     async checkJob(course) {
@@ -108,14 +118,24 @@ async function initializeCapacity(
   };
 }
 
-async function snapshot(path) {
-  const { ancestor, suffix } = await existingAncestor(path);
-  const info = await stat(ancestor);
+async function snapshot(path, active) {
+  const { ancestor, suffix } = await existingAncestor(path, active);
+  const info = await inspectedStat(ancestor, active);
+  active();
+  const canonical = resolve(await realpath(ancestor), suffix);
+  active();
   return {
-    canonical: resolve(await realpath(ancestor), suffix),
+    canonical,
     device: info.dev,
     inode: ancestor === path ? info.ino : null,
   };
+}
+
+async function inspectedStat(path, active) {
+  active();
+  const info = await stat(path);
+  active();
+  return info;
 }
 
 function sameSnapshot(current, initial) {
@@ -126,13 +146,15 @@ function sameSnapshot(current, initial) {
   );
 }
 
-async function existingAncestor(path) {
+async function existingAncestor(path, active) {
   let ancestor = resolve(path);
   while (true) {
+    active();
     const info = await lstat(ancestor).catch((error) => {
       if (error.code === "ENOENT") return null;
       throw safety("Media storage path cannot be inspected.", error);
     });
+    active();
     if (info) return { ancestor, suffix: relative(ancestor, path) };
     const parent = dirname(ancestor);
     if (parent === ancestor) throw safety("Media storage has no available filesystem.");
