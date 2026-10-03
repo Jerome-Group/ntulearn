@@ -689,3 +689,55 @@ test("typed conflicts and session-dependent media remain unresolved", () => {
     assert.doesNotMatch(JSON.stringify(queue), /fixture-secret/);
   }
 });
+
+test("unquoted watch query preserves provider identity across signed URL rotation", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const [tag, attribute] of [
+    ["iframe", "src"],
+    ["a", "href"],
+  ]) {
+    const discover = (body) =>
+      discoverContentRecordings({
+        course,
+        snapshot: {
+          items: [{ id: "item", title: "Lecture", position: 0, body: { rawText: body } }],
+        },
+      });
+    const quoted = discover(
+      `<${tag} ${attribute}="https://www.youtube.com/watch?v=abc123xyz89&amp;token=fixture-secret"></${tag}>`,
+    );
+    const unquoted = discover(
+      `<${tag} ${attribute}=https://www.youtube.com/watch?v=abc123xyz89&amp;token=rotated-secret></${tag}>`,
+    );
+    assert.equal(quoted.length, 1);
+    assert.equal(quoted[0].provider, "youtube");
+    assert.deepEqual(unquoted, quoted);
+    assert.doesNotMatch(JSON.stringify(unquoted), /fixture-secret|rotated-secret|token=|https?:/);
+  }
+});
+
+test("addressless and invalid typed content details stay unresolved without source payloads", () => {
+  const course = { key: "fixture", courseId: "fixture", destination: "/fixture/course" };
+  for (const descriptor of [
+    { mimeType: "video/mp4" },
+    { mimeType: "video/mp4", url: 17 },
+    { contentType: "audio/mp4", url: "" },
+    { type: "video/mp4", url: { private: "fixture-secret" } },
+  ]) {
+    const input = {
+      course,
+      snapshot: {
+        items: [
+          { id: "item", title: "Lecture", position: 0, contentDetail: { media: descriptor } },
+        ],
+      },
+    };
+    const queue = discoverContentRecordings(input);
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].disposition, "unresolved");
+    assert.equal(queue[0].provider, "unsupported");
+    assert.match(queue[0].limitation, /Inspect.*NTULearn/);
+    assert.deepEqual(discoverContentRecordings(input), queue);
+    assert.doesNotMatch(JSON.stringify(queue), /fixture-secret|"url"|"private"/);
+  }
+});

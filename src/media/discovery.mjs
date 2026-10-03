@@ -7,7 +7,7 @@ import { classifyRecordingCandidate } from "./classification.mjs";
 const EMBED = /<(iframe|object|embed|video|audio|source)\b([^>]*)>/gi;
 const LINK = /<a\b([^>]*)>/gi;
 const ATTRIBUTE =
-  /(?:^|\s)(src|href|data|type|data-bbfile)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+  /(?:^|\s)(src|href|data|type|data-bbfile)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gi;
 const VIDEO_EXTENSIONS = new Set([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".webm"]);
 const AUDIO_EXTENSIONS = new Set([".aac", ".m4a", ".mp3", ".ogg", ".wav"]);
 
@@ -30,7 +30,8 @@ export function discoverContentRecordings({
     const seen = new Set();
 
     for (const candidate of candidates) {
-      const classification = classifyRecordingCandidate({ ...candidate, adapters });
+      const classification =
+        candidate.classification ?? classifyRecordingCandidate({ ...candidate, adapters });
       if (!classification) continue;
       const identity = `${classification.provider}:${classification.providerReference}`;
       if (seen.has(identity)) continue;
@@ -174,10 +175,12 @@ function bodyCandidates(item) {
 }
 
 function externalCandidates(item) {
-  const links = Object.values(item.contentDetail ?? {}).flatMap((detail) => detailLinks(detail));
+  const links = Object.entries(item.contentDetail ?? {}).flatMap(([key, detail]) =>
+    detailLinks(detail, key),
+  );
   const byValue = new Map();
   for (const link of links) {
-    const address = typeof link.value === "string" ? link.value : link.value.url;
+    const address = typeof link.value === "string" ? link.value : (link.value.url ?? link.value.id);
     const previous = byValue.get(address);
     if (
       !previous ||
@@ -189,23 +192,44 @@ function externalCandidates(item) {
   return [...byValue.values()];
 }
 
-function detailLinks(detail) {
+function detailLinks(detail, detailKey) {
   const metadata = Object.fromEntries(
     ["mimeType", "contentType", "type", "fileName", "filename"].flatMap((key) =>
       typeof detail?.[key] === "string" ? [[key, detail[key]]] : [],
     ),
   );
-  return [
+  const links = [
     { value: detail?.url, sourceKind: "external-link" },
     { value: detail?.launchUrl, sourceKind: "launch-link" },
     { value: detail?.launchLink, sourceKind: "launch-link" },
     { value: detail?.placement?.launchLink, sourceKind: "launch-link" },
   ]
-    .filter(({ value }) => typeof value === "string" && value)
+    .filter(({ value }) => typeof value === "string" && value.trim())
     .map((link) => ({
       ...link,
       value: Object.keys(metadata).length ? { ...metadata, url: link.value } : link.value,
     }));
+  const mediaTyped = [metadata.mimeType, metadata.contentType, metadata.type].some((type) =>
+    /^(?:video|audio)\//i.test(type ?? ""),
+  );
+  if (links.length || !mediaTyped) return links;
+  const identity = createHash("sha256").update(detailKey).digest("hex").slice(0, 16);
+  return [
+    {
+      value: { id: `unresolved-detail-${identity}` },
+      sourceKind: "external-link",
+      classification: {
+        provider: "unsupported",
+        providerReference: `unsupported:malformed-detail:${identity}`,
+        candidateReference: `candidate:malformed-detail:${identity}`,
+        disposition: "unresolved",
+        classificationEvidence: "malformed",
+        retryable: true,
+        limitation:
+          "Media-typed resource has no valid source address. Appearance unresolved. Inspect it in NTULearn and retry media discovery after metadata is clarified.",
+      },
+    },
+  ];
 }
 
 function hasChildSource(html, match) {
