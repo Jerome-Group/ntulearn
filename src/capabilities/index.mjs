@@ -229,6 +229,10 @@ const routes = {
       "test/config.test.mjs",
     ],
   ],
+  "media-recovery": [
+    ["src/media/retry.mjs", "src/media/safety.mjs", "src/media/queue.mjs", "src/cli.mjs"],
+    ["test/media-retry.test.mjs", "test/media-safety.test.mjs", "test/cli.test.mjs"],
+  ],
   capabilities: [
     [
       "src/capabilities/index.mjs",
@@ -254,6 +258,7 @@ function command(id, script, feature, prerequisites, effects, options = {}) {
     id,
     script,
     invocation: `npm run ${script}`,
+    machineInvocation: `npm run --silent ${script}`,
     kind: options.kind ?? "action",
     arguments: options.arguments ?? [],
     prerequisites,
@@ -434,6 +439,41 @@ const commands = [
     },
   ),
   command(
+    "media-retry",
+    "media:retry",
+    "media-recovery",
+    [
+      "configured-courses",
+      "accessible-course-roots",
+      "current-complete-discovery",
+      "safe-media-admission",
+    ],
+    {
+      reads: ["media-queues", "private-media-safety-evidence"],
+      writes: ["retry-permission-and-status-for-apply"],
+    },
+    {
+      arguments: ["<plan|apply>", "<course|all>", "<failed|recordingId>", "[RETRY_FAILED_MEDIA]"],
+      risk: "local-user-storage",
+      output: "capability-result-v1",
+      exitCodes: offlineCodes,
+      operations: {
+        plan: { network: false, browser: false, ownerOnly: false, writes: [], runtime: false },
+        apply: {
+          network: false,
+          browser: false,
+          ownerOnly: true,
+          writes: ["media-queues", "course-media-status"],
+          runtime: false,
+          prerequisites: ["Owner-retry-authorization", "literal-confirmation", "media-queue-lock"],
+        },
+      },
+      limitations: [
+        "Permission to retry only; no acquisition, transcription or completeness verdict is changed. Failure history and existing artifacts remain. Cleanup safety barriers and markers cannot be cleared.",
+      ],
+    },
+  ),
+  command(
     "media-evaluate",
     "media:evaluate",
     "media-evaluation",
@@ -569,6 +609,25 @@ export function capabilityIndex(selection) {
     throw new Error("Unknown capability. Run: npm run capabilities");
   return {
     schemaVersion: 1,
+    configuration: {
+      defaultFile: "config/courses.json",
+      exampleFile: "config/courses.example.json",
+      overrideEnvironmentVariable: "NTULEARN_CONFIG_PATH",
+      pathResolution:
+        "Absolute or checkout-relative configuration; relative values resolve from the checkout root.",
+      privacy:
+        "Real course identifiers and storage paths belong in private configuration; never copy session profile contents.",
+    },
+    outputContracts: {
+      "capability-result-v1": {
+        fields: ["schemaVersion", "command", "status", "exitCode", "checks", "evidence"],
+        statuses: ["passed", "failed", "blocked", "unrun"],
+        checks: ["id", "status", "code", "message", "action", "evidence"],
+        exitCodes: offlineCodes,
+        privacy:
+          "Bounded structured evidence; no raw private configuration, transcript or log contents.",
+      },
+    },
     commands: selected,
     features: selectedFeatures.map(([id, [code, tests]]) => ({
       id,
