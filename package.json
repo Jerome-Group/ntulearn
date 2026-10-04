@@ -26,6 +26,7 @@
     "media:worker": "node src/cli.mjs media-worker",
     "media:retry": "node src/cli.mjs media-retry",
     "media:recover": "node src/cli.mjs media-recover",
+    "media:recover:resume": "node src/cli.mjs media-recover resume",
     "media:discover": "node src/cli.mjs media-discover",
     "media:withdraw": "node src/cli.mjs media-withdraw",
     "sync": "node src/cli.mjs sync",

@@ -220,3 +220,53 @@ test("formatter keeps record-looking source text and propagates checkpoint cance
     await rm(work, { recursive: true, force: true });
   }
 });
+
+test("production ASR types only explicit empty native segments", async (t) => {
+  const work = await mkdtemp(join(tmpdir(), "ntulearn-empty-asr-"));
+  t.after(() => rm(work, { recursive: true, force: true }));
+  const local = createProductionLocalModels(
+    context(work, async (_command, args, options) => {
+      if (options.label === "Whisper transcription")
+        await writeFile(
+          `${args[args.indexOf("-of") + 1]}.json`,
+          JSON.stringify({ transcription: [] }),
+        );
+      return { stdout: "", stderr: "" };
+    }),
+  );
+  await assert.rejects(
+    local.transcriber.transcribe({ media: { path: "fixture.wav", kind: "audio" } }),
+    {
+      code: "MEDIA_ASR_NO_RECOGNIZED_SEGMENTS",
+    },
+  );
+});
+
+for (const native of [
+  {},
+  { transcription: null },
+  { transcription: null, segments: [] },
+  { transcription: [], segments: null },
+  { transcription: [], segments: {} },
+  { transcription: {}, segments: [] },
+  { transcription: {} },
+  { transcription: [{ start: 0, end: 0, text: "discarded" }] },
+  { transcription: [], segments: [{ start: 0, end: 20, text: "conflicting" }] },
+  { transcription: [], metadata: "?access_token=fixture-sensitive" },
+]) {
+  test("missing, malformed, filtered, conflicting or unsafe native output is never typed empty", async (t) => {
+    const work = await mkdtemp(join(tmpdir(), "ntulearn-empty-asr-negative-"));
+    t.after(() => rm(work, { recursive: true, force: true }));
+    const local = createProductionLocalModels(
+      context(work, async (_command, args, options) => {
+        if (options.label === "Whisper transcription")
+          await writeFile(`${args[args.indexOf("-of") + 1]}.json`, JSON.stringify(native));
+        return { stdout: "", stderr: "" };
+      }),
+    );
+    await assert.rejects(
+      local.transcriber.transcribe({ media: { path: "fixture.wav", kind: "audio" } }),
+      (error) => error.code !== "MEDIA_ASR_NO_RECOGNIZED_SEGMENTS",
+    );
+  });
+}

@@ -6,6 +6,7 @@ import { cleanLocalFormatterOutput, createLocalFormatter } from "./formatter.mjs
 import { assertFormattedTranscript } from "./transcript.mjs";
 import { readFormatterAssistant } from "./formatter-output.mjs";
 import { transcriptSegmentTime } from "./production-values.mjs";
+import { isRecognizedEmptyNative } from "./empty-asr.mjs";
 import { asrPolicyArguments } from "./recovery-policy.mjs";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -82,6 +83,11 @@ async function transcribe(
 }
 
 function normalizeWhisper(result) {
+  if (isRecognizedEmptyNative(result))
+    throw Object.assign(
+      new Error("ASR recognized no segments; retain for review or retry with unchanged inputs."),
+      { code: "MEDIA_ASR_NO_RECOGNIZED_SEGMENTS" },
+    );
   const segments = (result.transcription ?? result.segments ?? [])
     .map((segment, index) => ({
       index,

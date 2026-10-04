@@ -25,7 +25,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:format-unassociated -- <plan|apply|verify> <private-plan> [PUBLISH_UNASSOCIATED_REVIEW_EDITIONS (apply only)] | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:format-unassociated -- <plan|apply|verify> <private-plan> [PUBLISH_UNASSOCIATED_REVIEW_EDITIONS (apply only)] | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] | npm run media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory> | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -456,7 +456,12 @@ async function mediaCatalogue([mode, manifestPath, extra, ...unexpected]) {
   return result.exitCode;
 }
 
-async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]) {
+async function mediaRecover([mode, manifestPath, ...directories]) {
+  const [previousOutputDirectory, previousReportSha256, resumedOutput, ...resumeUnexpected] =
+    directories;
+  const [ordinaryOutput, ...ordinaryUnexpected] = directories;
+  const outputDirectory = mode === "resume" ? resumedOutput : ordinaryOutput;
+  const unexpected = mode === "resume" ? resumeUnexpected : ordinaryUnexpected;
   const controller = new globalThis.AbortController();
   const interrupt = () =>
     controller.abort(
@@ -472,10 +477,12 @@ async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]
   let result;
   try {
     if (
-      !["plan", "run", "publish"].includes(mode) ||
+      !["plan", "run", "resume", "publish"].includes(mode) ||
       !manifestPath ||
       unexpected.length ||
-      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory)
+      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory) ||
+      (mode === "resume" &&
+        (!previousOutputDirectory || !/^[0-9a-f]{64}$/.test(previousReportSha256 ?? "")))
     ) {
       result = capabilityResult("media:recover", [
         observation(
@@ -483,7 +490,7 @@ async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]
           "blocked",
           "RECOVERY_ARGUMENTS",
           "Invalid explicit source recovery arguments.",
-          "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]",
+          "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]; or media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory>",
         ),
       ]);
     } else {
@@ -493,6 +500,12 @@ async function mediaRecover([mode, manifestPath, outputDirectory, ...unexpected]
         mode,
         manifestPath: resolve(manifestPath),
         outputDirectory: outputDirectory ? resolve(outputDirectory) : undefined,
+        ...(mode === "resume"
+          ? {
+              previousOutputDirectory: resolve(previousOutputDirectory),
+              previousReportSha256,
+            }
+          : {}),
         config,
         signalProcessGroup: signalMediaProcessGroup,
         signal: controller.signal,

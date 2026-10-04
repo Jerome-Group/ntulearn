@@ -1,3 +1,4 @@
+import { isRecognizedEmptyNative } from "./empty-asr.mjs";
 import { join, resolve, sep } from "node:path";
 import { createProductionLocalModels } from "./production-local.mjs";
 import { transcriptSegmentTime } from "./production-values.mjs";
@@ -63,6 +64,16 @@ export async function createRecoveryCandidate(
       media: { path: recording.media.path, kind: "audio", audioOnly: true },
       signal,
     });
+  } catch (error) {
+    if (error?.code !== "MEDIA_ASR_NO_RECOGNIZED_SEGMENTS" || !isRecognizedEmptyNative(native))
+      throw error;
+    if (typeof models.transcriber.release !== "function")
+      throw recoveryFailure("RECOVERY_RELEASE_UNCONFIRMED");
+    source = {
+      sourceKind: "generated",
+      language: native.result?.language ?? native.language ?? "en",
+      segments: [],
+    };
   } finally {
     await models.transcriber.release?.();
   }
@@ -82,7 +93,8 @@ export async function createRecoveryCandidate(
 export function assessRecoveryTranscript({ native, source, duration, id }) {
   safeNativeTranscriptBody(native);
   const values = native.transcription ?? native.segments;
-  if (!Array.isArray(values) || !values.length) throw recoveryFailure("RECOVERY_NATIVE_INVALID");
+  if (!Array.isArray(values)) throw recoveryFailure("RECOVERY_NATIVE_INVALID");
+  const empty = isRecognizedEmptyNative(native);
   const nativeSource = {
     sourceKind: "generated",
     language: source.language,
@@ -97,6 +109,7 @@ export function assessRecoveryTranscript({ native, source, duration, id }) {
   const flags = historicalTextFlags(
     values.map((segment) => (typeof segment.text === "string" ? segment.text : "")).join("\n"),
   );
+  if (empty) flags.push("empty-recognized-segments");
   const structural = validateTranscript(nativeSource, {
     allowMissingDuration: true,
     coverageRatio: 0,
@@ -128,6 +141,7 @@ export function assessRecoveryTranscript({ native, source, duration, id }) {
     sourceStructure: unchangedSegments ? "passed" : "failed",
     timing: nativeValidation.valid && sourceValidation.valid ? "passed" : "failed",
     flags,
+    ...(empty ? { actualWords: 0 } : {}),
     duration,
     formatting: markdown === null ? "unrun" : "passed",
     acousticVerification: "unrun",

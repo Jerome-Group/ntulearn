@@ -64,7 +64,7 @@ test("prints usage and exits 1 when given no command", async () => {
   assert.equal(stdout, "");
   assert.match(
     stderr,
-    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup -- \[vad\] \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:format-unassociated -- <plan\|apply\|verify> <private-plan> \[PUBLISH_UNASSOCIATED_REVIEW_EDITIONS \(apply only\)\] \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
+    /^Usage: npm run login \| npm run discover \| npm run watchdog \| npm run \(sync\|verify\|renumber\) -- <course\|all> \| npm run media:setup -- \[vad\] \| npm run media:worker -- <scheduled\|manual> \[priority-course \(manual only\)\] \| npm run media:discover -- <course\|all> \| npm run media:retry -- <plan\|apply> <course\|all> <failed\|recordingId> \[RETRY_FAILED_MEDIA\] \| npm run media:withdraw -- <course> <recordingId> confirm \| npm run media:format -- <plan\|apply\|verify> <private-manifest> \| npm run media:format-unassociated -- <plan\|apply\|verify> <private-plan> \[PUBLISH_UNASSOCIATED_REVIEW_EDITIONS \(apply only\)\] \| npm run media:evaluate -- <plan\|run> <manifest> \[fresh-output-directory\] \| npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory> \| npm run media:catalogue -- <inspect\|plan\|publish\|verify> \[private-manifest\] \[private-selection-file\|PUBLISH_TRANSCRIPT_CATALOGUE\] \| npm run \(capabilities\|health\|status\|check\)\n$/,
   );
 });
 
@@ -654,7 +654,7 @@ test("source recovery help and index describe accepted token-free arguments", as
   assert.equal(help.stdout, "");
   assert.match(
     help.stderr,
-    /npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:catalogue/,
+    /npm run media:recover -- <plan\|run\|publish> <private-manifest> \[private-candidate-directory\] \| npm run media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory> \| npm run media:catalogue/,
   );
   assert.doesNotMatch(help.stderr, /RECOVER_TRANSCRIPT_SOURCES|PUBLISH_RECOVERED_EDITIONS/);
 
@@ -663,9 +663,10 @@ test("source recovery help and index describe accepted token-free arguments", as
   assert.equal(index.stderr, "");
   const recovery = JSON.parse(index.stdout).commands.find(({ id }) => id === "media-recover");
   assert.deepEqual(recovery.arguments, [
-    "<plan|run|publish>",
+    "<plan|run|resume|publish>",
     "<private-manifest>",
     "[candidate-directory (run/publish only)]",
+    "resume: <previous-directory> <previous-report-sha256> <fresh-directory>",
   ]);
 
   for (const mode of ["plan", "run", "publish"]) {
@@ -684,7 +685,7 @@ test("source recovery help and index describe accepted token-free arguments", as
     assert.equal(check.code, "RECOVERY_ARGUMENTS");
     assert.equal(
       check.action,
-      "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]",
+      "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]; or media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory>",
     );
   }
   assert.deepEqual(await readdir(root), []);
@@ -886,5 +887,21 @@ test("optional setup CLI is explicit, structured and masks absent runtime withou
     assert.equal(refused.code, 2);
     assert.match(refused.stderr, /Usage:/);
     assert.equal(refused.stdout, "");
+  }
+});
+
+test("resume CLI requires complete directory/SHA/fresh arguments and has closed exit codes", async () => {
+  const env = { ...process.env, NTULEARN_CONFIG_PATH: "/missing-synthetic-resume-config" };
+  for (const [args, expected] of [
+    [["manifest", "previous", "a".repeat(64), "fresh"], "RECOVERY_CONFIG_UNAVAILABLE"],
+    [["manifest", "previous", "a".repeat(64)], "RECOVERY_ARGUMENTS"],
+    [["manifest", "previous", "unknown", "fresh"], "RECOVERY_ARGUMENTS"],
+    [["manifest", "previous", "a".repeat(64), "fresh", "extra"], "RECOVERY_ARGUMENTS"],
+  ]) {
+    const result = await runCliWithEnvironment(env, "media-recover", "resume", ...args);
+    assert.equal(result.code, 2);
+    assert.equal(result.stderr, "");
+    assert.equal(JSON.parse(result.stdout).checks[0].code, expected);
+    assert.equal(result.stdout.includes("missing-synthetic-resume-config"), false);
   }
 });

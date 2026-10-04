@@ -896,6 +896,30 @@ npm run --silent media:recover -- run /absolute/private/recovery.json /absolute/
 npm run --silent media:recover -- publish /absolute/private/recovery.json /absolute/Media/fresh-candidates
 ```
 
+A safe native ASR array with no recognized segments is retained as an empty generated source,
+zero actual words and review flags after the transcriber releases; later recordings continue.
+No Markdown is generated for that candidate, and publication keeps it in review. This is recognition
+output, not evidence of physical silence or absent speech. Missing/malformed arrays, invalid nonempty
+rows and cleanup, storage or safety failures still stop recovery. Ordinary worker defaults stay unchanged.
+
+An interrupted run can reuse only the contiguous prefix fully hashed in its failed `recovery.json`:
+
+```bash
+npm run --silent media:recover:resume -- /absolute/private/recovery.json /absolute/Media/failed-candidates <previous-recovery-json-sha256> /absolute/Media/fresh-resumed-candidates
+```
+
+Supply the SHA-256 recorded for the previous report. Resume validates the complete current manifest,
+ownership/input hashes, runtime pins, previous report and every prefix native/source/assessment/timing
+and file hash before creating output. It copies qualified candidates with exclusive 0600 writes into a
+fresh 0700 directory, retains previous report SHA/run ID/failure ancestry, and reruns all unreported or
+partial recordings. Previous reports and artifacts remain untouched. Whole-manifest/runtime and copied
+file checks run again before completion. Changed, ambiguous, non-prefix or occupied evidence refuses;
+resume never edits failure history, selects a subset manifest or clears safety barriers. Use ordinary
+`media:recover publish` on the fresh directory; eligibility is independently rederived again, and
+unchanged publication repeats remain idempotent. Exit 0 means passed, 1 means failed, and 2 means
+blocked/unrun/usage; a completed run with review candidates returns 2. Inspect fixed codes in the JSON
+report. `capabilities transcript-source-recovery` lists source and offline verification routes.
+
 The manifest has `schemaVersion: 1`, an explicit `policy`, `recordings` and `budgets`.
 `independent-context-v1` preserves the existing recovery decoder behavior;
 `independent-context-nonspeech-v1` adds decoder nonspeech-token suppression (`--suppress-nst`).
