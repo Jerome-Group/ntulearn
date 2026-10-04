@@ -16,9 +16,11 @@ import { withMediaQueueLock } from "./lock.mjs";
 import {
   EPHEMERAL_MEDIA_JOB_FIELDS,
   mediaQueuePath,
+  mediaPlacementCollisions,
   readMediaQueue,
   updateMediaQueueJob,
 } from "./queue.mjs";
+import { queueCourseBoundary } from "./queue-course.mjs";
 import { CATALOGUE_METADATA_LIMITS, parseCatalogueMetadata } from "./catalogue-safety.mjs";
 import { closeMediaProbeHandle, withMediaProbeSettlement } from "./probe-settlement.mjs";
 
@@ -93,16 +95,19 @@ export async function retryMediaJobs(
       const identities = new Set();
       for (const course of courses) {
         if (!course.courseId || !course.destination) throw refusal("MEDIA_RETRY_COURSE_BOUNDARY");
+        const boundary = queueCourseBoundary({ course });
         const loaded = await readQueue({
           statePath: config.statePath,
           courseKey: course.key,
           course,
           read,
+          boundary,
         });
         assertQueue(loaded.record, course);
         counts.courses++;
         counts.inspected += loaded.record.queue.length;
         if (counts.inspected > LIMITS.jobs) throw refusal("MEDIA_RETRY_JOB_LIMIT");
+        const collisions = await placementCollisions(loaded.record, course, boundary);
         for (const job of loaded.record.queue) {
           if (identities.has(job.recordingId)) throw refusal("MEDIA_RETRY_AMBIGUOUS_IDENTITY");
           identities.add(job.recordingId);
@@ -112,6 +117,7 @@ export async function retryMediaJobs(
               : job.recordingId === selector;
           if (!target) continue;
           assertTarget(job, course);
+          if (collisions.has(job.recordingId)) throw refusal("MEDIA_RETRY_PLACEMENT_COLLISION");
           selected.push({ course, job });
         }
       }
@@ -134,6 +140,8 @@ export async function retryMediaJobs(
             if (matches.length !== 1 || JSON.stringify(matches[0]) !== JSON.stringify(job))
               throw refusal("MEDIA_RETRY_TARGET_CHANGED");
             assertTarget(matches[0], course);
+            if ((await placementCollisions(record, course)).has(job.recordingId))
+              throw refusal("MEDIA_RETRY_PLACEMENT_COLLISION");
             return content;
           };
           try {
@@ -269,6 +277,11 @@ function assertTarget(job, course) {
   if (job.transcript?.reviewRequired === true) throw refusal("MEDIA_RETRY_SOURCE_REVIEW_REQUIRED");
 }
 
+async function placementCollisions(record, course, boundary = queueCourseBoundary({ course })) {
+  await boundary.assert(record.queue, course.courseId);
+  return mediaPlacementCollisions(record.queue, boundary);
+}
+
 function unsafeEvidence(job) {
   if (job.safetyFailure !== undefined && job.safetyFailure !== null && job.safetyFailure !== "")
     return true;
@@ -325,6 +338,8 @@ function outcome(status, code, counts, mode, safety = {}) {
 }
 
 function retryAction(code) {
+  if (code === "MEDIA_RETRY_PLACEMENT_COLLISION")
+    return "Retain all original artifacts and queue history. Conflicting recording placements require explicit ownership review and source-preserving placement repair before retry; do not rearm shared claims.";
   if (code === "MEDIA_RETRY_SOURCE_REVIEW_REQUIRED")
     return "Retained transcript source review blocks retry permission. Inspect retained source evidence and use explicit source-preserving media:recover; preserve originals and queue/source review flags.";
   if (code === "MEDIA_FILE_CLEANUP" || code === "MEDIA_SAFETY_BARRIER_WRITE")
