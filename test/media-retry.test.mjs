@@ -1,12 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers";
 import test from "node:test";
-import { EPHEMERAL_MEDIA_JOB_FIELDS, mediaQueuePath } from "../src/media/queue.mjs";
+import {
+  EPHEMERAL_MEDIA_JOB_FIELDS,
+  mediaQueuePath,
+  writeMediaQueue,
+} from "../src/media/queue.mjs";
+import { discoverContentRecordings } from "../src/media/discovery.mjs";
 import { createMediaOutcome } from "../src/media/outcome.mjs";
 import { resultUpdate } from "../src/media/worker-state.mjs";
 import { updateMediaQueueJob } from "../src/media/queue.mjs";
@@ -123,12 +128,152 @@ test("plan writes nothing; confirmed apply preserves history and originals; repe
   );
 });
 
+test("canonical discovery retains legacy collisions that retry must refuse before publication", async (context) => {
+  for (const shape of ["same", "case", "alias"]) {
+    for (const mode of ["plan", "apply"]) {
+      await context.test(`${shape}-${mode}`, async (child) => {
+        const f = await fixture(child);
+        const fresh = discoverContentRecordings({
+          course: f.course,
+          snapshot: {
+            items: [
+              {
+                id: "fixture-item",
+                title: "Lecture",
+                position: 0,
+                body: {
+                  rawText:
+                    '<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe><iframe src="https://www.youtube.com/embed/lmnopqrstuv"></iframe>',
+                },
+              },
+            ],
+          },
+        });
+        assert.equal(new Set(fresh.map((job) => job.placement.formattedTranscriptPath)).size, 2);
+        const alias = join(f.root, "course-alias");
+        if (shape === "alias") await symlink(f.course.destination, alias);
+        const old = fresh.map((job, index) => ({
+          ...job,
+          complete: false,
+          stage: "failed",
+          retryable: false,
+          artifacts: { rawTranscript: f.job.artifacts.rawTranscript },
+          placement: {
+            ...fresh[0].placement,
+            ...(shape === "alias" && index === 1 ? { destination: alias } : {}),
+            ...(shape === "case" && index === 1
+              ? Object.fromEntries(
+                  ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"].map(
+                    (field) => [field, fresh[0].placement[field].toUpperCase()],
+                  ),
+                )
+              : {}),
+          },
+        }));
+        await f.save(old);
+        await writeMediaQueue({
+          statePath: f.config.statePath,
+          course: f.course,
+          discovery: { complete: true, verdict: "green", queue: fresh },
+        });
+        const before = await readFile(f.path);
+        const produced = JSON.parse(before);
+        assert.equal(produced.complete, true);
+        assert.ok(produced.queue.every((job) => job.stage === "failed" && job.retryable === false));
+        assert.deepEqual(
+          produced.queue.map((job) => job.placement),
+          old.map((job) => job.placement),
+        );
+        const beforeMode = (await stat(f.path)).mode;
+        const result = await retryMediaJobs({
+          ...f.options,
+          mode,
+          selector: old[0].recordingId,
+          confirmation: MEDIA_RETRY_CONFIRMATION,
+        });
+        assert.equal(result.status, "blocked");
+        assert.equal(result.checks[0].code, "MEDIA_RETRY_PLACEMENT_COLLISION");
+        assert.match(result.checks[0].action, /preserve|retain/i);
+        assert.equal(result.evidence.changed, 0);
+        assert.deepEqual(await readFile(f.path), before);
+        assert.equal((await stat(f.path)).mode, beforeMode);
+        assert.equal(await readFile(f.job.artifacts.rawTranscript, "utf8"), "original source");
+        assert.equal(
+          await readFile(join(f.course.destination, "student.md"), "utf8"),
+          "student edit",
+        );
+      });
+    }
+  }
+});
+
+test("retry rechecks competing placements introduced before canonical publication", async (context) => {
+  const f = await fixture(context);
+  const before = await readFile(f.path);
+  const initial = JSON.parse(before);
+  const changed = {
+    ...initial,
+    queue: [
+      ...initial.queue,
+      {
+        ...f.job,
+        recordingId: "media-gallery:_1_1:competing-fixture",
+        providerReference: "entry:competing-fixture",
+      },
+    ],
+  };
+  let writes = 0;
+  const result = await retryMediaJobs(
+    {
+      ...f.options,
+      mode: "apply",
+      confirmation: MEDIA_RETRY_CONFIRMATION,
+    },
+    {
+      assertAdmission: async () => {},
+      readQueue: async () => ({ path: f.path, record: initial }),
+      read: async (path) => {
+        assert.equal(path, f.path);
+        return JSON.stringify(changed);
+      },
+      write: async () => {
+        writes++;
+      },
+    },
+  );
+  assert.equal(result.status, "blocked");
+  assert.equal(result.checks[0].code, "MEDIA_RETRY_PLACEMENT_COLLISION");
+  assert.equal(writes, 0);
+  assert.deepEqual(await readFile(f.path), before);
+});
+
+test("unselected conflicting owners do not block a separate noncolliding failed recording", async (context) => {
+  const f = await fixture(context);
+  const others = ["first", "second"].map((name) => ({
+    ...f.job,
+    recordingId: `media-gallery:_1_1:${name}`,
+    providerReference: `entry:${name}`,
+    placement: { ...f.job.placement, statusPath: "unrelated-shared.media-status.md" },
+  }));
+  await f.save([f.job, ...others]);
+  const result = await retryMediaJobs({
+    ...f.options,
+    mode: "apply",
+    selector: f.job.recordingId,
+    confirmation: MEDIA_RETRY_CONFIRMATION,
+  });
+  assert.equal(result.status, "passed");
+  assert.equal(result.evidence.changed, 1);
+  assert.deepEqual(JSON.parse(await readFile(f.path)).queue.slice(1), others);
+});
+
 test("realistic large queue metadata does not spend one transcript address budget", async (context) => {
   const f = await fixture(context);
   await f.save(
     Array.from({ length: 600 }, (_, index) => ({
       ...f.job,
       recordingId: `media-gallery:_1_1:fixture-${index}`,
+      placement: { ...f.job.placement, statusPath: `fixture-${index}.media-status.md` },
       artifacts: {
         video: "/anonymous/media/lecture.mp4",
         audio: "/anonymous/media/lecture.wav",
@@ -508,7 +653,10 @@ test("failed selector grants only recording permission in a mixed queue", async 
     { ...f.job, recordingId: "media-gallery:_1_1:unknown", disposition: "unresolved" },
     { ...f.job, recordingId: "media-gallery:_1_1:queued", stage: "queued" },
     { ...f.job, recordingId: "media-gallery:_1_1:complete", stage: "complete", complete: true },
-  ];
+  ].map((job, index) => ({
+    ...job,
+    placement: { ...job.placement, statusPath: `unrelated-${index}.media-status.md` },
+  }));
   await f.save([f.job, ...unrelated]);
   const result = await retryMediaJobs({
     ...f.options,
@@ -735,8 +883,17 @@ test("explicit disabled course and incomplete discovery authority refuse retry",
 
 test("multiple failed targets preserve already permitted history and case-compatible course identity", async (context) => {
   const f = await fixture(context);
-  const second = { ...f.job, recordingId: "content-tree:_1_1:second" };
-  const permitted = { ...f.job, recordingId: "content-tree:_1_1:permitted", retryable: true };
+  const second = {
+    ...f.job,
+    recordingId: "content-tree:_1_1:second",
+    placement: { ...f.job.placement, statusPath: "second.media-status.md" },
+  };
+  const permitted = {
+    ...f.job,
+    recordingId: "content-tree:_1_1:permitted",
+    retryable: true,
+    placement: { ...f.job.placement, statusPath: "permitted.media-status.md" },
+  };
   await f.save([f.job, second, permitted], { courseKey: "fixture" });
   const result = await retryMediaJobs({
     ...f.options,

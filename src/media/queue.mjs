@@ -556,23 +556,7 @@ function safeCourseKey(value) {
 }
 
 function rejectPlacementCollisions(queue, boundary) {
-  const claims = new Map();
-  const collisions = new Set();
-  for (const job of queue) {
-    const placement = job.placement;
-    if (!placement?.destination) continue;
-    for (const field of ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"]) {
-      if (!placement[field]) continue;
-      const path =
-        `${boundary.placementKey(placement.destination)}/${placement[field]}`.toLowerCase();
-      const owner = claims.get(path);
-      if (owner && owner !== job.recordingId) {
-        collisions.add(owner);
-        collisions.add(job.recordingId);
-      }
-      claims.set(path, job.recordingId);
-    }
-  }
+  const collisions = mediaPlacementCollisions(queue, boundary);
   return queue.map((job) =>
     collisions.has(job.recordingId)
       ? {
@@ -591,4 +575,25 @@ function rejectPlacementCollisions(queue, boundary) {
         }
       : job,
   );
+}
+
+export function mediaPlacementCollisions(queue, boundary) {
+  const claims = new Map();
+  const collisions = new Set();
+  for (const job of queue) {
+    const placement = job.placement;
+    if (!placement?.destination) continue;
+    for (const field of ["videoPath", "audioPath", "formattedTranscriptPath", "statusPath"]) {
+      if (!placement[field]) continue;
+      const path =
+        `${boundary.placementKey(placement.destination)}/${placement[field]}`.toLowerCase();
+      const owner = claims.get(path);
+      if (owner && owner !== job.recordingId) {
+        collisions.add(owner);
+        collisions.add(job.recordingId);
+      }
+      claims.set(path, job.recordingId);
+    }
+  }
+  return collisions;
 }
