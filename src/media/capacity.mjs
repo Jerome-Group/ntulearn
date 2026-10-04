@@ -57,6 +57,15 @@ async function initializeCapacity(
     roots.set(path, await snapshot(path, active));
   }
 
+  const courseRoots = new Map(
+    courses
+      .filter((course) => course.destination)
+      .map((course) => {
+        const path = resolve(course.destination);
+        return [path, roots.get(path)];
+      }),
+  );
+
   function check(request) {
     return withCapacityDeadline((checkActive) => inspectCapacity(request, checkActive), {
       timeoutMs,
@@ -76,8 +85,7 @@ async function initializeCapacity(
         await assertMediaArtifactPath(join(root, ".capacity-probe"), mediaRoot, { active });
       }
       const destination = resolve(boundary);
-      if (!roots.has(destination)) throw safety("Media destination was not verified for this run.");
-      await unchanged(destination, active);
+      const courseBinding = await verifyDestination(destination, active);
       const target = resolve(path);
       await assertMediaArtifactPath(
         target === destination ? join(target, ".capacity-probe") : target,
@@ -88,6 +96,7 @@ async function initializeCapacity(
       active();
       const evidence = await statfs(ancestor, { bigint: true });
       active();
+      if (courseBinding) await assertCourseBinding(destination, courseBinding, active);
       const available = availableBytes(evidence);
       if (available < BigInt(reserve) + BigInt(bytes)) {
         throw safety(
@@ -100,10 +109,33 @@ async function initializeCapacity(
     }
   }
 
+  async function verifyDestination(destination, active) {
+    if (roots.has(destination)) {
+      await unchanged(destination, active);
+      return courseRoots.has(destination)
+        ? { configured: destination, initial: courseRoots.get(destination) }
+        : null;
+    }
+    const current = await snapshot(destination, active);
+    const matches = [...courseRoots].filter(([, initial]) => sameSnapshot(current, initial));
+    if (matches.length !== 1) throw unverifiedDestination();
+    const [configured, initial] = matches[0];
+    const binding = { configured, initial };
+    await assertCourseBinding(destination, binding, active);
+    return binding;
+  }
+
+  async function assertCourseBinding(destination, { configured, initial }, active) {
+    await unchanged(configured, active);
+    if (!sameSnapshot(await snapshot(destination, active), initial)) throw unverifiedDestination();
+  }
+
   async function unchanged(root, active) {
     const path = resolve(root);
-    if (!sameSnapshot(await snapshot(path, active), roots.get(path)))
+    if (!sameSnapshot(await snapshot(path, active), roots.get(path))) {
+      if (courseRoots.has(path)) throw unverifiedDestination();
       throw safety("Media canonical storage path changed during this run.");
+    }
   }
 
   await check();
@@ -182,4 +214,15 @@ function inside(root, path) {
 
 function safety(message, cause) {
   return markGlobalMediaSafety(new Error(`${message} ${RECOVERY}`, { cause }));
+}
+
+function unverifiedDestination() {
+  return markGlobalMediaSafety(
+    Object.assign(
+      new Error(
+        "Media destination was not verified for this run. Restore the configured course folder and its retained alias before retrying the media worker.",
+      ),
+      { code: "MEDIA_CAPACITY_DESTINATION_UNVERIFIED" },
+    ),
+  );
 }

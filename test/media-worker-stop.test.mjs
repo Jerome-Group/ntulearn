@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, rename, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, rename, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,16 +7,17 @@ import { readMediaQueue, writeMediaQueue, updateMediaQueueJob } from "../src/med
 import { capabilityIndex } from "../src/capabilities/index.mjs";
 import { mediaRecordingRoot } from "../src/media/storage.mjs";
 import { workerStopFailure, workerStopEvidence } from "../src/media/worker-stop.mjs";
+import { createMediaCapacity } from "../src/media/capacity.mjs";
 import { runMediaQueue } from "../src/media/worker.mjs";
 
-async function fixture(t) {
+async function fixture(t, courseDirectory = "") {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-worker-stop-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const statePath = join(root, "state.json"),
     courses = ["fixture-a", "fixture-b"].map((key, index) => ({
       key,
       courseId: `fixture-course-${index}`,
-      destination: join(root, key),
+      destination: join(root, courseDirectory, key),
       mediaMode: "pilot",
     }));
   for (const course of courses)
@@ -431,3 +432,119 @@ test("global-stop untouched course counts are explicitly retained and artifact v
   assert.equal(cached.stopFailures, undefined);
   assert.equal(cached.processed, 0);
 });
+
+test("unverified capacity destination remains a closed global stop through digest and course report", async (t) => {
+  const f = await fixture(t);
+  const code = "MEDIA_CAPACITY_DESTINATION_UNVERIFIED";
+  const mediaRoot = join(f.root, "Media"),
+    foreign = join(f.root, "unregistered");
+  await mkdir(mediaRoot);
+  await mkdir(foreign);
+  const capacity = await createMediaCapacity(
+    { mediaRoot, freeSpaceReserveBytes: 100 },
+    {
+      volumeRoot: f.root,
+      courses: f.courses,
+      statfs: async () => ({ bavail: 100000n, bsize: 1n }),
+    },
+  );
+  const digest = await f.run({
+    checkCapacity: () => capacity.check({ path: join(foreign, "private.md"), boundary: foreign }),
+  });
+  assert.equal(digest.globalStop, true);
+  assert.deepEqual(digest.stopFailures, [{ code, stage: "capacity" }]);
+  const log = await f.log(digest);
+  assert.deepEqual(log.courses[0].stopFailures, digest.stopFailures);
+  assert.doesNotMatch(JSON.stringify(digest.stopFailures), /private|https:/);
+});
+
+for (const change of ["configured-alias-retarget", "configured-folder-replacement"])
+  for (const boundarySpelling of ["configured", "retained"])
+    for (const timing of ["before-probe", "during-probe"])
+      test(`configured capacity identity refusal stays typed through worker digest (${change}, ${boundarySpelling}, ${timing})`, async (t) => {
+        const courseDirectory = change === "configured-alias-retarget" ? "configured" : "original";
+        const f = await fixture(t, courseDirectory);
+        const original = join(f.root, "original"),
+          configured = join(f.root, "configured"),
+          retained = join(f.root, "retained"),
+          foreign = join(f.root, "foreign"),
+          mediaRoot = join(f.root, "Media");
+        if (change === "configured-alias-retarget") {
+          await rename(configured, original);
+          await symlink(original, configured);
+        }
+        for (const course of f.courses) {
+          await mkdir(join(original, course.key), { recursive: true });
+          await mkdir(join(foreign, course.key), { recursive: true });
+        }
+        await symlink(original, retained);
+        await mkdir(mediaRoot);
+        const course = f.courses[0],
+          originalCourse = join(original, course.key),
+          preserved = join(originalCourse, "student.md");
+        await writeFile(preserved, "Preserved student annotations.");
+        let changed = false,
+          armed = false,
+          probes = 0,
+          refusal;
+        async function changeBinding() {
+          if (changed) return;
+          changed = true;
+          if (change === "configured-alias-retarget") {
+            await rm(configured);
+            await symlink(foreign, configured);
+          } else {
+            await rename(originalCourse, originalCourse + "-preserved");
+            await mkdir(originalCourse);
+          }
+        }
+        const capacity = await createMediaCapacity(
+          { mediaRoot, freeSpaceReserveBytes: 100 },
+          {
+            volumeRoot: f.root,
+            courses: f.courses,
+            statfs: async () => {
+              if (armed) {
+                probes++;
+                if (timing === "during-probe") await changeBinding();
+              }
+              return { bavail: 100000n, bsize: 1n };
+            },
+          },
+        );
+        const boundary =
+          boundarySpelling === "configured" ? course.destination : join(retained, course.key);
+        armed = true;
+        const digest = await f.run({
+          checkCapacity: async () => {
+            if (timing === "before-probe") await changeBinding();
+            try {
+              await capacity.check({ path: join(boundary, "private.md"), boundary });
+            } catch (error) {
+              refusal = error;
+              throw error;
+            }
+          },
+        });
+        const expected = [{ code: "MEDIA_CAPACITY_DESTINATION_UNVERIFIED", stage: "capacity" }];
+        assert.equal(digest.globalStop, true);
+        assert.equal(digest.verdict, "red");
+        assert.deepEqual(digest.stopFailures, expected);
+        const log = await f.log(digest);
+        assert.deepEqual(log.stopFailures, expected);
+        assert.deepEqual(log.courses[0].stopFailures, expected);
+        assert.equal(log.courses[1].stopFailures, undefined);
+        assert.equal(refusal.globalSafety, true);
+        assert.match(refusal.message, /Restore the configured course folder/);
+        assert.doesNotMatch(refusal.message, /Free space/);
+        assert.doesNotMatch(
+          JSON.stringify(digest.stopFailures),
+          /private|https:|ntulearn-worker-stop/,
+        );
+        assert.equal(probes, timing === "during-probe" ? 1 : 0);
+        const preservedPath =
+          change === "configured-folder-replacement"
+            ? join(originalCourse + "-preserved", "student.md")
+            : preserved;
+        assert.equal(await readFile(preservedPath, "utf8"), "Preserved student annotations.");
+      });
