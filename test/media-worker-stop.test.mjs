@@ -7,6 +7,7 @@ import { readMediaQueue, writeMediaQueue, updateMediaQueueJob } from "../src/med
 import { capabilityIndex } from "../src/capabilities/index.mjs";
 import { mediaRecordingRoot } from "../src/media/storage.mjs";
 import { workerStopFailure, workerStopEvidence } from "../src/media/worker-stop.mjs";
+import { createMediaCapacity } from "../src/media/capacity.mjs";
 import { runMediaQueue } from "../src/media/worker.mjs";
 
 async function fixture(t) {
@@ -430,4 +431,29 @@ test("global-stop untouched course counts are explicitly retained and artifact v
   assert.equal(cached.countsBasis, "retained-queue");
   assert.equal(cached.stopFailures, undefined);
   assert.equal(cached.processed, 0);
+});
+
+test("unverified capacity destination remains a closed global stop through digest and course report", async (t) => {
+  const f = await fixture(t);
+  const code = "MEDIA_CAPACITY_DESTINATION_UNVERIFIED";
+  const mediaRoot = join(f.root, "Media"),
+    foreign = join(f.root, "unregistered");
+  await mkdir(mediaRoot);
+  await mkdir(foreign);
+  const capacity = await createMediaCapacity(
+    { mediaRoot, freeSpaceReserveBytes: 100 },
+    {
+      volumeRoot: f.root,
+      courses: f.courses,
+      statfs: async () => ({ bavail: 100000n, bsize: 1n }),
+    },
+  );
+  const digest = await f.run({
+    checkCapacity: () => capacity.check({ path: join(foreign, "private.md"), boundary: foreign }),
+  });
+  assert.equal(digest.globalStop, true);
+  assert.deepEqual(digest.stopFailures, [{ code, stage: "capacity" }]);
+  const log = await f.log(digest);
+  assert.deepEqual(log.courses[0].stopFailures, digest.stopFailures);
+  assert.doesNotMatch(JSON.stringify(digest.stopFailures), /private|https:/);
 });
