@@ -1,3 +1,9 @@
+import {
+  qualifyRecoveryResume,
+  assertRecoveryResumePins,
+  copyRecoveryResumePrefix,
+  assertCopiedRecoveryPrefix,
+} from "./recovery-resume.mjs";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { mkdir, writeFile, lstat } from "node:fs/promises";
@@ -24,7 +30,16 @@ const ACTION =
   "Inspect retained private candidates and ownership/safety evidence, then retry plan with unchanged inputs; publication never replaces originals.";
 
 export async function recoverTranscriptSources(
-  { mode, manifestPath, outputDirectory, config, signalProcessGroup, signal },
+  {
+    mode,
+    manifestPath,
+    outputDirectory,
+    previousOutputDirectory,
+    previousReportSha256,
+    config,
+    signalProcessGroup,
+    signal,
+  },
   dependencies = {},
 ) {
   const checks = [],
@@ -37,12 +52,27 @@ export async function recoverTranscriptSources(
     };
   try {
     if (
-      !["plan", "run", "publish"].includes(mode) ||
-      !manifestPath ||
-      (mode !== "plan" && !outputDirectory) ||
-      (mode === "plan" && outputDirectory)
+      !["plan", "run", "resume", "publish"].includes(mode) ||
+      !pathArgument(manifestPath) ||
+      (mode !== "plan" && !pathArgument(outputDirectory)) ||
+      (mode === "plan" && outputDirectory) ||
+      (mode === "resume"
+        ? !pathArgument(previousOutputDirectory) ||
+          typeof previousReportSha256 !== "string" ||
+          !/^[0-9a-f]{64}$/.test(previousReportSha256)
+        : Boolean(previousOutputDirectory || previousReportSha256))
     )
       throw recoveryFailure("RECOVERY_ARGUMENTS");
+    if (mode === "resume") {
+      const previous = resolve(previousOutputDirectory),
+        output = resolve(outputDirectory);
+      if (
+        previous === output ||
+        previous.startsWith(output + sep) ||
+        output.startsWith(previous + sep)
+      )
+        throw recoveryFailure("RECOVERY_RESUME_INVALID");
+    }
     const admission = () =>
       (dependencies.admission ?? assertMediaSafetyAdmission)({
         statePath: config.statePath,
@@ -73,11 +103,20 @@ export async function recoverTranscriptSources(
           try {
             await admission();
             await assertRecoveryInputs(manifest, signal);
-            if (mode === "run")
+            if (mode === "run" || mode === "resume")
               Object.assign(
                 evidence,
                 await runCandidates(
-                  { manifest, outputDirectory, config, signalProcessGroup, signal, checks },
+                  {
+                    manifest,
+                    outputDirectory,
+                    previousOutputDirectory,
+                    previousReportSha256,
+                    config,
+                    signalProcessGroup,
+                    signal,
+                    checks,
+                  },
                   dependencies,
                 ),
               );
@@ -127,7 +166,16 @@ export async function recoverTranscriptSources(
 }
 
 async function runCandidates(
-  { manifest, outputDirectory, config, signalProcessGroup, signal, checks },
+  {
+    manifest,
+    outputDirectory,
+    previousOutputDirectory,
+    previousReportSha256,
+    config,
+    signalProcessGroup,
+    signal,
+    checks,
+  },
   dependencies,
 ) {
   const controller = new globalThis.AbortController();
@@ -142,7 +190,8 @@ async function runCandidates(
     pending,
     put,
     failureError,
-    ownsOutput = false;
+    ownsOutput = false,
+    resumed;
   const candidates = [],
     stages = [];
   const output = resolve(outputDirectory);
@@ -180,11 +229,33 @@ async function runCandidates(
     )
       throw recoveryFailure("RECOVERY_OUTPUT_INVALID");
     await assertMediaArtifactPath(output, boundary);
+    if (previousOutputDirectory) {
+      if (resolve(previousOutputDirectory) === output)
+        throw recoveryFailure("RECOVERY_RESUME_INVALID");
+      resumed = await qualifyRecoveryResume({
+        directory: previousOutputDirectory,
+        reportSha256: previousReportSha256,
+        boundary,
+        manifest,
+        runtimePins: report.runtimePins,
+        signal: combined,
+      });
+      await assertRecoveryInputs(manifest, combined);
+      report.resumeFrom = resumed.ancestry;
+    }
     const capacity = await (dependencies.createCapacity ?? createMediaCapacity)(config.media, {
       courses: config.courses,
     });
     await capacity.check({ path: output, boundary, bytes: manifest.budgets.maxOutputBytes });
     combined.throwIfAborted();
+    if (resumed) {
+      await assertRecoveryResumePins(resumed, combined);
+      await assertRuntimePins(
+        { config, manifest, pins: report.runtimePins, signalProcessGroup, signal: combined },
+        dependencies,
+      );
+    }
+    await assertRecoveryInputs(manifest, combined);
     await mkdir(output, { mode: 0o700 });
     ownsOutput = true;
     await mkdir(join(output, "work"), { mode: 0o700 });
@@ -206,6 +277,13 @@ async function runCandidates(
       await writeFile(join(output, name), body, { flag: "wx", mode: 0o600 });
     };
     await put("plan.json", manifest);
+    if (resumed) {
+      await copyRecoveryResumePrefix(resumed, put, combined);
+      await assertCopiedRecoveryPrefix(output, resumed, combined);
+      candidates.push(...resumed.candidates);
+      checks.push(...resumed.candidates.map(candidateCheck));
+      stages.push(...resumed.stages);
+    }
     monitor = setInterval(() => {
       if (!pending)
         pending = budgetCheck()
@@ -242,7 +320,7 @@ async function runCandidates(
         entry.wallMs = Date.now() - started;
       }
     };
-    for (const recording of manifest.recordings) {
+    for (const recording of manifest.recordings.slice(candidates.length)) {
       const recordingPaths = new Set([
         recording.source.path,
         recording.media.path,
@@ -280,26 +358,19 @@ async function runCandidates(
         candidate.files.push({ name, sha256: file.sha256, bytes: file.bytes });
       }
       candidates.push(candidate);
-      checks.push(
-        observation(
-          recording.id,
-          candidate.eligible ? "passed" : "blocked",
-          candidate.eligible ? "RECOVERY_CANDIDATE_VALIDATED" : "RECOVERY_CANDIDATE_REVIEW",
-          candidate.eligible
-            ? "Source-preserving candidate passed native, lexical and timing plausibility checks; acoustic verification remains unrun."
-            : "Retained candidate needs review; repetition or source/timing evidence blocks publication.",
-          candidate.eligible ? null : ACTION,
-          {
-            sourceStructure: candidate.sourceStructure,
-            timing: candidate.timing,
-            flags: candidate.flags,
-            formatting: candidate.formatting,
-          },
-        ),
-      );
+      checks.push(candidateCheck(candidate));
     }
     await assertRecoveryInputs(manifest, combined);
     if (runtime.vad) await assertRecoveryVadInputs(runtime.vad, combined);
+    if (resumed) {
+      await assertRecoveryResumePins(resumed, combined);
+      await assertCopiedRecoveryPrefix(output, resumed, combined);
+      await assertRuntimePins(
+        { config, manifest, pins: report.runtimePins, signalProcessGroup, signal: combined },
+        dependencies,
+      );
+      await assertRecoveryInputs(manifest, combined);
+    }
   } catch (error) {
     failureError = error;
     report.failureCode = safeCode(error);
@@ -325,6 +396,7 @@ async function runCandidates(
   if (failureError) throw failureError;
   return {
     candidates: candidates.length,
+    reusedCandidates: resumed?.candidates.length ?? 0,
     eligible: candidates.filter((candidate) => candidate.eligible).length,
     review: candidates.filter((candidate) => !candidate.eligible).length,
     publication: "unrun",
@@ -362,3 +434,44 @@ function failure(error) {
       : ACTION,
   );
 }
+
+async function assertRuntimePins(
+  { config, manifest, pins, signalProcessGroup, signal },
+  dependencies,
+) {
+  const runtime = await (dependencies.verifyRuntime ?? verifyMediaRuntime)(config.media, {
+    signalProcessGroup,
+    signal,
+  });
+  const current = runtime.artifacts.map(({ key, sha256 }) => ({ key, sha256 }));
+  if (manifest.policy === VAD_RECOVERY_POLICY) {
+    const vad = await (dependencies.verifyVad ?? verifyRecoveryVad)(
+      { runtime, signal },
+      { signalProcessGroup, signal },
+    );
+    current.push(vad.pin, vad.delegatePin);
+  }
+  if (JSON.stringify(current) !== JSON.stringify(pins))
+    throw recoveryFailure("RECOVERY_RESUME_CHANGED");
+}
+
+function candidateCheck(candidate) {
+  return observation(
+    candidate.id,
+    candidate.eligible ? "passed" : "blocked",
+    candidate.eligible ? "RECOVERY_CANDIDATE_VALIDATED" : "RECOVERY_CANDIDATE_REVIEW",
+    candidate.eligible
+      ? "Source-preserving candidate passed native, lexical and timing plausibility checks; acoustic verification remains unrun."
+      : "Retained candidate needs review; repetition or source/timing evidence blocks publication.",
+    candidate.eligible ? null : ACTION,
+    {
+      sourceStructure: candidate.sourceStructure,
+      timing: candidate.timing,
+      flags: candidate.flags,
+      formatting: candidate.formatting,
+    },
+  );
+}
+
+const pathArgument = (value) =>
+  typeof value === "string" && value.length > 0 && !value.includes("\0");

@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { recoveryFile, recoveryFailure } from "./recovery-files.mjs";
-import { assessRecoveryTranscript } from "./recovery-candidate.mjs";
+import { readRecoveryRetainedCandidate } from "./recovery-retained-candidate.mjs";
 import { historicalReads, publishHistoricalFile, historicalDigest } from "./historical-files.mjs";
 import { createMediaCapacity } from "./capacity.mjs";
 import { assertRecoveryInputs } from "./recovery-manifest.mjs";
@@ -95,40 +95,14 @@ async function publishCandidates(
     const matches = report.candidates.filter((candidate) => candidate.id === recording.id);
     if (matches.length !== 1) throw recoveryFailure("RECOVERY_CANDIDATE_INVALID");
     const retained = matches[0];
-    if (!Array.isArray(retained.files)) throw recoveryFailure("RECOVERY_CANDIDATE_INVALID");
-    const suffixes = [
-      "native-asr.json",
-      "source.json",
-      "assessment.json",
-      ...(retained.formatting === "passed" ? ["paragraphs.md"] : []),
-    ];
-    if (retained.files.length !== suffixes.length)
-      throw recoveryFailure("RECOVERY_CANDIDATE_INVALID");
-    const files = new Map();
-    for (const suffix of suffixes) {
-      const name = `${recording.id}.${suffix}`;
-      const proofs = retained.files.filter((file) => file.name === name);
-      if (proofs.length !== 1) throw recoveryFailure("RECOVERY_CANDIDATE_INVALID");
-      const file = await recoveryFile(join(output, name), { maximumBytes: 16 * 1024 ** 2, signal });
-      if (file.sha256 !== proofs[0].sha256 || file.bytes !== proofs[0].bytes)
-        throw recoveryFailure("RECOVERY_CANDIDATE_EDITED");
-      files.set(suffix, file);
-      protectedCandidates.push(file);
-    }
-    const source = JSON.parse(files.get("source.json").content.toString("utf8"));
-    const native = JSON.parse(files.get("native-asr.json").content.toString("utf8"));
-    const { candidate, markdown } = assessRecoveryTranscript({
-      native,
-      source,
-      duration: retained.duration,
-      id: recording.id,
+    const { files, candidate, markdown } = await readRecoveryRetainedCandidate({
+      output,
+      recording,
+      retained,
+      maximumDuration: manifest.budgets.maxRecordingSeconds,
+      signal,
     });
-    if (
-      JSON.stringify(candidate) !==
-        JSON.stringify(JSON.parse(files.get("assessment.json").content.toString("utf8"))) ||
-      (markdown !== null && files.get("paragraphs.md")?.content.toString("utf8") !== markdown)
-    )
-      throw recoveryFailure("RECOVERY_CANDIDATE_REVIEW");
+    protectedCandidates.push(...files.values());
     if (!candidate.eligible) {
       progress.review++;
       reviewEntries.push({ recording, candidate });
