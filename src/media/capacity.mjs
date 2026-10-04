@@ -132,8 +132,10 @@ async function initializeCapacity(
 
   async function unchanged(root, active) {
     const path = resolve(root);
-    if (!sameSnapshot(await snapshot(path, active), roots.get(path)))
+    if (!sameSnapshot(await snapshot(path, active), roots.get(path))) {
+      if (courseRoots.has(path)) throw unverifiedDestination();
       throw safety("Media canonical storage path changed during this run.");
+    }
   }
 
   await check();
