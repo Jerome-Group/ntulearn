@@ -1,5 +1,7 @@
 # Source editions add distinct identities and announcement revisions
 
+**Narrowed by [ADR-0027](0027-source-revisions-preserve-occupied-originals.md):** changed attachments of one identity and content-item pages may also add immutable revisions. The preservation and provenance rules below still apply.
+
 A sync may claim new, exclusive source names for distinct attachments that collide and new rendered
 revisions of announcements. It never overwrites, renames or prunes an original or an edition. This
 narrowly supersedes ADR-0016's prohibition on automatic rescue names for these two cases only;

@@ -61,7 +61,12 @@ function* expectedOfFolder(item, placement) {
 
   const page = contentDocument(item);
   if (page) {
-    yield { kind: "document", placement: placedFile(placement, FOLDER_DOCUMENT), content: page };
+    yield {
+      kind: "document",
+      item,
+      placement: placedFile(placement, FOLDER_DOCUMENT),
+      content: page,
+    };
   }
 }
 
@@ -72,7 +77,7 @@ async function* expectedOfItem({ client, courseId, item, placement, onAttachment
     `${orderedName(item.position, item.title)}.md`,
     `${item.title}.md`,
   );
-  if (page) yield { kind: "document", placement: document, content: page };
+  if (page) yield { kind: "document", item, placement: document, content: page };
 
   let attached = false;
   const attachments = await client.readAttachments(courseId, item);

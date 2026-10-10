@@ -13,6 +13,12 @@ import {
 const FIXTURE = JSON.parse(
   await readFile(new URL("./fixtures/import-status-v1.json", import.meta.url), "utf8"),
 );
+const SOURCE_COUNTS_FIXTURE = JSON.parse(
+  await readFile(
+    new URL("./fixtures/import-status-v1-source-counts.json", import.meta.url),
+    "utf8",
+  ),
+);
 const RESULT = {
   downloaded: 2,
   skipped: 3,
@@ -374,6 +380,7 @@ test("publishes optional source-edition outcome counters while retaining legacy 
   assert.equal(receipt.counts.publicationConflicts, 1);
   assert.equal(isValidImportStatus(receipt, receipt.finishedAt), true);
   assert.equal(isValidImportStatus(FIXTURE, FIXTURE.finishedAt), true);
+  assert.equal(isValidImportStatus(SOURCE_COUNTS_FIXTURE, SOURCE_COUNTS_FIXTURE.finishedAt), true);
   for (const value of [-1, 1.5, "1"])
     assert.equal(
       isValidImportStatus(

@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, readdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncCourse } from "../src/sync/course.mjs";
@@ -11,6 +13,7 @@ const attachments = [
   { resourceUrl: "/bbcswebdav/one", fileName: "Quiz:1.pdf" },
   { resourceUrl: "/bbcswebdav/two", fileName: "quiz?1.pdf" },
 ];
+const hash = (value) => createHash("sha256").update(value).digest("hex");
 async function fixture(fn) {
   const destination = await mkdtemp(join(tmpdir(), "source-editions-"));
   try {
@@ -112,6 +115,314 @@ test("announcement revisions retain originals and edited editions, identical rep
     assert.equal(await readFile(join(directory, edition), "utf8"), "EDITION EDIT");
   }));
 
+test("one item acquires changed page and attachment as immutable editions", () =>
+  fixture(async (course) => {
+    const state = { courses: {} };
+    const file = { id: "stable-file", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const page = { ...item, contentHandler: "resource/x-bb-document", body: { rawText: "First" } };
+    const current = reader([file]);
+    current.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [page],
+      announcements: [],
+      conversations: [],
+    });
+    current.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    let result = await syncCourse({ client: current, course, state });
+    assert.equal(result.failures.length, 0);
+    const originalPage = join(course.destination, "01 Files.md");
+    const originalFile = join(course.destination, "01 Guide.pdf");
+    const firstPage = await readFile(originalPage);
+    const firstFile = await readFile(originalFile);
+    const updated = {
+      ...current,
+      readCourse: async () => ({
+        course: { displayName: "Synthetic" },
+        items: [{ ...page, body: { rawText: "Second" }, modifiedDate: "2026-10-10T00:00:00Z" }],
+        announcements: [],
+        conversations: [],
+      }),
+      download: async () => ({ body: Buffer.from("PDF TWO"), headers: {} }),
+    };
+    assert.equal((await verifyCourse({ client: updated, course })).missing.length, 2);
+    result = await syncCourse({ client: updated, course, state });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 2);
+    assert.deepEqual(await readFile(originalPage), firstPage);
+    assert.deepEqual(await readFile(originalFile), firstFile);
+    const editions = (await readdir(course.destination)).filter((name) => name.includes("[source"));
+    assert.equal(editions.length, 2);
+    assert.equal((await verifyCourse({ client: updated, course })).missing.length, 0);
+    result = await syncCourse({ client: updated, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 0);
+    assert.deepEqual(
+      (await readdir(course.destination)).filter((name) => name.includes("[source")),
+      editions,
+    );
+    const earlierFile = join(
+      course.destination,
+      editions.find((name) => name.endsWith(".pdf")),
+    );
+    await writeFile(earlierFile, "EARLIER EDITION EDIT");
+    const third = {
+      ...updated,
+      readCourse: async () => ({
+        course: { displayName: "Synthetic" },
+        items: [
+          {
+            ...page,
+            position: 2,
+            body: { rawText: "Third" },
+            modifiedDate: "2026-10-11T00:00:00Z",
+          },
+        ],
+        announcements: [],
+        conversations: [],
+      }),
+      download: async () => ({ body: Buffer.from("PDF THREE"), headers: {} }),
+    };
+    result = await syncCourse({ client: third, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 2);
+    assert.deepEqual(await readFile(originalPage), firstPage);
+    assert.deepEqual(await readFile(originalFile), firstFile);
+    assert.equal(await readFile(earlierFile, "utf8"), "EARLIER EDITION EDIT");
+    assert.equal((await verifyCourse({ client: third, course })).missing.length, 0);
+    const currentFile = join(
+      course.destination,
+      (await readdir(course.destination)).find(
+        (name) => name.endsWith(".pdf") && name.includes(hash("PDF THREE").slice(0, 24)),
+      ),
+    );
+    const pageNames = (await readdir(course.destination)).filter(
+      (name) => name.endsWith(".md") && name.includes("[source"),
+    );
+    const currentPage = join(
+      course.destination,
+      (
+        await Promise.all(
+          pageNames.map(async (name) => [
+            name,
+            await readFile(join(course.destination, name), "utf8"),
+          ]),
+        )
+      ).find(([, body]) => body.includes("Third"))[0],
+    );
+    await writeFile(currentFile, "STUDENT EDIT");
+    await writeFile(currentPage, "STUDENT PAGE EDIT");
+    result = await syncCourse({ client: third, course, state });
+    assert.equal(result.publicationConflicts, 2);
+    assert.equal(await readFile(currentFile, "utf8"), "STUDENT EDIT");
+    assert.equal(await readFile(currentPage, "utf8"), "STUDENT PAGE EDIT");
+  }));
+
+test("legacy attachment provenance and stale State cannot claim a changed fingerprint", () =>
+  fixture(async (course) => {
+    const state = { courses: {} };
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const first = reader([file]);
+    first.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    await syncCourse({ client: first, course, state });
+    const directory = join(course.destination, "Source editions");
+    const [identity] = await readdir(directory);
+    const path = join(directory, identity);
+    const [name] = await readdir(path);
+    const record = JSON.parse(await readFile(join(path, name), "utf8"));
+    await rm(join(path, name));
+    const legacy = { ...record, schemaVersion: 1, version: null };
+    delete legacy.fingerprint;
+    const body = JSON.stringify(legacy) + "\n";
+    await writeFile(join(path, hash(body) + ".json"), body);
+    assert.equal((await verifyCourse({ client: first, course })).missing.length, 1);
+    first.download = async () => assert.fail("matching legacy State should avoid a fetch");
+    const migrated = await syncCourse({ client: first, course, state });
+    assert.equal(migrated.failures.length, 0);
+    assert.equal((await verifyCourse({ client: first, course })).missing.length, 0);
+    let calls = 0;
+    const changed = reader([file]);
+    changed.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [{ ...item, modifiedDate: "2026-10-10T00:00:00Z" }],
+      announcements: [],
+      conversations: [],
+    });
+    changed.download = async () => {
+      calls++;
+      return { body: Buffer.from("PDF TWO"), headers: {} };
+    };
+    const result = await syncCourse({ client: changed, course, state });
+    assert.equal(calls, 2);
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 1);
+    assert.equal(await readFile(join(course.destination, "01 Guide.pdf"), "utf8"), "PDF ONE");
+    assert.equal((await verifyCourse({ client: changed, course })).missing.length, 0);
+  }));
+
+test("unrecorded attachment at an earlier number receives a changed edition", () =>
+  fixture(async (course) => {
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const first = reader([file]);
+    first.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    await syncCourse({ client: first, course, state: { courses: {} } });
+    await rm(join(course.destination, "Source editions"), { recursive: true });
+    const original = join(course.destination, "01 Guide.pdf");
+    const bytes = await readFile(original);
+    const updated = reader([file]);
+    updated.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [{ ...item, position: 1, modifiedDate: "2026-10-10T00:00:00Z" }],
+      announcements: [],
+      conversations: [],
+    });
+    let calls = 0;
+    updated.download = async () => {
+      calls++;
+      return { body: Buffer.from("PDF TWO"), headers: {} };
+    };
+    const result = await syncCourse({ client: updated, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 1);
+    assert.equal(calls, 2);
+    assert.deepEqual(await readFile(original), bytes);
+    assert.equal(
+      (await readdir(course.destination)).filter(
+        (name) => name.includes("[source") && name.endsWith(".pdf"),
+      ).length,
+      1,
+    );
+    assert.equal((await verifyCourse({ client: updated, course })).missing.length, 0);
+    const repeat = await syncCourse({ client: updated, course, state: { courses: {} } });
+    assert.equal(repeat.failures.length, 0);
+    assert.equal(repeat.newEditions, 0);
+    assert.equal(calls, 2);
+  }));
+
+test("revision probe cannot publish different bytes returned on its second read", () =>
+  fixture(async (course) => {
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const first = reader([file]);
+    first.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    await syncCourse({ client: first, course, state: { courses: {} } });
+    const original = join(course.destination, "01 Guide.pdf");
+    const bytes = await readFile(original);
+    const updated = reader([file]);
+    updated.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [{ ...item, modifiedDate: "2026-10-10T00:00:00Z" }],
+      announcements: [],
+      conversations: [],
+    });
+    let calls = 0;
+    updated.download = async () => ({
+      body: Buffer.from(++calls === 1 ? "PDF TWO" : "PDF THREE"),
+      headers: {},
+    });
+    const result = await syncCourse({ client: updated, course, state: { courses: {} } });
+    assert.equal(result.failures[0].code, "SOURCE_REVISION_CHANGED");
+    assert.equal(result.newEditions, 0);
+    assert.deepEqual(await readFile(original), bytes);
+    assert.equal(
+      (await readdir(course.destination)).filter((name) => name.includes("[source")).length,
+      0,
+    );
+  }));
+
+test("missing known current edition cannot be recreated from changed bytes", () =>
+  fixture(async (course) => {
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const first = reader([file]);
+    first.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    await syncCourse({ client: first, course, state: { courses: {} } });
+    const original = join(course.destination, "01 Guide.pdf");
+    await rm(original);
+    const changed = reader([file]);
+    changed.download = async () => ({ body: Buffer.from("PDF TWO"), headers: {} });
+    const result = await syncCourse({ client: changed, course, state: { courses: {} } });
+    assert.equal(result.failures[0].code, "SOURCE_REVISION_CHANGED");
+    await assert.rejects(readFile(original), { code: "ENOENT" });
+    assert.equal(
+      (await readdir(course.destination)).filter((name) => name.includes("[source")).length,
+      0,
+    );
+    assert.equal((await verifyCourse({ client: changed, course })).missing.length, 1);
+  }));
+
+test("changed legacy page at an earlier number uses a fresh edition", () =>
+  fixture(async (course) => {
+    const page = { ...item, contentHandler: "resource/x-bb-document", body: { rawText: "First" } };
+    const client = reader([]);
+    client.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [page],
+      announcements: [],
+      conversations: [],
+    });
+    await syncCourse({ client, course, state: { courses: {} } });
+    const original = join(course.destination, "01 Files.md");
+    const bytes = await readFile(original);
+    await rm(join(course.destination, "Source editions"), { recursive: true });
+    client.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [{ ...page, position: 1, body: { rawText: "Second" } }],
+      announcements: [],
+      conversations: [],
+    });
+    const result = await syncCourse({ client, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 1);
+    assert.deepEqual(await readFile(original), bytes);
+    assert.equal((await verifyCourse({ client, course })).missing.length, 0);
+  }));
+
+test("revision fetch failure stays partial and preserves the sign-in remedy", () =>
+  fixture(async (course) => {
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const first = reader([file]);
+    await syncCourse({ client: first, course, state: { courses: {} } });
+    const original = join(course.destination, "01 Guide.pdf");
+    const bytes = await readFile(original);
+    const changed = reader([file]);
+    changed.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [{ ...item, modifiedDate: "2026-10-10T00:00:00Z" }],
+      announcements: [],
+      conversations: [],
+    });
+    changed.download = async () => {
+      throw Error("Not signed in while downloading synthetic. Run: npm run login");
+    };
+    const result = await syncCourse({ client: changed, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].code, "SOURCE_FETCH_FAILED");
+    assert.match(result.failures[0].error, /Not signed in.*npm run login/);
+    assert.equal(result.unresolvedIdentity, 0);
+    assert.deepEqual(await readFile(original), bytes);
+  }));
+
+test("nonregular occupied attachment placements refuse without reading their bytes", () =>
+  fixture(async (course) => {
+    const file = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const target = join(course.destination, "01 Guide.pdf");
+    const client = reader([file]);
+    let downloads = 0;
+    client.download = async () => {
+      downloads++;
+      return { body: Buffer.from("PDF"), headers: {} };
+    };
+    await mkdir(target);
+    let result = await syncCourse({ client, course, state: { courses: {} } });
+    assert.equal(result.failures[0].code, "SOURCE_PUBLICATION_CONFLICT");
+    assert.equal(result.publicationConflicts, 1);
+    assert.equal(downloads, 0);
+    await rm(target, { recursive: true });
+    if (spawnSync("mkfifo", [target]).status !== 0) return;
+    result = await syncCourse({ client, course, state: { courses: {} } });
+    assert.equal(result.failures[0].code, "SOURCE_PUBLICATION_CONFLICT");
+    assert.equal(result.publicationConflicts, 1);
+    assert.equal(downloads, 0);
+  }));
+
 test("missing and ambiguous attachment identities remain explicit partial failures", () =>
   fixture(async (course) => {
     for (const files of [
@@ -153,7 +464,7 @@ test("checksum evidence refuses equal-size edits when a later collision arrives"
     };
     const result = await syncCourse({ client, course, state });
     assert.equal(result.publicationConflicts, 1);
-    assert.equal(calls, 2);
+    assert.equal(calls, 1);
     assert.equal(
       await readFile(join(course.destination, original), "utf8"),
       "x".repeat(attachments[0].resourceUrl.length),

@@ -485,7 +485,7 @@ const commands = [
         provenanceDirectory: "Source editions",
         identity: "SHA-256 of positive upstream identity; ambiguous/missing identities refuse",
         publication:
-          "Exclusive identity attachment placements and rendered-digest announcement revisions; originals and edits retained",
+          "Exclusive identity attachment placements, fetched-digest attachment revisions, and rendered-digest page and announcement revisions; originals and edits retained",
         receiptCounts: ["newEditions", "reusedFiles", "unresolvedIdentity", "publicationConflicts"],
         limits: {
           provenanceRecordsPerIdentity: 128,
@@ -493,7 +493,7 @@ const commands = [
           suffixedFilenameBytes: 160,
         },
         verification:
-          "Shared positive placement metadata, then presence only; State is not consulted",
+          "Shared positive current-revision placement metadata, then presence only; legacy unassociated attachments are missing until sync; State is not consulted",
       },
     },
   ),

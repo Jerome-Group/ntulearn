@@ -64,7 +64,15 @@ export async function verifyCourse({ client, course }) {
     const placement = each.placement;
     const { file, trail, path, segments } = placement;
     if (each.sourceFailure || ambiguous.has(comparablePath(placement, each.sourcePath))) {
-      missing.push({ file, trail, path, reason: "ambiguous destination name" });
+      missing.push({
+        file,
+        trail,
+        path,
+        reason:
+          each.sourceFailure === "SOURCE_REVISION_UNRESOLVED"
+            ? "current source revision unproven"
+            : "ambiguous destination name",
+      });
       continue;
     }
     const target = each.sourcePath
