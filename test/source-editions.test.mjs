@@ -112,6 +112,58 @@ test("announcement revisions retain originals and edited editions, identical rep
     assert.equal(await readFile(join(directory, edition), "utf8"), "EDITION EDIT");
   }));
 
+test("one item acquires changed page and attachment as immutable editions", () =>
+  fixture(async (course) => {
+    const state = { courses: {} };
+    const file = { id: "stable-file", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const page = { ...item, contentHandler: "resource/x-bb-document", body: { rawText: "First" } };
+    const current = reader([file]);
+    current.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [page],
+      announcements: [],
+      conversations: [],
+    });
+    current.download = async () => ({ body: Buffer.from("PDF ONE"), headers: {} });
+    let result = await syncCourse({ client: current, course, state });
+    assert.equal(result.failures.length, 0);
+    const originalPage = join(course.destination, "01 Files.md");
+    const originalFile = join(course.destination, "01 Guide.pdf");
+    const firstPage = await readFile(originalPage);
+    const firstFile = await readFile(originalFile);
+    const updated = {
+      ...current,
+      readCourse: async () => ({
+        course: { displayName: "Synthetic" },
+        items: [{ ...page, body: { rawText: "Second" }, modifiedDate: "2026-10-10T00:00:00Z" }],
+        announcements: [],
+        conversations: [],
+      }),
+      download: async () => ({ body: Buffer.from("PDF TWO"), headers: {} }),
+    };
+    assert.equal((await verifyCourse({ client: updated, course })).missing.length, 2);
+    result = await syncCourse({ client: updated, course, state });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 2);
+    assert.deepEqual(await readFile(originalPage), firstPage);
+    assert.deepEqual(await readFile(originalFile), firstFile);
+    const editions = (await readdir(course.destination)).filter((name) => name.includes("[source"));
+    assert.equal(editions.length, 2);
+    assert.equal((await verifyCourse({ client: updated, course })).missing.length, 0);
+    result = await syncCourse({ client: updated, course, state: { courses: {} } });
+    assert.equal(result.failures.length, 0);
+    assert.equal(result.newEditions, 0);
+    assert.deepEqual(
+      (await readdir(course.destination)).filter((name) => name.includes("[source")),
+      editions,
+    );
+    const currentFile = join(course.destination, editions.find((name) => name.endsWith(".pdf")));
+    await writeFile(currentFile, "STUDENT EDIT");
+    result = await syncCourse({ client: updated, course, state });
+    assert.equal(result.publicationConflicts, 1);
+    assert.equal(await readFile(currentFile, "utf8"), "STUDENT EDIT");
+  }));
+
 test("missing and ambiguous attachment identities remain explicit partial failures", () =>
   fixture(async (course) => {
     for (const files of [
