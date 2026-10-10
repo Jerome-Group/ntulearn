@@ -420,22 +420,29 @@ test("keeps the file where it is when no record says it was ever downloaded", as
   assert.deepEqual((await readdir(destination)).sort(), ROOT);
 });
 
-// ADR-0016 refuses a differing older placement too: a mismatch may be an annotation, and a new
-// number is not permission to create a second version beside it.
-test("reports a conflict at a differing earlier-number attachment without creating another copy", async () => {
+// A revised source takes an identity/digest edition; a new number alone is not the edition name.
+test("changed attachment at an earlier number receives an edition without duplicating the original", async () => {
   const { destination } = await sync(downloads("ppt"), WEEK_1);
+  const updated = REORDERED.map((item) =>
+    item.id === "_3_1" ? { ...item, modifiedDate: "2026-10-10T00:00:00Z" } : item,
+  );
   const second = await syncCourse({
-    client: client(downloads("a different deck"), REORDERED),
+    client: client(downloads("a different deck"), updated),
     course: { key: "CC0006", courseId: "_9_1", destination },
     state: { version: 1, courses: {} },
   });
-  assert.equal(second.downloaded, 0);
-  assert.equal(second.failures.length, 1);
+  assert.equal(second.downloaded, 1);
+  assert.equal(second.newEditions, 1);
+  assert.equal(second.failures.length, 0);
   assert.equal(await readFile(join(destination, "01 Week 1", "05 Week 1 PPT.pptx"), "utf8"), "ppt");
   await assert.rejects(readFile(join(destination, "01 Week 1", "06 Week 1 PPT.pptx")), {
     code: "ENOENT",
   });
-  assert.deepEqual((await readdir(destination)).sort(), ROOT);
+  assert.equal(
+    (await readdir(join(destination, "01 Week 1"))).filter((name) => name.includes("[source"))
+      .length,
+    1,
+  );
 });
 
 // Resolving only the file leaves the folder to be created afresh under its new number, so the run
@@ -643,7 +650,7 @@ test("rejects a renumbered symlink descendant before writing outside the destina
   );
 });
 
-test("retains occupied attachment and annotated documents, reports partial, and recovers at an empty path", async (t) => {
+test("retains annotated originals while changed attachment gets an edition and other conflicts stay partial", async (t) => {
   const { destination, state } = await sync(downloads("ppt"), WEEK_1);
   t.after(() => rm(destination, { recursive: true, force: true }));
   const overview = join(destination, "Course.md");
@@ -667,7 +674,8 @@ test("retains occupied attachment and annotated documents, reports partial, and 
   assert.equal(await readFile(overview, "utf8"), originalOverview);
   assert.equal(await readFile(placeholder, "utf8"), originalPlaceholder);
   assert.equal(await readFile(attachment, "utf8"), "annotated attachment");
-  assert.equal(result.failures.length, 3);
+  assert.equal(result.failures.length, 2);
+  assert.equal(result.newEditions, 1);
   assert.ok(result.failures.every((failure) => /retained.*Compare/.test(failure.error)));
   assert.equal(
     JSON.parse(await readFile(join(destination, "Sync status.json"), "utf8")).status,
@@ -678,8 +686,13 @@ test("retains occupied attachment and annotated documents, reports partial, and 
   assert.equal(calls, 2);
   await unlink(attachment);
   const recovered = await syncCourse({ client: updatedClient, course, state });
-  assert.equal(recovered.downloaded, 1);
-  assert.equal(await readFile(attachment, "utf8"), "new upstream bytes");
+  assert.equal(recovered.downloaded, 0);
+  assert.equal(await readFile(attachment, "utf8").catch(() => null), null);
+  assert.equal(
+    (await readdir(join(destination, "01 Week 1"))).filter((name) => name.includes("[source"))
+      .length,
+    1,
+  );
   assert.equal(await readFile(overview, "utf8"), originalOverview);
 });
 
@@ -712,13 +725,13 @@ test("uses recorded bytes to skip inaccurate upstream sizes and preserves trunca
   assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
   delete state.courses.CC0006.downloads[RESOURCE].bytes;
   const legacy = await syncCourse({ client: reader, course, state });
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.equal(legacy.skipped, 1);
   assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
   const held = join(destination, AT);
   await writeFile(held, "pd");
   const damaged = await syncCourse({ client: reader, course, state });
-  assert.equal(calls, 3);
+  assert.equal(calls, 1);
   assert.equal(damaged.failures.length, 1);
   assert.equal(await readFile(held, "utf8"), "pd");
   await unlink(held);
@@ -726,7 +739,7 @@ test("uses recorded bytes to skip inaccurate upstream sizes and preserves trunca
   assert.equal(recovered.downloaded, 1);
   assert.equal(await readFile(held, "utf8"), "pdf");
   await syncCourse({ client: reader, course, state });
-  assert.equal(calls, 4);
+  assert.equal(calls, 2);
 });
 
 test("retains annotations at an earlier-number marked stand-in without creating a rescue copy", async (t) => {

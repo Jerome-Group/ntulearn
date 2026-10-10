@@ -78,7 +78,12 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     course.mediaMode && course.mediaMode !== "off"
       ? recordingDiscovery({ course, snapshot, attachmentsByItem })
       : [];
-  walked = await resolveSourceEditions({ walked, destination: course.destination, previous });
+  walked = await resolveSourceEditions({
+    walked,
+    destination: course.destination,
+    previous,
+    loadAttachment: (attachment) => client.download(attachment),
+  });
   const numbering = numberingOf(
     course.destination,
     walked.map((expected) => expected.placement.segments),
@@ -98,15 +103,18 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     if (expected.sourceFailure) {
       const { file, trail, path } = expected.placement;
       const conflict = expected.sourceFailure === "SOURCE_PUBLICATION_CONFLICT";
-      tally[conflict ? "publicationConflicts" : "unresolvedIdentity"]++;
+      if (conflict) tally.publicationConflicts++;
+      else if (expected.sourceFailure !== "SOURCE_FETCH_FAILED") tally.unresolvedIdentity++;
       tally.failures.push({
         file,
         trail,
         path,
         code: expected.sourceFailure,
-        error: conflict
-          ? "Source edition has different occupied bytes. Existing edits were retained. Compare the original and its edition before retrying."
-          : "Source identity or placement is missing or ambiguous. Existing files were retained. Report the source identity defect before retrying.",
+        error:
+          expected.sourceError ??
+          (conflict
+            ? "Source edition has different occupied bytes. Existing edits were retained. Compare the original and its edition before retrying."
+            : "Source identity, revision or placement is missing or ambiguous. Existing files were retained. Report the source defect before retrying."),
       });
       continue;
     }
@@ -143,9 +151,17 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
         break;
       case "attachment": {
         const { item, attachment, placement } = expected;
-        const record =
+        const previousRecord =
           previous.downloads?.[attachmentStateKey(attachment)] ??
           previous.downloads?.[attachment.resourceUrl];
+        const record = expected.provenance
+          ? {
+              fingerprint: attachmentFingerprint(item, attachment),
+              relativePath: expected.sourcePath ?? expected.provenance.relativePath,
+              bytes: expected.provenance.bytes,
+              sha256: expected.provenance.sha256,
+            }
+          : previousRecord;
         const beforeDownloads = tally.downloaded;
         const saved = await saveAttachment({
           client,
@@ -155,6 +171,8 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
           attachment,
           record,
           tally,
+          fetchedRevision: expected.fetchedRevision,
+          revisionDigest: expected.source.version,
         });
         if (saved) {
           await recordSourceEdition(
@@ -222,7 +240,8 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
 // two are the same name until an item is inserted upstream: a name carries its item's position, so
 // every later name moves by one while nothing on disk moves with it (ADR-0003). `heldAt` is the
 // older file when there is one. A run keeps identical bytes there and reports differing occupied
-// bytes as a manual conflict (ADR-0016); it never uses a new number to rescue the write.
+// bytes as a manual conflict (ADR-0016). Positive source revisions use exclusive editions
+// instead (ADR-0027); neither case uses a new number as a rescue path.
 //
 // The folder is resolved first and the name resolved inside it, so a file the destination does not
 // hold yet joins its siblings rather than opening a second folder beside them. Resolving only the
@@ -262,7 +281,17 @@ async function directoryFor(numbering, destination, segments) {
   return here === null ? safeResolve(destination, ...segments) : resolve(destination, here);
 }
 
-async function saveAttachment({ client, place, placement, item, attachment, record, tally }) {
+async function saveAttachment({
+  client,
+  place,
+  placement,
+  item,
+  attachment,
+  record,
+  tally,
+  fetchedRevision,
+  revisionDigest,
+}) {
   const fingerprint = attachmentFingerprint(item, attachment);
   // A record used to have to name the path this run would write, and the number in that path moves
   // under it — so an item pushed down the course read as changed and was fetched a second time
@@ -273,6 +302,7 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
     record?.fingerprint === attachmentFingerprint(item, attachment, { legacy: true });
 
   if (
+    !fetchedRevision &&
     known &&
     validByteCount(record?.bytes) &&
     /^[a-f0-9]{64}$/.test(record?.sha256 ?? "") &&
@@ -283,6 +313,7 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
     return retainedDownload(record, place.at, fingerprint);
   }
   if (
+    !fetchedRevision &&
     known &&
     validByteCount(record?.bytes) &&
     /^[a-f0-9]{64}$/.test(record?.sha256 ?? "") &&
@@ -296,8 +327,14 @@ async function saveAttachment({ client, place, placement, item, attachment, reco
 
   try {
     const { body, headers } = await client.download(attachment);
+    if (revisionDigest && createHash("sha256").update(body).digest("hex") !== revisionDigest) {
+      const changed = Error("Source changed between revision reads. Retry after NTULearn settles.");
+      changed.code = "SOURCE_REVISION_CHANGED";
+      throw changed;
+    }
     // An older placement is occupied too. Different bytes require a manual conflict rather than
-    // a second name for this recording's attachment (ADR-0016); identical bytes remain in place.
+    // a second name at today's number (ADR-0016). A positively identified revision already has
+    // its own exclusive placement (ADR-0027).
     const written = await writeWithoutReplacing(place.heldAt ?? place.target, body);
     if (written) {
       tally.downloaded += 1;

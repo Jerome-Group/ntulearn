@@ -592,20 +592,32 @@ Incremental and **additive**: unchanged downloads are skipped, and nothing is ev
 run that sees less than the last one leaves the earlier files where they are. Occupied course files
 are retained: differing downloaded bytes or generated text produce an actionable failure and a partial
 receipt, including annotated stand-ins and earlier-number placements. Sync never overwrites or renames
-occupied files. Distinct attachments whose names collide receive stable identity suffixes; revised
-announcements receive immutable identity/digest editions alongside the original, with retained-original links when available
-and upstream-course links. Existing legacy files and user edits remain intact. Edited editions or
+occupied files. Distinct attachments whose names collide receive stable identity suffixes. Revised
+attachments, content-item pages and announcements receive immutable identity/digest editions alongside
+the original. Page and announcement Markdown editions link retained originals when known; attachment
+provenance records the association. Existing legacy files and user edits remain intact. Edited current editions or
 occupied different suffixes remain conflicts; compare them with NTULearn before retrying.
-[ADR-0019](docs/adr/0019-source-editions-add-distinct-identities-and-announcement-revisions.md) narrowly
-extends [ADR-0016](docs/adr/0016-occupied-course-files-require-manual-conflict-resolution.md).
+[ADR-0019](docs/adr/0019-source-editions-add-distinct-identities-and-announcement-revisions.md) and
+[ADR-0027](docs/adr/0027-source-revisions-preserve-occupied-originals.md) narrow
+[ADR-0016](docs/adr/0016-occupied-course-files-require-manual-conflict-resolution.md).
 
 Positive identity/path/SHA-256 evidence preserves recorded placements through reorder, later siblings
 and removed siblings. Exclusive checksum-named records under `Source editions/<identity>/` keep that
 placement evidence in the course destination; each identity admits at most 128 records of 64 KiB each.
 New suffixed filename leaves stay within 160 UTF-8 bytes. Missing/ambiguous identities and malformed
 provenance refuse rather than guess. Losing State never grants ownership to an ambiguous legacy file.
-Sync checks current digests before reusing source files; inaccurate upstream sizes do not trigger a
-second download. Query/session-bearing addresses are hashed in new attachment cache records rather
+Sync checks current digests before reusing source files; inaccurate upstream sizes alone do not trigger
+a fetch. Changed attachment fingerprints trigger a revision probe; fetched bytes determine the revision.
+Publication fetches again and refuses if the bytes differ from the probe or recorded revision.
+An unchanged fingerprint cannot reveal changed upstream bytes unless a later run fetches them. Legacy
+attachment provenance without a fingerprint needs matching State and current file hashes to acquire a
+current association without a fetch. With only legacy provenance and no State, sync probes and fetches
+again at publication. Verify reports those legacy
+attachments missing until current association exists, then selects that revision without downloading.
+With no provenance or State, sync accepts equal fetched attachment bytes at the retained path or adds
+a digest edition for different bytes. Legacy pages and attachments without provenance can still count
+as present by path before sync; this presence does not establish their current version.
+Query/session-bearing addresses are hashed in new attachment cache records rather
 than retained. CLI results and the compatible version-1 receipt expose `newEditions`, `reusedFiles`,
 `unresolvedIdentity` and `publicationConflicts`. Verify shares placement resolution and checks presence;
 it reads bounded source-placement metadata, never State or current source bytes, and proves neither

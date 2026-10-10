@@ -17,8 +17,9 @@ file's.
 **Sync**:
 Bringing the copy of a course up to date with NTULearn. It is one-way and **additive** — it
 writes and it skips, so a destination only grows. Differing occupied course files require manual
-conflict resolution rather than replacement (`docs/adr/0016`); distinct colliding attachment identities
-and announcement revisions may add exclusive source editions (`docs/adr/0019`); machine receipts and stamps remain
+conflict resolution rather than replacement (`docs/adr/0016`); distinct colliding attachment identities,
+announcement revisions, and changed attachment or content-item page revisions may add exclusive source
+editions (`docs/adr/0019`, `docs/adr/0027`); machine receipts and stamps remain
 operational publications. Reconciling the two sides is the thing it is not, and `docs/adr/0003` is why.
 _Avoid_: import, download, mirror, scrape, backup — the first two were used interchangeably with
 this until they were retired, and the last three each promise something a sync does not do
@@ -261,10 +262,11 @@ _Avoid_: database, index, manifest, cache — the last is what it behaves like, 
 already means the browser's
 
 **Source edition**:
-An additional immutable course file distinguished by positive source identity, and for an
-announcement by its rendered-source digest. It preserves originals and annotations rather than
+An additional immutable course file distinguished by positive source identity and revision.
+Announcements and content-item pages use rendered-source digests; attachments use fetched-byte
+digests with upstream fingerprint associations. It preserves originals and annotations rather than
 refreshing an occupied file. Its additive provenance records accepted bytes and placement; it
-never grants replacement permission (`docs/adr/0019`).
+never grants replacement permission (`docs/adr/0019`, `docs/adr/0027`).
 _Avoid_: replacement, latest copy — neither expresses preservation or the bound of the evidence
 
 **Stamp**:

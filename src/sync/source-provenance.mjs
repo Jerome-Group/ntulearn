@@ -23,10 +23,11 @@ export async function recordSourceEdition(destination, expected, path, accepted 
       "Source changed after publication. Existing bytes were retained. Retry after storage settles.",
     );
   const record = {
-    schemaVersion: 1,
+    schemaVersion: expected.source.kind === "attachment" ? 2 : 1,
     sourceIdentity: expected.source.identity,
     kind: expected.source.kind,
-    version: expected.source.version,
+    version: expected.source.kind === "attachment" ? sha256 : expected.source.version,
+    ...(expected.source.kind === "attachment" ? { fingerprint: expected.source.fingerprint } : {}),
     originalPath: expected.source.originalPath,
     relativePath,
     bytes,
@@ -94,12 +95,16 @@ export async function provenanceRecords(destination, source, { inspect = lstat }
       !record ||
       typeof record !== "object" ||
       Array.isArray(record) ||
-      record.schemaVersion !== 1 ||
+      ![1, 2].includes(record.schemaVersion) ||
       record.sourceIdentity !== source.identity ||
       record.kind !== source.kind ||
-      (source.kind === "announcement"
-        ? !DIGEST.test(record.version ?? "")
-        : record.version !== null) ||
+      (source.kind === "attachment"
+        ? record.schemaVersion === 1
+          ? record.version !== null
+          : !DIGEST.test(record.version ?? "") ||
+            record.version !== record.sha256 ||
+            !DIGEST.test(record.fingerprint ?? "")
+        : record.schemaVersion !== 1 || !DIGEST.test(record.version ?? "")) ||
       !validPath(record.relativePath) ||
       (record.originalPath != null && !validPath(record.originalPath)) ||
       !DIGEST.test(record.sha256 ?? "") ||

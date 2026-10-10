@@ -48,6 +48,34 @@ test("provenance records only accepted current bytes and immutable retries reuse
     assert.equal(await readFile(path, "utf8"), "USEREDIT");
     assert.deepEqual(await readdir(directory), before);
   }));
+test("attachment revision provenance binds fingerprint to accepted bytes", () =>
+  fixture(async (destination) => {
+    const path = join(destination, "Guide.pdf");
+    await writeFile(path, "PDF TWO");
+    const source = {
+      identity,
+      kind: "attachment",
+      version: hash("PDF TWO"),
+      fingerprint: hash("current metadata"),
+      originalPath: "Guide.pdf",
+    };
+    await recordSourceEdition(destination, { source }, path, {
+      bytes: 7,
+      sha256: hash("PDF TWO"),
+    });
+    const directory = join(destination, "Source editions", identity);
+    const [name] = await readdir(directory);
+    const record = JSON.parse(await readFile(join(directory, name), "utf8"));
+    assert.equal(record.schemaVersion, 2);
+    assert.equal(record.version, hash("PDF TWO"));
+    assert.equal(record.fingerprint, hash("current metadata"));
+    assert.equal((await provenanceRecords(destination, source)).length, 1);
+    await rm(join(directory, name));
+    record.fingerprint = "bad";
+    const body = JSON.stringify(record) + "\n";
+    await writeFile(join(directory, hash(body) + ".json"), body);
+    await assert.rejects(provenanceRecords(destination, source), /provenance.*Restore/);
+  }));
 test("edited provenance and symlinked provenance parents refuse without touching originals", () =>
   fixture(async (destination) => {
     const path = join(destination, "Notice.md");
