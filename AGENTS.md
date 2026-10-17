@@ -79,7 +79,10 @@ than an effort.
 
 Use the project verification driver at `.agents/skills/verify/SKILL.md`.
 Read `docs/agents/workflow.md` before inventing a route — it says where each kind of work starts
-and what hands on to what.
+and what hands on to what. That file is an Organisation mirror; repository-specific routing lives here.
+For this repository, use `pstack:poteto-mode` for implementation and refactoring, drive the affected
+feature, and maintain its verification map after feature changes. Keep focused contracts and
+regressions; test-first work is optional for deletion and mechanical refactoring.
 
 ### Issue tracker
 

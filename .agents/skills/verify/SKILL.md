@@ -36,6 +36,7 @@ The last three prove the configuration boundary only. Report full journeys as `v
 Run the repository's existing checks once when relevant: `npm run check -- --evidence .scratch/check-evidence-unique`. Replace `unique` with a fresh suffix. This preserves original failing invocation details; use them rather than adding another check framework. `check:syntax`, `check:contracts`, `test`, `lint`, and `format:check` are indexed alternatives. `format` writes repository files; reserve it for deliberate formatting work.
 
 CI runs the existing checks, then all five helper journeys. Failures print bounded check captures and synthetic journey evidence in the job log. Its green gate proves offline behavior and configuration refusals; full Owner journeys retain their prerequisites.
+Organisation conformance separately checks mirrored guidance and top-level MAP coverage.
 
 ## Evidence
 
