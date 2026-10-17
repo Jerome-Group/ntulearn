@@ -1,7 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { setTimeout, clearTimeout } from "node:timers";
 import { chromium } from "playwright";
 import { COURSES_URL, SIGNED_IN_URL_PATTERN } from "./urls.mjs";
 import { signInStalled } from "./sign-in.mjs";
@@ -25,21 +24,8 @@ export async function openLoginWindow(profilePath) {
   return { page, close: () => context.close() };
 }
 
-export async function openSignedInContext(
-  profilePath,
-  { signalOwner = "browser", startupCleanupTimeoutMs } = {},
-) {
-  if (!["browser", "caller"].includes(signalOwner))
-    throw new Error("Signed-in browser signal ownership must be browser or caller.");
-  if (
-    startupCleanupTimeoutMs !== undefined &&
-    (signalOwner !== "caller" ||
-      !Number.isSafeInteger(startupCleanupTimeoutMs) ||
-      startupCleanupTimeoutMs <= 0 ||
-      startupCleanupTimeoutMs > 30000)
-  )
-    throw new Error("Caller-owned startup cleanup bound must be an integer from 1 to 30000 ms.");
-  const context = await launchChrome(profilePath, { headless: true, signalOwner });
+export async function openSignedInContext(profilePath) {
+  const context = await launchChrome(profilePath, { headless: true });
   try {
     const page = context.pages()[0] ?? (await context.newPage());
     const capturedToken = captureXsrfToken(page);
@@ -63,7 +49,7 @@ export async function openSignedInContext(
     return { context, token };
   } catch (error) {
     try {
-      await closeStartupContext(context, startupCleanupTimeoutMs);
+      await context.close();
     } catch (cause) {
       throw Object.assign(
         new Error(
@@ -77,26 +63,7 @@ export async function openSignedInContext(
   }
 }
 
-// Only an explicit caller-owned media operation opts into a logical cleanup deadline.
-async function closeStartupContext(context, timeoutMs) {
-  if (timeoutMs === undefined) return context.close();
-  let timer;
-  try {
-    await Promise.race([
-      Promise.resolve().then(() => context.close()),
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Startup browser close did not settle.")),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function launchChrome(profilePath, { headless, signalOwner = "browser" }) {
+async function launchChrome(profilePath, { headless }) {
   validateProfilePath(profilePath);
   await mkdir(profilePath, { recursive: true });
   await chmod(profilePath, 0o700);
@@ -104,7 +71,6 @@ async function launchChrome(profilePath, { headless, signalOwner = "browser" }) 
     channel: "chrome",
     headless,
     viewport: headless ? HEADLESS_VIEWPORT : null,
-    ...(signalOwner === "caller" ? { handleSIGINT: false, handleSIGTERM: false } : {}),
   });
 }
 

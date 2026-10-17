@@ -1,5 +1,8 @@
 # Production transcript paragraphs require source review
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 Ordinary production derives deterministic paragraphs from source segments using `source-paragraphs-v1`.
 It invokes no formatting model. Ordered words, case, numbers, operators, uncertain wording, supported
 source speaker annotations and literal clock text remain unchanged. Native and normalized sources keep

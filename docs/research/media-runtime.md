@@ -1,5 +1,7 @@
 # Local media runtime dependency notes
 
+Historical research for the retired media workflow. See [ADR-0028](../adr/0028-retire-gallery-and-transcript-processing.md).
+
 The media runtime is deliberately not a package or a checked-in binary. `media.setup` pins the
 Owner's selected artifact by source, revision, SHA-256 and licence, and `npm run media:setup`
 places the verified copy under the RAID0 Media store.

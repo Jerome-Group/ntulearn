@@ -19,94 +19,35 @@ test("defaults the profile and state paths, and resolves them against the root",
   assert.equal(config.statePath, resolve(root, ".data/state.json"));
   assert.equal(config.driveMountPath, null);
   assert.equal(config.watchdogTimeoutMs, 900_000);
-  assert.equal(config.media, null);
+  assert.equal(Object.hasOwn(config, "media"), false);
   assert.deepEqual(config.courses, []);
 });
 
-test("defaults legacy courses to media mode off", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({ courses: [{ key: "AB1234", courseId: "_1_1", destination: "out" }] }),
-  );
-  const { courses } = await loadConfig(root);
-  assert.equal(courses[0].mediaMode, "off");
-});
-
-test("accepts explicit media modes and resolves the Media store", async () => {
+test("ignores retired media settings while preserving course metadata", async () => {
   const root = await repositoryWith(
     JSON.stringify({
-      media: {
-        mediaRoot: "/Volumes/RAID0/Media",
-        tools: { ffprobe: "/tools/ffprobe", ytDlp: "/tools/yt-dlp" },
-        setup: mediaSetup(),
-      },
-      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "pilot" }],
+      media: { mediaRoot: false, freeSpaceReserveBytes: -1 },
+      courses: [
+        {
+          key: "AB1234",
+          courseId: "_1_1",
+          destination: "out",
+          displayName: "Retained title",
+          mediaMode: "retired-value",
+        },
+      ],
     }),
   );
   const config = await loadConfig(root);
-  assert.equal(config.courses[0].mediaMode, "pilot");
-  assert.equal(config.media.mediaRoot, "/Volumes/RAID0/Media");
-  assert.equal(config.media.freeSpaceReserveBytes, 100 * 1024 ** 3);
-  assert.deepEqual(config.media.tools, {
-    ffprobe: "/tools/ffprobe",
-    ytDlp: "/tools/yt-dlp",
-  });
-  assert.equal(config.media.setup.asr.model.source.kind, "file");
-  assert.equal(config.media.setup.asr.model.source.value, join(root, "models/model.bin"));
-});
-
-test("defaults external media tools to portable command names", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({
-      media: { mediaRoot: "/Volumes/RAID0/Media", setup: mediaSetup() },
-      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "active" }],
-    }),
-  );
-
-  assert.deepEqual((await loadConfig(root)).media.tools, {
-    ffprobe: "ffprobe",
-    ytDlp: "yt-dlp",
-  });
-});
-
-test("rejects a media mode outside the explicit set", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({
-      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "Y1S2" }],
-    }),
-  );
-  await assert.rejects(loadConfig(root), /AB1234\.mediaMode must be active, pilot, or off/);
-});
-
-test("requires a Media store for enabled media", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({
-      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "active" }],
-    }),
-  );
-  await assert.rejects(loadConfig(root), /media is required.*media\.mediaRoot/);
-});
-
-test("rejects a Media store outside RAID0", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({
-      media: { mediaRoot: "/tmp/Media", setup: mediaSetup() },
-      courses: [{ key: "AB1234", courseId: "_1_1", destination: "out", mediaMode: "active" }],
-    }),
-  );
-  await assert.rejects(loadConfig(root), /media\.mediaRoot must be a directory below/);
-});
-
-test("rejects a non-positive free-space reserve", async () => {
-  const root = await repositoryWith(
-    JSON.stringify({
-      media: { mediaRoot: "/Volumes/RAID0/Media", freeSpaceReserveBytes: 0 },
-      courses: [],
-    }),
-  );
-  await assert.rejects(
-    loadConfig(root),
-    /media\.freeSpaceReserveBytes must be a positive safe integer/,
-  );
+  assert.equal(Object.hasOwn(config, "media"), false);
+  assert.deepEqual(config.courses, [
+    {
+      key: "AB1234",
+      courseId: "_1_1",
+      destination: resolve(root, "out"),
+      displayName: "Retained title",
+    },
+  ]);
 });
 
 test("resolves the Drive mount and keeps an explicit watchdog timeout", async () => {
@@ -257,28 +198,6 @@ test("selects one course by key, case-insensitively", () => {
 test("rejects a key that is not configured", () => {
   assert.throws(() => selectCourses([{ key: "AB1234" }], "ZZ9999"), /Unknown course: ZZ9999/);
 });
-
-function mediaSetup() {
-  const artifact = (name, filename, source, license = "MIT") => ({
-    name,
-    filename,
-    source: source ?? "models/model.bin",
-    revision: "r1",
-    sha256: "a".repeat(64),
-    license,
-  });
-  return {
-    mediaTool: artifact("FFmpeg", "ffmpeg", "/tools/ffmpeg", "LGPL-2.1-or-later"),
-    asr: {
-      runtime: artifact("whisper.cpp", "whisper-cli", "/tools/whisper-cli"),
-      model: artifact("Whisper small.en", "ggml-small.en.bin"),
-    },
-    formatter: {
-      runtime: artifact("llama.cpp", "llama-cli", "/tools/llama-cli"),
-      model: artifact("Qwen3 1.7B", "Qwen3-1.7B-Q4_K_M.gguf", null, "Apache-2.0"),
-    },
-  };
-}
 
 test("rejects physical aliases and missing nested destinations without creating them", async (t) => {
   const root = await repositoryWith(JSON.stringify({ courses: [] }));

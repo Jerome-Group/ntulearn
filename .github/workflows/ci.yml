@@ -75,4 +75,19 @@ jobs:
       # dependency's postinstall out of CI.
       - run: npm ci --ignore-scripts
 
-      - run: npm run check
+      - run: npm run check -- --evidence .scratch/check-evidence-ci
+
+      - name: Verify supported CLI journeys
+        run: |
+          for feature in cli local session copy watchdog; do
+            node .agents/skills/verify/scripts/drive.mjs "$feature"
+          done
+
+      - name: Show failed verification evidence
+        if: failure()
+        run: |
+          if [ -d .scratch ]; then
+            find .scratch -maxdepth 2 -type f \
+              \( -path '.scratch/check-evidence-ci/*.log' -o -path '.scratch/check-evidence-ci/*.invocation.json' -o -path '.scratch/verify-*/*.json' \) \
+              -print -exec cat {} \;
+          fi

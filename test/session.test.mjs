@@ -22,7 +22,7 @@ for (const [name, openContext] of [
   });
 }
 
-test("caller-owned signed-in signals reach launch while ordinary and login semantics remain browser-owned", async (t) => {
+test("signed-in and login launches retain browser signal ownership", async (t) => {
   const { rm } = await import("node:fs/promises");
   const root = await mkdtemp(join(tmpdir(), "ntulearn-session-signal-"));
   try {
@@ -43,18 +43,13 @@ test("caller-owned signed-in signals reach launch while ordinary and login seman
       return { pages: () => [page], close: async () => {} };
     };
     t.mock.method(chromium, "launchPersistentContext", launch);
-    const caller = await openSignedInContext(join(root, "caller"), { signalOwner: "caller" });
-    await caller.context.close();
-    assert.equal(launches[0].handleSIGINT, false);
-    assert.equal(launches[0].handleSIGTERM, false);
-    assert.equal(launches[0].handleSIGHUP, undefined);
-    const normal = await openSignedInContext(join(root, "normal"), {});
+    const normal = await openSignedInContext(join(root, "normal"));
     await normal.context.close();
+    assert.equal(launches[0].handleSIGINT, undefined);
+    assert.equal(launches[0].handleSIGTERM, undefined);
+    await (await openLoginWindow(join(root, "login"))).close();
     assert.equal(launches[1].handleSIGINT, undefined);
-    assert.equal(launches[1].handleSIGTERM, undefined);
-    await (await openLoginWindow(join(root, "login"), {})).close();
-    assert.equal(launches[2].handleSIGINT, undefined);
-    assert.equal(launches[2].headless, false);
+    assert.equal(launches[1].headless, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -82,12 +77,10 @@ test("startup operation failure distinguishes confirmed close from owned cleanup
         if (cleanupFails) throw closeError;
       },
     }));
-    await assert.rejects(
-      openSignedInContext(join(root, String(cleanupFails)), { signalOwner: "caller" }),
-      (error) =>
-        cleanupFails
-          ? error.code === "NTULEARN_BROWSER_CLEANUP" && error.cause === closeError
-          : error === operationError,
+    await assert.rejects(openSignedInContext(join(root, String(cleanupFails))), (error) =>
+      cleanupFails
+        ? error.code === "NTULEARN_BROWSER_CLEANUP" && error.cause === closeError
+        : error === operationError,
     );
     assert.equal(closes, 1);
     t.mock.restoreAll();

@@ -1,5 +1,8 @@
 # Transcript catalogues separate reading from media readiness
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 An explicit local catalogue links a stable course index to verified immutable transcript editions.
 A preferred edition is a reading choice supported by current source ownership and retained production
 proof, never the newest file. Unique eligible recovered candidates precede unique eligible current-source

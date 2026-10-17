@@ -1,5 +1,8 @@
 # Unassociated source readings never infer course association
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 An explicit standalone formatting route may add deterministic reading editions for valid retained
 raw sources within the configured Media store whose metadata sibling is positively absent. These
 editions always remain review-only, with course association unverified by the edition. Metadata absence

@@ -1,5 +1,8 @@
 # Transcript formatting preserves source wording
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 A *formatted transcript* changes presentation while preserving ordered source words, spelling,
 case, numbers, symbols and code-switching. Punctuation, paragraph breaks and Markdown emphasis
 or list markers are permitted only within that boundary. Formatting never invents headings,

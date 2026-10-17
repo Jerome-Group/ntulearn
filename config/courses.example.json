@@ -3,26 +3,16 @@
   "statePath": ".data/state.json",
   "driveMountPath": "/absolute/path/to/Google Drive",
   "watchdogTimeoutMs": 900000,
-  "media": {
-    "mediaRoot": "/Volumes/RAID0/Media",
-    "freeSpaceReserveBytes": 107374182400,
-    "tools": {
-      "ffprobe": "ffprobe",
-      "ytDlp": "yt-dlp"
-    }
-  },
   "courses": [
     {
       "key": "AB1234",
       "courseId": "_0000000_1",
-      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn",
-      "mediaMode": "off"
+      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn"
     },
     {
       "key": "AB1234-TUT",
       "courseId": "_0000001_1",
-      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn_Tutorial",
-      "mediaMode": "off"
+      "destination": "/absolute/path/to/Google Drive/My Drive/Modules/Y1S1/AB1234/NTULearn_Tutorial"
     }
   ]
 }

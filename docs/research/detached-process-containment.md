@@ -1,5 +1,7 @@
 # Independently detached subprocesses need platform containment
 
+Historical research for the retired media workflow. See [ADR-0028](../adr/0028-retire-gallery-and-transcript-processing.md).
+
 The portable media runner proves cleanup of its original owned POSIX process group. It cannot
 prove termination of arbitrary descendants that create another session, close inherited streams
 and outlive their parent. This is a boundary inferred from the interfaces below and reproduced

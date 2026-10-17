@@ -1,6 +1,5 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { readMediaConfig, readMediaMode } from "./media/config.mjs";
 
 const CONFIG_PATH = "config/courses.json";
 const EXAMPLE_PATH = "config/courses.example.json";
@@ -35,7 +34,6 @@ export async function loadConfig(root, configPath = CONFIG_PATH) {
     driveMountPath,
     watchdogTimeoutMs: readWatchdogTimeout(parsed.watchdogTimeoutMs),
     courses,
-    media: readMediaConfig(parsed.media, root, courses),
   };
 }
 
@@ -69,11 +67,9 @@ async function readCourses(courses, root) {
     claim(claimed, course.key, destination);
     claim(physical, course.key, await physicalDestination(destination));
 
-    configured.push({
-      ...course,
-      destination,
-      mediaMode: readMediaMode(course.mediaMode, course.key),
-    });
+    const configuredCourse = { ...course, destination };
+    delete configuredCourse.mediaMode;
+    configured.push(configuredCourse);
   }
   return configured;
 }

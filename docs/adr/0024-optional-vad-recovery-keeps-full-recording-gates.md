@@ -1,5 +1,8 @@
 # Optional VAD recovery keeps full-recording gates
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 Explicit Owner `media:setup vad` prepares a digest-pinned Silero v6.2.0 model and separate immutable
 intent/prepared companion receipts under the existing media runtime. The base manifest, exact
 mandatory artifact count, canonical configuration and ordinary setup remain unchanged. Unknown or

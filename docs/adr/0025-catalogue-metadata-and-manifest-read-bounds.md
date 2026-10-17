@@ -1,5 +1,8 @@
 # Catalogue metadata and manifest read bounds
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 A multi-course catalogue aggregates individually safe paths, titles, provenance and index links.
 Applying one native transcript's address-count bound to that aggregate allowed planning but refused
 the plan's own reader before publication. Native transcript safety remains unchanged. Catalogue JSON

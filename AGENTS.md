@@ -22,20 +22,16 @@ everything but running the tool — it skips Playwright's browser download, and 
 hold. CI installs that way. A fresh clone has no `config/courses.json`; copy the example.
 
 `npm run login`, `npm run discover`, `npm run watchdog`, `npm run sync`, `npm run verify`,
-`npm run renumber` and `npm run media:discover` reach NTULearn as a real signed-in student, and
+and `npm run renumber` reach NTULearn as a real signed-in student, and
 the sync writes to real folders on this machine. Change them, test the pure parts, and leave the
-six data commands to the Owner: `discover`, `watchdog`, `sync`, `verify`, `renumber` and
-`media:discover` spend the live session. `verify` writing nothing does not make it yours to run.
+five data commands to the Owner: `discover`, `watchdog`, `sync`, `verify` and `renumber` spend the
+live session. `verify` writing nothing does not make it yours to run.
 
 After a saved-session read times out on the identity-provider page instead of reaching Courses, an
 agent runs `npm run login` before declaring the session expired. If the Courses page appears
 without input, press Enter, let the command close its window and retry the original read; if
 credentials, MFA, CAPTCHA or another human-only step appears, hand the login window to the Owner.
 This diagnostic never inspects or prints session material. A first login remains the Owner's.
-
-`npm run media:setup` is the one Owner-started operation that prepares media tooling and local model
-assets under the configured RAID0 Media store. Scheduled and ordinary commands never install media
-dependencies.
 
 `renumber` is the sharpest command: it is the only one that renames anything a student owns
 (`docs/adr/0010`), and it is the Owner's to decide to run.
@@ -81,8 +77,12 @@ than an effort.
 
 ### The route through the skills
 
+Use the project verification driver at `.agents/skills/verify/SKILL.md`.
 Read `docs/agents/workflow.md` before inventing a route — it says where each kind of work starts
-and what hands on to what.
+and what hands on to what. That file is an Organisation mirror; repository-specific routing lives here.
+For this repository, use `pstack:poteto-mode` for implementation and refactoring, drive the affected
+feature, and maintain its verification map after feature changes. Keep focused contracts and
+regressions; test-first work is optional for deletion and mechanical refactoring.
 
 ### Issue tracker
 
