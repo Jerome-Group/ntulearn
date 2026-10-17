@@ -12,7 +12,7 @@ test("offline health observes metadata, detects failures and recovers without op
   const config = {
     profilePath,
     driveMountPath: join(root, "Drive"),
-    courses: [{ destination, mediaMode: "off" }],
+    courses: [{ destination }],
   };
   const options = { root, nodeVersion: "26.4.0", load: async () => config };
   const missing = await localHealth(options);

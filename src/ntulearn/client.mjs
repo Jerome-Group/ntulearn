@@ -4,8 +4,8 @@ import { openSignedInContext } from "./session.mjs";
 import { NtulearnReader } from "./reader.mjs";
 import { absoluteUrl } from "./urls.mjs";
 
-export async function openClient(profilePath, options) {
-  const { context, token } = await openSignedInContext(profilePath, options);
+export async function openClient(profilePath) {
+  const { context, token } = await openSignedInContext(profilePath);
   return new NtulearnClient(context, token);
 }
 
@@ -35,16 +35,6 @@ class NtulearnClient {
 
   readAttachments(courseId, item) {
     return this.#reader.readAttachments(courseId, item);
-  }
-
-  async withBrowserPage(read) {
-    if (typeof read !== "function") throw new Error("Browser page work needs a reader function.");
-    const page = await this.#context.newPage();
-    try {
-      return await read(page);
-    } finally {
-      await page.close();
-    }
   }
 
   async download(attachment) {

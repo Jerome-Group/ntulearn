@@ -1,9 +1,6 @@
-import { mediaAdmissionObservation } from "./media-admission.mjs";
-import { lstat, realpath, statfs } from "node:fs/promises";
-import { relative, isAbsolute, join } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
+import { relative, isAbsolute } from "node:path";
 import { loadConfig } from "../config.mjs";
-import { mediaRuntimePaths } from "../media/paths.mjs";
-import { readEvidence } from "./read.mjs";
 import { capabilityResult, observation } from "./result.mjs";
 
 export async function readLocalConfig(root, configPath, load = loadConfig) {
@@ -29,8 +26,6 @@ export async function localHealth({
   load,
   inspect = lstat,
   canonical = realpath,
-  space = statfs,
-  read = readEvidence,
 }) {
   const loaded = await readLocalConfig(root, configPath, load);
   const supported = supportedNode(nodeVersion);
@@ -46,7 +41,6 @@ export async function localHealth({
   ];
   if (!loaded.config) return capabilityResult("health", [...checks, loaded.check]);
   const config = loaded.config;
-  checks.push(await mediaAdmissionObservation(config.statePath, inspect));
   checks.push(
     observation(
       "configuration",
@@ -56,7 +50,6 @@ export async function localHealth({
       null,
       {
         courses: config.courses.length,
-        mediaEnabled: config.courses.filter((course) => course.mediaMode !== "off").length,
       },
     ),
   );
@@ -117,101 +110,10 @@ export async function localHealth({
       { configured: config.courses.length, reachable },
     ),
   );
-  if (config.courses.some((course) => course.mediaMode !== "off")) {
-    checks.push(...(await mediaHealth(config.media, { inspect, canonical, space, read })));
-  } else {
-    checks.push(
-      observation("media-runtime", "unrun", "MEDIA_OFF", "All courses exclude media processing."),
-    );
-  }
   return capabilityResult("health", checks, {
     scope: "local-filesystem-observations",
     upstreamCompleteness: "unrun",
-    runtimeExecution: "unrun",
-    runtimeChecksums: "unrun",
   });
-}
-
-async function mediaHealth(media, { inspect, canonical, space, read }) {
-  const safeRoot = await insideCanonical("/Volumes/RAID0", media.mediaRoot, canonical);
-  if (!safeRoot)
-    return [
-      observation(
-        "media-store",
-        "failed",
-        "MEDIA_STORE_UNAVAILABLE",
-        "Media store must resolve inside RAID0.",
-        "Mount RAID0; Owner reviews media.mediaRoot before setup.",
-      ),
-    ];
-  let freeBytes;
-  try {
-    const stats = await space(media.mediaRoot);
-    freeBytes = Number(stats.bavail) * Number(stats.bsize || stats.frsize);
-  } catch {
-    return [
-      observation(
-        "media-space",
-        "blocked",
-        "MEDIA_SPACE_UNAVAILABLE",
-        "Free space could not be observed.",
-        "Mount RAID0 before an Owner-approved media action.",
-      ),
-    ];
-  }
-  const sufficient = Number.isSafeInteger(freeBytes) && freeBytes >= media.freeSpaceReserveBytes;
-  const checks = [
-    observation(
-      "media-space",
-      sufficient ? "passed" : "failed",
-      sufficient ? "MEDIA_RESERVE_PRESENT" : "MEDIA_RESERVE_LOW",
-      "Observed free space compared with the configured reserve.",
-      sufficient ? null : "Owner: inspect disk usage; no cleanup or reserve change performed.",
-      { freeBytes, reserveBytes: media.freeSpaceReserveBytes },
-    ),
-  ];
-  const runtime = mediaRuntimePaths(media.mediaRoot);
-  const manifest = await read(runtime.manifest);
-  let valid =
-    manifest.status === "passed" &&
-    manifest.value?.version === 1 &&
-    Array.isArray(manifest.value.artifacts) &&
-    manifest.value.artifacts.length === 5;
-  if (valid) {
-    const keys = new Set();
-    for (const artifact of manifest.value.artifacts) {
-      if (
-        typeof artifact?.path !== "string" ||
-        isAbsolute(artifact.path) ||
-        artifact.path.split(/[\\/]/).includes("..") ||
-        keys.has(artifact.key)
-      ) {
-        valid = false;
-        break;
-      }
-      keys.add(artifact.key);
-      const info = await metadata(join(runtime.root, artifact.path), inspect);
-      if (
-        !info?.isFile() ||
-        info.isSymbolicLink() ||
-        info.size !== artifact.bytes ||
-        !(await insideCanonical(runtime.root, join(runtime.root, artifact.path), canonical))
-      )
-        valid = false;
-    }
-  }
-  checks.push(
-    observation(
-      "media-runtime-metadata",
-      valid ? "passed" : manifest.status === "blocked" ? "blocked" : "failed",
-      valid ? "RUNTIME_METADATA_PRESENT" : "RUNTIME_METADATA_INVALID",
-      "Manifest and artifact metadata only; production still verifies pins, hashes and tools.",
-      valid
-        ? null
-        : "Owner: review setup configuration; npm run media:setup requires explicit approval.",
-    ),
-  );
-  return checks;
 }
 
 async function metadata(path, inspect) {

@@ -1,9 +1,5 @@
-import { lstat } from "node:fs/promises";
-import { mediaAdmissionObservation } from "./media-admission.mjs";
 import { dirname, join } from "node:path";
 import { isValidImportStatus, IMPORT_STATUS_FILENAME } from "../sync/import-status.mjs";
-import { mediaQueuePath } from "../media/queue.mjs";
-import { countQueue } from "../media/worker-report.mjs";
 import { readLocalConfig } from "./health.mjs";
 import { readEvidence } from "./read.mjs";
 import { capabilityResult, observation } from "./result.mjs";
@@ -15,7 +11,6 @@ export async function localStatus({
   configPath,
   load,
   read = readEvidence,
-  inspect = lstat,
   now = () => new Date(),
 }) {
   const loaded = await readLocalConfig(root, configPath, load);
@@ -31,15 +26,6 @@ export async function localStatus({
     invalid: 0,
     stale: 0,
   };
-  const media = {
-    enabled: 0,
-    missing: 0,
-    invalid: 0,
-    discoveryIncomplete: 0,
-    stale: 0,
-    total: 0,
-    ...countQueue([]),
-  };
   for (const course of config.courses) {
     const receipt = await read(join(course.destination, IMPORT_STATUS_FILENAME), 16 * 1024);
     if (receipt.status === "blocked") receipts.missing += 1;
@@ -53,20 +39,6 @@ export async function localStatus({
       if (stale(receipt.value.finishedAt ?? receipt.value.startedAt, observedAt))
         receipts.stale += 1;
     }
-    if (course.mediaMode === "off") continue;
-    media.enabled += 1;
-    const queue = await read(mediaQueuePath(config.statePath, course.key), 16 * 1024 * 1024);
-    if (queue.status === "blocked") media.missing += 1;
-    else if (queue.status !== "passed" || !validQueue(queue.value, course, observedAt))
-      media.invalid += 1;
-    else {
-      if (queue.value.complete !== true || queue.value.verdict === "red")
-        media.discoveryIncomplete += 1;
-      if (stale(queue.value.updatedAt, observedAt)) media.stale += 1;
-      const counts = countQueue(queue.value.queue);
-      media.total += queue.value.queue.length;
-      for (const key of Object.keys(counts)) media[key] += counts[key];
-    }
   }
   const receiptStatus =
     receipts.invalid || receipts.failed || receipts.partial
@@ -74,16 +46,7 @@ export async function localStatus({
       : receipts.missing || receipts.running || receipts.stale
         ? "blocked"
         : "passed";
-  const mediaStatus =
-    media.invalid || media.failed || media.unresolved || media.discoveryIncomplete
-      ? "failed"
-      : media.missing || media.queued || media.active || media.checkpointed || media.stale
-        ? "blocked"
-        : media.enabled
-          ? "passed"
-          : "unrun";
   const checks = [
-    await mediaAdmissionObservation(config.statePath, inspect),
     observation(
       "sync-receipts",
       receiptStatus,
@@ -94,41 +57,17 @@ export async function localStatus({
         : "Owner: inspect local receipts and authorize sync only after health passes.",
       receipts,
     ),
-    observation(
-      "media-queues",
-      mediaStatus,
-      mediaStatus === "passed"
-        ? "MEDIA_DECLARED_COMPLETE"
-        : mediaStatus === "unrun"
-          ? "MEDIA_OFF"
-          : "MEDIA_INCOMPLETE",
-      "Queue declarations only; file bytes, speech fidelity and exhaustive discovery are unrun.",
-      ["passed", "unrun"].includes(mediaStatus)
-        ? null
-        : "Owner: inspect local media status; discovery/worker actions require approval.",
-      media,
-    ),
   ];
   const stateRoot = dirname(config.statePath);
   checks.push(
     await digestObservation("watchdog-digest", join(stateRoot, "latest.json"), read, observedAt),
   );
-  if (media.enabled)
-    checks.push(
-      await digestObservation(
-        "media-digest",
-        join(stateRoot, "media-latest.json"),
-        read,
-        observedAt,
-      ),
-    );
   return capabilityResult("status", checks, {
     observedAt: observedAt.toISOString(),
     staleAfterMs: STALE_AFTER_MS,
     scope: "local-operational-evidence",
     upstreamCompleteness: "unrun",
     artifactBytes: "unrun",
-    audioFidelity: "unrun",
   });
 }
 
@@ -162,31 +101,11 @@ async function digestObservation(id, path, read, observedAt) {
     id,
     status,
     old ? "DIGEST_STALE" : `DIGEST_${value.verdict.toUpperCase()}`,
-    "Digest is a bounded run observation, separate from sync/media completeness.",
+    "Digest is a bounded run observation, separate from sync completeness.",
     status === "passed"
       ? null
       : "Owner: inspect the referenced private run log; live retries require approval.",
     { verdict: value.verdict, timestamp: value.timestamp, stale: old },
-  );
-}
-
-function validQueue(value, course, observedAt) {
-  return (
-    value?.version === 1 &&
-    value.courseKey === course.key &&
-    value.courseId === course.courseId &&
-    typeof value.complete === "boolean" &&
-    ["green", "yellow", "red"].includes(value.verdict) &&
-    Array.isArray(value.queue) &&
-    value.queue.length <= 100000 &&
-    value.queue.every(
-      (job) =>
-        job &&
-        typeof job === "object" &&
-        !Array.isArray(job) &&
-        typeof job.recordingId === "string",
-    ) &&
-    validTime(value.updatedAt, observedAt)
   );
 }
 

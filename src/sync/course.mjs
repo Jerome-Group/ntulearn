@@ -28,14 +28,14 @@ import { courseState, newIds } from "./state.mjs";
 const SYNC_STAMP = "Last synced.md";
 
 // Additive: a run that finds less than the last one leaves the earlier files alone (ADR-0003).
-export async function syncCourse({ client, course, state, recordingDiscovery = () => [] }) {
+export async function syncCourse({ client, course, state }) {
   return withImportStatus({
     destination: course.destination,
-    attempt: () => syncCourseAttempt({ client, course, state, recordingDiscovery }),
+    attempt: () => syncCourseAttempt({ client, course, state }),
   });
 }
 
-async function syncCourseAttempt({ client, course, state, recordingDiscovery }) {
+async function syncCourseAttempt({ client, course, state }) {
   const snapshot = await client.readCourse(course.courseId);
   const previous = courseState(state, course.key);
   const unread = Object.entries(snapshot.unavailable ?? {})
@@ -63,21 +63,13 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
   // expects rather than by that name alone — the sibling `numberingOf` needs and the reason
   // `verify` walks the same way (ADR-0005).
   let walked = [];
-  const attachmentsByItem = new Map();
   for await (const expected of expectedFiles({
     client,
     courseId: course.courseId,
     snapshot,
-    onAttachments: (item, attachments) => attachmentsByItem.set(item.id, attachments),
   })) {
     walked.push(expected);
   }
-  // Media discovery belongs to the walk, but acquisition belongs to the separate media job. The
-  // sync therefore returns safe appearance records and writes none of their media artifacts.
-  const recordings =
-    course.mediaMode && course.mediaMode !== "off"
-      ? recordingDiscovery({ course, snapshot, attachmentsByItem })
-      : [];
   walked = await resolveSourceEditions({
     walked,
     destination: course.destination,
@@ -231,7 +223,6 @@ async function syncCourseAttempt({ client, course, state, recordingDiscovery }) 
     // Said only when there is something to say, because a category nobody could read is the one
     // thing in this result a count cannot show: it looks exactly like a category with nothing in it.
     ...(unread.length ? { unread } : {}),
-    recordings,
     ...tally,
   };
 }

@@ -113,8 +113,9 @@ test("writes an attachment to the path its placement names", async () => {
   assert.equal(result.downloaded, 1);
 });
 
-test("hands enabled course appearances to discovery without running media work", async () => {
-  const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-media-"));
+test("copies raw audio and video attachments, retains player links and skips repeat copies", async (t) => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-course-attachments-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
   const items = [
     {
       id: "folder",
@@ -133,32 +134,46 @@ test("hands enabled course appearances to discovery without running media work",
         displayText: '<iframe src="https://video.example.test/entry_id/lecture-1"></iframe>',
       },
     },
+    ...["mp4", "mp3"].map((extension, index) => ({
+      id: extension,
+      parentId: "folder",
+      position: index + 1,
+      title: "Week 1 attachment",
+      contentHandler: "resource/x-bb-file",
+      contentDetail: {
+        "resource/x-bb-file": {
+          file: { fileName: `Week 1.${extension}`, permanentUrl: `/bbcswebdav/${extension}` },
+        },
+      },
+    })),
   ];
-  const seen = [];
-  const result = await syncCourse({
-    client: {
-      async readCourse() {
-        return { course: { displayName: "MH2100" }, announcements: [], conversations: [], items };
-      },
-      async readAttachments(courseId, item) {
-        seen.push([courseId, item.id]);
-        return [];
-      },
-      async download() {
-        throw new Error("media work must not run during sync");
-      },
-    },
-    course: { key: "MH2100", courseId: "_9_1", destination, mediaMode: "pilot" },
-    state: { version: 1, courses: {} },
-    recordingDiscovery({ attachmentsByItem }) {
-      assert.equal(attachmentsByItem.get("lecture").length, 0);
-      return [{ recordingId: "content-tree:_9_1:lecture:entry:lecture-1" }];
-    },
-  });
-
-  assert.deepEqual(seen, [["_9_1", "lecture"]]);
-  assert.deepEqual(result.recordings, [
-    { recordingId: "content-tree:_9_1:lecture:entry:lecture-1" },
+  const course = { key: "MH2100", courseId: "_9_1", destination };
+  const state = { version: 1, courses: {} };
+  const source = client(
+    async (attachment) => ({
+      body: Buffer.from(`fixture ${attachment.fileName}`),
+      headers: {},
+    }),
+    items,
+  );
+  const first = await syncCourse({ client: source, course, state });
+  const repeat = await syncCourse({ client: source, course, state });
+  assert.deepEqual(first.failures, []);
+  assert.deepEqual(repeat.failures, []);
+  assert.equal(first.downloaded, 2);
+  assert.equal(repeat.downloaded, 0);
+  assert.equal(repeat.skipped, 2);
+  const lectures = join(destination, "01 Lectures");
+  assert.equal(await readFile(join(lectures, "02 Week 1.mp4"), "utf8"), "fixture Week 1.mp4");
+  assert.equal(await readFile(join(lectures, "03 Week 1.mp3"), "utf8"), "fixture Week 1.mp3");
+  assert.match(
+    await readFile(join(lectures, "01 Week 1.md"), "utf8"),
+    /https:\/\/video\.example\.test\/entry_id\/lecture-1/,
+  );
+  assert.deepEqual((await readdir(lectures)).sort(), [
+    "01 Week 1.md",
+    "02 Week 1.mp4",
+    "03 Week 1.mp3",
   ]);
 });
 

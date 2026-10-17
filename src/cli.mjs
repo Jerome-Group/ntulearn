@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { capabilityIndex } from "./capabilities/index.mjs";
-import { capabilityResult, observation } from "./capabilities/result.mjs";
 import { runRepositoryChecks, parseCheckArguments } from "./capabilities/check.mjs";
 import { createCheckCapture } from "./capabilities/check-capture.mjs";
 import { localHealth } from "./capabilities/health.mjs";
@@ -13,19 +12,14 @@ import { setTimeout, clearTimeout } from "node:timers";
 import { loadConfig, selectCourses } from "./config.mjs";
 import { diagnosticAddress } from "./ntulearn/sign-in.mjs";
 import { walkCourses } from "./courses.mjs";
-import { discoverContentRecordings } from "./media/discovery.mjs";
-import { readMediaQueue, writeMediaQueue } from "./media/queue.mjs";
-import { withMediaQueueLock } from "./media/lock.mjs";
 import { writeLine } from "./output.mjs";
-import { setupMediaRuntime } from "./media/setup.mjs";
-import { MEDIA_RUN_MODES } from "./media/worker.mjs";
 import { readState, writeState } from "./sync/state.mjs";
 import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run media:setup -- [vad] | npm run media:worker -- <scheduled|manual> [priority-course (manual only)] | npm run media:discover -- <course|all> | npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA] | npm run media:withdraw -- <course> <recordingId> confirm | npm run media:format -- <plan|apply|verify> <private-manifest> | npm run media:format-unassociated -- <plan|apply|verify> <private-plan> [PUBLISH_UNASSOCIATED_REVIEW_EDITIONS (apply only)] | npm run media:evaluate -- <plan|run> <manifest> [fresh-output-directory] | npm run media:recover -- <plan|run|publish> <private-manifest> [private-candidate-directory] | npm run media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory> | npm run media:catalogue -- <inspect|plan|publish|verify> [private-manifest] [private-selection-file|PUBLISH_TRANSCRIPT_CATALOGUE] | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run (capabilities|health|status|check)";
 
 const commands = {
   login,
@@ -34,9 +28,6 @@ const commands = {
   verify,
   renumber,
   watchdog,
-  "media-setup": mediaSetup,
-  "media-discover": mediaDiscover,
-  "media-withdraw": mediaWithdraw,
   "watchdog-locked": watchdogLocked,
 };
 
@@ -74,7 +65,6 @@ async function sync(config, key) {
       client,
       course,
       state,
-      recordingDiscovery: discoverContentRecordings,
     });
     await writeState(config.statePath, state);
     return result;
@@ -100,195 +90,6 @@ async function watchdog(config) {
   const result = await runWatchdog({ config, root: ROOT, runner: watchdogRunner() });
   await writeLine(stdout, asJson(result.digest));
   return result.exitCode;
-}
-
-async function mediaSetup(config, optional, ...unexpected) {
-  if (optional === "vad" && !unexpected.length) {
-    const { setupRecoveryVad } = await import("./media/vad-setup.mjs");
-    const controller = new globalThis.AbortController();
-    const interrupt = () =>
-      controller.abort(
-        Object.assign(new Error("Optional setup interrupted."), { code: "MEDIA_INTERRUPTED" }),
-      );
-    process.on("SIGINT", interrupt);
-    process.on("SIGTERM", interrupt);
-    try {
-      const result = await setupRecoveryVad({
-        config,
-        signal: controller.signal,
-        signalProcessGroup: signalMediaProcessGroup,
-      });
-      await writeLine(stdout, asJson(result));
-      return result.exitCode;
-    } finally {
-      process.off("SIGINT", interrupt);
-      process.off("SIGTERM", interrupt);
-    }
-  }
-  if (optional || unexpected.length) {
-    await writeLine(stderr, USAGE);
-    return 2;
-  }
-  const result = await setupMediaRuntime(config.media, {
-    signalProcessGroup: signalMediaProcessGroup,
-  });
-  await writeLine(
-    stdout,
-    asJson({ manifestPath: result.manifestPath, artifacts: result.artifacts }),
-  );
-  return 0;
-}
-
-async function mediaWorker([mode = "scheduled", priorityCourseKey = null, ...unexpected]) {
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      Object.assign(
-        new Error("Media queue interrupted; inspect the run log and retry the manual worker."),
-        { code: "MEDIA_INTERRUPTED" },
-      ),
-    );
-  process.on("SIGINT", interrupt);
-  process.on("SIGTERM", interrupt);
-  try {
-    if (
-      !MEDIA_RUN_MODES.includes(mode) ||
-      unexpected.length ||
-      (priorityCourseKey !== null && mode !== "manual")
-    ) {
-      throw new Error(
-        "Usage: npm run media:worker -- <scheduled|manual> [priority-course (manual only)]",
-      );
-    }
-    const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-    const { runProductionMedia } = await import("./media/production.mjs");
-    const result = await runProductionMedia({
-      config,
-      mode,
-      priorityCourseKey,
-      signal: controller.signal,
-      timeZone: "Asia/Singapore",
-      signalProcessGroup: signalMediaProcessGroup,
-    });
-    await writeLine(stdout, asJson(result.digest));
-    return result.exitCode;
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-}
-
-async function mediaDiscover(config, key, ...unexpected) {
-  if (unexpected.length) {
-    await writeLine(stderr, USAGE);
-    return 2;
-  }
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      Object.assign(new Error("Media discovery interrupted."), { code: "MEDIA_INTERRUPTED" }),
-    );
-  process.on("SIGINT", interrupt);
-  process.on("SIGTERM", interrupt);
-  try {
-    const { runMediaDiscovery } = await import("./media/discover-run.mjs");
-    const report = await runMediaDiscovery({
-      config,
-      key: key ?? "all",
-      signal: controller.signal,
-    });
-    await writeLine(stdout, asJson(report));
-    return report.exitCode;
-  } finally {
-    process.off("SIGINT", interrupt);
-    process.off("SIGTERM", interrupt);
-  }
-}
-
-async function mediaRetry([mode, courseKey, selector, confirmation, ...unexpected]) {
-  let result;
-  if (
-    !["plan", "apply"].includes(mode) ||
-    !courseKey ||
-    !selector ||
-    unexpected.length ||
-    (mode === "plan" && confirmation !== undefined)
-  ) {
-    result = capabilityResult("media:retry", [
-      observation(
-        "arguments",
-        "blocked",
-        "MEDIA_RETRY_ARGUMENTS",
-        "Invalid explicit media retry arguments.",
-        "Run: npm run media:retry -- <plan|apply> <course|all> <failed|recordingId> [RETRY_FAILED_MEDIA]",
-      ),
-    ]);
-  } else {
-    const { retryMediaJobs } = await import("./media/retry.mjs");
-    let config;
-    try {
-      config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-    } catch {
-      result = capabilityResult(
-        "media:retry",
-        [
-          observation(
-            "configuration",
-            "blocked",
-            "MEDIA_RETRY_CONFIG_UNAVAILABLE",
-            "Private configuration or configured course roots could not be validated.",
-            "Copy config/courses.example.json to the private configuration path, repair its JSON and restore accessible course folders; then run media:retry plan. No private error details exposed.",
-          ),
-        ],
-        {
-          mode,
-          courses: 0,
-          inspected: 0,
-          selected: 0,
-          alreadyRetryable: 0,
-          changed: 0,
-          retrySucceeded: "unrun",
-          mediaCompleteness: "unclaimed",
-        },
-      );
-    }
-    if (config) result = await retryMediaJobs({ mode, config, courseKey, selector, confirmation });
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-async function mediaWithdraw(config, key, recordingId, confirmation) {
-  if (!key || key.toLowerCase() === "all" || !recordingId || confirmation !== "confirm") {
-    throw new Error("Usage: npm run media:withdraw -- <course> <recordingId> confirm");
-  }
-  const course = selectCourses(config.courses, key)[0];
-  return withMediaQueueLock({
-    statePath: config.statePath,
-    run: async () => {
-      const loaded = await readMediaQueue({
-        statePath: config.statePath,
-        courseKey: course.key,
-        course,
-      });
-      if (!loaded.record || !Array.isArray(loaded.record.queue)) {
-        throw new Error(
-          `No durable media queue exists for ${course.key}. Run: npm run media:discover -- ${course.key}`,
-        );
-      }
-      const saved = await writeMediaQueue({
-        statePath: config.statePath,
-        course,
-        discovery: loaded.record,
-        withdrawal: { recordingId, confirmed: true },
-      });
-      await writeLine(
-        stdout,
-        asJson({ courseKey: course.key, recordingId, status: saved.status, queuePath: saved.path }),
-      );
-      return saved.status === "not-found" ? 1 : 0;
-    },
-  });
 }
 
 async function watchdogLocked(config) {
@@ -318,21 +119,6 @@ function watchdogRunner() {
     }),
     argumentsFor: (command) => [CLI, command, "all"],
   };
-}
-
-function signalMediaProcessGroup(pid, signal) {
-  if (!Number.isSafeInteger(pid) || pid <= 0 || ![0, "SIGTERM", "SIGKILL"].includes(signal)) {
-    throw new Error(
-      "Media cleanup needs an owned process-group PID and signal. Check the runtime composition before retrying.",
-    );
-  }
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch (error) {
-    if (error.code === "ESRCH") return false;
-    throw error;
-  }
 }
 
 function killProcessGroup(pid) {
@@ -379,13 +165,6 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
-  if (name === "media-retry") return mediaRetry(argumentsForCommand);
-  if (name === "media-worker") return mediaWorker(argumentsForCommand);
-  if (name === "media-catalogue") return mediaCatalogue(argumentsForCommand);
-  if (name === "media-format") return mediaFormat(argumentsForCommand);
-  if (name === "media-format-unassociated") return mediaFormatUnassociated(argumentsForCommand);
-  if (name === "media-recover") return mediaRecover(argumentsForCommand);
-  if (name === "media-evaluate") return mediaEvaluate(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
     return offlineCommand(name, argumentsForCommand);
   }
@@ -395,334 +174,6 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
-}
-
-async function mediaCatalogue([mode, manifestPath, extra, ...unexpected]) {
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      Object.assign(
-        new Error("Catalogue interrupted; inspect retained journal and retry the same plan."),
-        { code: "CATALOGUE_INTERRUPTED" },
-      ),
-    );
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  let result;
-  try {
-    if (
-      !["inspect", "plan", "publish", "verify"].includes(mode) ||
-      unexpected.length ||
-      (mode === "inspect" ? Boolean(manifestPath || extra) : !manifestPath) ||
-      (mode === "publish"
-        ? extra !== "PUBLISH_TRANSCRIPT_CATALOGUE"
-        : mode !== "plan" && Boolean(extra))
-    ) {
-      result = capabilityResult("media:catalogue", [
-        observation(
-          "arguments",
-          "blocked",
-          "CATALOGUE_ARGUMENTS",
-          "Invalid catalogue arguments or missing explicit publication token.",
-          "Run npm run --silent capabilities -- transcript-catalogue for exact operations.",
-        ),
-      ]);
-    } else {
-      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-      const { transcriptCatalogue } = await import("./media/catalogue.mjs");
-      result = await transcriptCatalogue({
-        mode,
-        config,
-        manifestPath: manifestPath ? resolve(manifestPath) : undefined,
-        selectionPath: mode === "plan" && extra ? resolve(extra) : undefined,
-        signal: controller.signal,
-      });
-    }
-  } catch {
-    result = capabilityResult("media:catalogue", [
-      observation(
-        "configuration",
-        "blocked",
-        "CATALOGUE_CONFIG_UNAVAILABLE",
-        "Private configuration could not be validated; details remain private.",
-        "Repair private configuration and accessible storage, then retry catalogue inspect.",
-      ),
-    ]);
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-async function mediaRecover([mode, manifestPath, ...directories]) {
-  const [previousOutputDirectory, previousReportSha256, resumedOutput, ...resumeUnexpected] =
-    directories;
-  const [ordinaryOutput, ...ordinaryUnexpected] = directories;
-  const outputDirectory = mode === "resume" ? resumedOutput : ordinaryOutput;
-  const unexpected = mode === "resume" ? resumeUnexpected : ordinaryUnexpected;
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      Object.assign(
-        new Error(
-          "Recovery interrupted; inspect retained private candidates and retry with a fresh directory.",
-        ),
-        { code: "RECOVERY_INTERRUPTED" },
-      ),
-    );
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  let result;
-  try {
-    if (
-      !["plan", "run", "resume", "publish"].includes(mode) ||
-      !manifestPath ||
-      unexpected.length ||
-      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory) ||
-      (mode === "resume" &&
-        (!previousOutputDirectory || !/^[0-9a-f]{64}$/.test(previousReportSha256 ?? "")))
-    ) {
-      result = capabilityResult("media:recover", [
-        observation(
-          "arguments",
-          "blocked",
-          "RECOVERY_ARGUMENTS",
-          "Invalid explicit source recovery arguments.",
-          "Run: npm run --silent media:recover -- <plan|run|publish> <private-manifest> [candidate-directory]; or media:recover:resume -- <private-manifest> <previous-directory> <previous-report-sha256> <fresh-directory>",
-        ),
-      ]);
-    } else {
-      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-      const { recoverTranscriptSources } = await import("./media/recovery.mjs");
-      result = await recoverTranscriptSources({
-        mode,
-        manifestPath: resolve(manifestPath),
-        outputDirectory: outputDirectory ? resolve(outputDirectory) : undefined,
-        ...(mode === "resume"
-          ? {
-              previousOutputDirectory: resolve(previousOutputDirectory),
-              previousReportSha256,
-            }
-          : {}),
-        config,
-        signalProcessGroup: signalMediaProcessGroup,
-        signal: controller.signal,
-      });
-    }
-  } catch {
-    result = capabilityResult("media:recover", [
-      observation(
-        "configuration",
-        "blocked",
-        "RECOVERY_CONFIG_UNAVAILABLE",
-        "Private recovery configuration could not be validated; no raw exception exposed.",
-        "Repair private configuration and accessible storage, then retry media:recover plan.",
-      ),
-    ]);
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-async function mediaFormat([mode, manifestPath, ...unexpected]) {
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      new Error("Historical formatting interrupted; inspect private receipts and retry apply."),
-    );
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  let result;
-  try {
-    if (!["plan", "apply", "verify"].includes(mode) || !manifestPath || unexpected.length) {
-      result = capabilityResult("media:format", [
-        observation(
-          "arguments",
-          "blocked",
-          "HISTORICAL_FORMAT_USAGE",
-          "Invalid historical formatting arguments.",
-          "Run: npm run media:format -- <plan|apply|verify> <private-manifest-path>",
-        ),
-      ]);
-    } else {
-      const { historicalTranscripts } = await import("./media/historical.mjs");
-      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-      result = await historicalTranscripts({
-        mode,
-        manifestPath: resolve(manifestPath),
-        config,
-        signal: controller.signal,
-      });
-    }
-  } catch {
-    result = capabilityResult("media:format", [
-      observation(
-        "configuration",
-        "failed",
-        "HISTORICAL_FORMAT_FAILED",
-        "Historical formatting did not execute; no raw exception exposed.",
-        "Inspect local configuration and private input evidence, then retry plan.",
-      ),
-    ]);
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-async function mediaFormatUnassociated([mode, manifestPath, confirmation, ...unexpected]) {
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      new Error(
-        "Standalone formatting interrupted; preserve retained evidence and inspect before retry.",
-      ),
-    );
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  let result;
-  try {
-    const { unassociatedTranscripts, UNASSOCIATED_CONFIRMATION } =
-      await import("./media/unassociated-format.mjs");
-    if (
-      !["plan", "apply", "verify"].includes(mode) ||
-      !manifestPath ||
-      unexpected.length ||
-      (mode === "apply" ? confirmation !== UNASSOCIATED_CONFIRMATION : confirmation !== undefined)
-    ) {
-      result = capabilityResult("media:format-unassociated", [
-        observation(
-          "arguments",
-          "blocked",
-          "UNASSOCIATED_FORMAT_USAGE",
-          "Invalid standalone formatting arguments.",
-          "Run: npm run --silent media:format-unassociated -- <plan|apply|verify> <private-plan>; apply requires PUBLISH_UNASSOCIATED_REVIEW_EDITIONS.",
-        ),
-      ]);
-    } else {
-      const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-      result = await unassociatedTranscripts({
-        mode,
-        manifestPath: resolve(manifestPath),
-        confirmation,
-        config,
-        signal: controller.signal,
-      });
-    }
-  } catch {
-    result = capabilityResult("media:format-unassociated", [
-      observation(
-        "configuration",
-        "blocked",
-        "UNASSOCIATED_FORMAT_CONFIGURATION",
-        "Standalone formatting did not execute; no raw exception exposed.",
-        "Inspect local configuration and private input evidence, then retry plan.",
-      ),
-    ]);
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-async function mediaEvaluate([mode, manifestPath, outputDirectory, ...unexpected]) {
-  let result;
-  const controller = new globalThis.AbortController();
-  const interrupt = () =>
-    controller.abort(
-      new Error("Offline media evaluation interrupted. Retry in a fresh output directory."),
-    );
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-  try {
-    if (
-      !["plan", "run"].includes(mode) ||
-      !manifestPath ||
-      unexpected.length ||
-      (mode === "plan" ? Boolean(outputDirectory) : !outputDirectory)
-    ) {
-      result = capabilityResult("media:evaluate", [
-        observation(
-          "arguments",
-          "blocked",
-          "EVALUATION_USAGE",
-          "Invalid evaluation arguments.",
-          "Run: npm run media:evaluate -- plan <manifest> or run <manifest> <fresh-output-directory>",
-        ),
-      ]);
-    } else {
-      const { planMediaEvaluation, runMediaEvaluation } = await import("./media/evaluation.mjs");
-      if (mode === "plan") result = await planMediaEvaluation({ manifestPath });
-      else {
-        const config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
-        const { runMediaProcess } = await import("./media/process.mjs");
-        const revisionOptions = {
-          signal: controller.signal,
-          signalProcessGroup: signalMediaProcessGroup,
-          timeoutMs: 3_000,
-          stdoutMaxBytes: 32 * 1024,
-          stderrMaxBytes: 1024,
-          label: "Evaluation code revision",
-        };
-        const checkout = await runMediaProcess(
-          "git",
-          ["-C", ROOT, "status", "--porcelain"],
-          revisionOptions,
-        ).catch(provenanceUnavailable);
-        const revision =
-          checkout?.stdout === ""
-            ? await runMediaProcess("git", ["-C", ROOT, "rev-parse", "HEAD"], {
-                ...revisionOptions,
-                stdoutMaxBytes: 128,
-              }).catch(provenanceUnavailable)
-            : null;
-        result = await runMediaEvaluation({
-          manifestPath,
-          outputDirectory,
-          media: config.media,
-          signalProcessGroup: signalMediaProcessGroup,
-          signal: controller.signal,
-          memoryMeasurement: process.platform === "darwin" ? "darwin-time" : null,
-          codeRevision: revision?.stdout.trim() ?? null,
-        });
-      }
-    }
-  } catch (error) {
-    result = capabilityResult("media:evaluate", [
-      observation(
-        "execution",
-        "failed",
-        error.code === "MEDIA_PROCESS_CLEANUP"
-          ? "MEDIA_PROCESS_CLEANUP"
-          : "EVALUATION_COMMAND_FAILED",
-        error.globalSafety
-          ? "Evaluation stopped on a process safety failure; no later work permitted."
-          : "Evaluation could not execute; no raw exception exposed.",
-        error.globalSafety
-          ? "Stop media work, inspect the owned runtime processes, then retry in a fresh output directory."
-          : "Check the private configuration, manifest and prepared runtime; retry plan before run.",
-      ),
-    ]);
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", interrupt);
-  }
-  await writeLine(stdout, asJson(result));
-  return result.exitCode;
-}
-
-function provenanceUnavailable(error) {
-  if (error.globalSafety) throw error;
-  return null;
 }
 
 async function offlineCommand(name, argumentsForCommand) {
