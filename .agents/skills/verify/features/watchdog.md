@@ -4,7 +4,7 @@ The Owner runs the guarded scheduled copy and audit, then reads its verdict and 
 
 ## Sub-features
 
-- `readiness` checks Drive and destination availability before attempting work.
+- `readiness` checks the Drive mount, destination containment and each destination's first Drive root before attempting work.
 - `lock` avoids overlapping scheduled runs.
 - `run` copies and audits with bounded attempts; `latest.json` points to the operational result.
 - `verdict` distinguishes green success, yellow skipped lock, and red destination/session/run failures.

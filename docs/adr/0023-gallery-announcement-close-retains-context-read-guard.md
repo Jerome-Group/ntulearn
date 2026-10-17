@@ -1,5 +1,8 @@
 # Gallery announcement Close retains a context read guard
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 Gallery discovery may dismiss only one visible product dialog with the exact New Course Announcement
 heading and dedicated Close new announcements modal button. A normal bounded button click leaves Mark
 as read untouched. Unknown, authentication, consent, malformed or multiple dialogs are never dismissed.

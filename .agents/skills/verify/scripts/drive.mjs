@@ -151,8 +151,28 @@ async function observe(record, [args, kind, exit, code]) {
           value.checks.filter((entry) => entry.status === "passed").length >= 4,
         "actual repository contracts passed",
       );
-    if (kind === "old-receipt")
-      assert.equal(value.checks.find((entry) => entry.id === "sync-receipts").evidence.stale, 1);
+    if (args[0] === "status" && kind !== "missing-config") {
+      const receipts = value.checks.find((entry) => entry.id === "sync-receipts");
+      const counter = {
+        ready: "complete",
+        "missing-receipt": "missing",
+        "old-receipt": "stale",
+        "old-digest": "complete",
+        "failed-receipt": "failed",
+        "red-digest": "complete",
+        "invalid-receipt": "invalid",
+      }[kind];
+      assert.equal(receipts.evidence[counter], 1, `observed ${counter} receipt`);
+      assert.equal(
+        receipts.status,
+        ["failed-receipt", "invalid-receipt"].includes(kind)
+          ? "failed"
+          : ["missing-receipt", "old-receipt"].includes(kind)
+            ? "blocked"
+            : "passed",
+      );
+      assert.equal(value.evidence.artifactBytes, "unrun");
+    }
     if (kind === "ready") assert.equal(value.evidence.upstreamCompleteness, "unrun");
     if (args[0] === "health" && kind === "ready")
       assert.equal(value.checks.find((entry) => entry.id === "session-validity").status, "unrun");

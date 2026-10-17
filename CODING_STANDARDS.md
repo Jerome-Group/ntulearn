@@ -124,10 +124,11 @@ NTULearn addresses live in `src/ntulearn/urls.mjs` rather than beside the sessio
 Adding an import that drags Playwright into a pure module is the mistake this rule exists to
 catch.
 
-**Tests are `test/*.test.mjs`, one file per module under test, run by `node --test`.** They use no
-framework and no network. The seam is the pure function: names, Markdown, content fields,
-configuration and state are all tested directly; the browser session and the HTTP client are
-thin enough to be read instead.
+**Tests are `test/*.test.mjs`, run by `node --test`, without a framework or network.** Keep checks
+for observable contracts, safety boundaries and reproduced regressions. The project verification
+driver exercises real CLI commands and names the journeys it cannot reach offline. Do not add a
+test per helper or require test-first work for mechanical refactoring. Remove checks that belong
+only to retired behavior, while preserving attachment, additive-write and receipt guarantees.
 
 **What only the process can show, a child process checks.** An exit code, a usage line on stderr,
 whether a large write survives the exit — none of those are observable from inside the process

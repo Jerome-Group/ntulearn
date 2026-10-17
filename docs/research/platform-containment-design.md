@@ -1,5 +1,7 @@
 # Which platform can contain detached media subprocesses?
 
+Historical research for the retired media workflow. See [ADR-0028](../adr/0028-retire-gallery-and-transcript-processing.md).
+
 Evaluation for [#210](https://github.com/Jerome-Group/ntulearn/issues/210), 2026-10-03,
 against source `d534aa813e30d02e88063bfec3d1b5a9034ebc08`. **Design, not deployment.**
 

@@ -1,5 +1,8 @@
 # Incomplete source recovery pins absence and current ownership
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 Explicit source recovery may select `state-owned-unformatted` per recording when metadata and the
 expected formatted derivative are both absent. A unique recognized enabled-course queue claim,
 recording-state identity, raw-source SHA-256/path and current owned retained media must agree. The

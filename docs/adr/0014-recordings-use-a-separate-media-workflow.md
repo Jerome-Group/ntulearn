@@ -1,5 +1,8 @@
 # Recordings use a separate media workflow
 
+Superseded by [ADR-0028](0028-retire-gallery-and-transcript-processing.md).
+The workflow described below is retired.
+
 [ADR-0017](0017-transcript-formatting-preserves-source-wording.md) partially supersedes the
 formatting allowance for error correction and notation conversion; the separate workflow,
 source preservation, local models and storage decisions remain unchanged.

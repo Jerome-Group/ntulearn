@@ -32,9 +32,16 @@ one context window's worth of implementation. When it is not, go from the grilli
 `/implement` in the same window — a spec for work that fits in one session is ceremony that buys
 nothing.
 
-`/implement` drives `/tdd` at the agreed seams and closes by running `/code-review` before
-anything is committed, so the review the Owner reads is a conclusion rather than a promise. The
-pull request that follows is not optional: **How work flows** in `AGENTS.md` is the rule.
+Use `pstack:poteto-mode` for nontrivial implementation and refactoring. Capture the existing
+behavior through `.agents/skills/verify/SKILL.md`, make the smallest change, and drive the affected
+feature again. Keep focused contracts and regressions for failures; test-first work is optional,
+not the default route for deletion or mechanical edits. Independent review runs before committing.
+The pull request that follows is not optional: **How work flows** in `AGENTS.md` is the rule.
+
+The verification feature map is the maintained inventory of supported user journeys. Use
+`pstack:maintain-verification-skill` after feature changes. Its pass edits only the verification
+directory; product failures return to implementation instead of being hidden in the map. Owner-only
+live commands retain their prerequisites even when an offline fixture passes.
 
 ## From a cleared map, `/to-spec` is mandatory
 
