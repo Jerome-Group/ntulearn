@@ -1,5 +1,7 @@
 # Renumbering is its own command, and it renames only what it can prove it wrote
 
+**Narrowed by [ADR-0029](0029-current-page-renumber-proof.md):** positively recorded current content-item pages use their rendered-source revision and complete accepted digest instead of literal walk-text proof. Attachment State requirements and all other guarantees below remain.
+
 `npm run renumber -- <course|all>` puts a destination back into the order NTULearn gives the course
 today. It renames a file only when it can prove the sync wrote it and nothing has touched it since —
 the `sha256` a download recorded, or, for a document, the text the walk is holding. Everything else

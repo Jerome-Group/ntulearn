@@ -366,9 +366,15 @@ and a create to Google Drive and to anything holding a path to the file, which i
 do in a run nobody is watching. A sync never renames and never will — `docs/adr/0010` argues both
 halves.
 
-It renames only what it can prove the sync wrote and nothing has touched since — the `sha256` a
-download recorded, or, for a Markdown document, the text the walk is holding. A file you have
-annotated fails that check, is left exactly where it is, and is named under `kept` with the reason.
+It selects the current source revision before proving permission to move it. Attachments require a
+State digest and compatible source identity. Their held bytes must match that digest, and current
+provenance, when present, must agree too. Losing State still prevents attachment renumbering.
+Ordinary Markdown documents require the text the walk
+is holding. A positively recorded current page instead requires its rendered-source revision and
+the complete accepted digest, including its immutable edition footer. That footer can retain an old
+link after a parent rename; sync preserves its accepted bytes. [ADR-0029](docs/adr/0029-current-page-renumber-proof.md)
+records this narrow proof change. An annotated file fails the proof, stays at its held leaf name,
+and appears under `kept` with the reason.
 Nothing is deleted, nothing is written over, nothing moves between folders, and a name that already
 holds something is reported under `blocked` rather than taken.
 
