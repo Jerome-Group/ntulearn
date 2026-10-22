@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { assertDestinationPath } from "../src/sync/paths.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -22,6 +22,11 @@ test("numbers a name from its zero-based position", () => {
 test("keeps resolved paths below the destination", () => {
   assert.equal(safeResolve("/tmp/course", "../escape"), "/tmp/course/_escape");
   assert.equal(safeResolve("/tmp/course", "Week 1", "Notes.md"), "/tmp/course/Week 1/Notes.md");
+});
+
+test("resolves a file below a filesystem-root destination", () => {
+  const root = parse(tmpdir()).root;
+  assert.equal(safeResolve(root, "Course.md"), join(root, "Course.md"));
 });
 
 test("permits a configured symlink root but refuses exact and nested linked descendants", async () => {
