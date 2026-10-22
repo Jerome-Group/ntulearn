@@ -7,7 +7,7 @@ The Owner copies visible course pages, announcements, and attachments, audits ex
 - `sync` writes missing content, preserves occupied or edited files, and records state and sync receipts.
 - Colliding distinct attachment identities and changed attachment, page, or announcement revisions add immutable sibling files with source identity or revision suffixes. Originals and annotations stay. `Source editions` holds their provenance; reports and receipts expose `newEditions`, `reusedFiles`, `unresolvedIdentity`, and `publicationConflicts`.
 - `verify` reports presence, missing paths, moved numbering, unread categories, and refused courses without writing either side.
-- `renumber` moves only proven unchanged paths within their existing folders; occupied targets and unproven files remain.
+- `renumber` selects the current source edition, then changes only its numeric prefix inside its actual parent. Attachments still require compatible State digests. Recorded current pages require the rendered-source revision and complete accepted bytes, including their immutable footer. Originals, historical editions, edited files, and occupied targets remain.
 
 ## How to get to it (user POV)
 
@@ -23,11 +23,13 @@ Preconditions: offline boundary proof needs no course content. Full journeys nee
 - **Refusal proof.** Each exits `1` with the configuration-copy action; empty fixture snapshots match and no session, state, or destination is created.
 - **Full copy/audit.** Record `verified-unreachable`. After the Owner invokes actual sync, its report, private destination before/after evidence, and receipt establish writes/skips; an Owner-invoked audit establishes expected presence relative to that course walk.
 - **Full source editions.** Record `verified-unreachable`. An Owner-run sync over distinct identities or changed source revisions must preserve original hashes, publish exclusive editions, report the counters above, and reuse matching editions on repeat. Missing or ambiguous identity and occupied publication paths remain explicit failures. The audit checks presence and accepted placement metadata; it does not fetch or prove current source bytes.
-- **Full renumber.** Record `verified-unreachable` with the additional rename decision. Owner-run before/after names and hashes must show only eligible moves, intact bytes, and retained edited/occupied files. Do not credit the refusal as this proof.
+- **Offline renumber regressions.** `node --test test/renumber.test.mjs test/source-editions.test.mjs test/numbering.test.mjs` drives synthetic destinations through current attachment and page revisions, leaf and parent renumbering, immediate audit, and repeat sync. It proves byte preservation, read-only renumber metadata, State-loss refusal, unique numeric recovery, conflicting-source refusals, occupied targets, and publication refusal after a page mutation. These in-process clients do not establish live NTULearn coverage.
+- **Full renumber.** Record `verified-unreachable` with the additional rename decision. Owner-run before/after names and hashes must show only eligible current-edition moves, intact complete bytes, and retained edited or occupied files. Snapshot State and provenance around renumber, audit immediately, then repeat sync to establish current-edition reuse without another course file. Include a later reorder after sync records the moved placement. Do not credit the refusal as this proof.
 
 ## Gotchas
 
 - Sync is additive; never remove, prune, or rename a student's destination as cleanup.
 - Presence audit is not byte fidelity or exhaustive upstream completeness. A stale receipt is not a substitute for an audit.
 - Renumber can break links and changes Drive paths. It never belongs in a sync or an automated verification run.
+- Recorded page footers stay byte-identical after parent renumbering, so retained-original links can become stale. Malformed or conflicting provenance and multiple numeric fallback candidates require inspection.
 - Sources: [CLI](../../../../src/cli.mjs), [sync](../../../../src/sync/course.mjs), [audit](../../../../src/sync/verify.mjs), [renumber](../../../../src/sync/renumber.mjs), [state](../../../../src/sync/state.mjs), [source editions](../../../../src/sync/source-editions.mjs).

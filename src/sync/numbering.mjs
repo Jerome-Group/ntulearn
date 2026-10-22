@@ -19,40 +19,41 @@ import { assertDestinationPath, safeSegment, unnumbered } from "./paths.mjs";
 export function numberingOf(destination, expected) {
   const tree = treeOf(expected);
   const listings = new Map();
-  const walk = async (segments, atLeaf) => {
-    const found = await locate(
-      destination,
-      destination,
-      tree,
-      segments.map(safeSegment),
-      listings,
-      atLeaf,
-    );
-    return found && relative(destination, found);
+  const walk = (segments, atLeaf) =>
+    locate(destination, destination, tree, segments.map(safeSegment), listings, atLeaf);
+  const first = async (segments, atLeaf) => {
+    for await (const found of walk(segments, atLeaf)) return relative(destination, found);
+    return null;
   };
 
   return {
-    find: (segments) => walk(segments, fileAt),
+    find: (segments) => first(segments, fileAt),
+    findAll: async (segments) => {
+      const found = [];
+      for await (const path of walk(segments, fileAt)) found.push(relative(destination, path));
+      return found;
+    },
     // The same question one level up, and it needs asking because a folder's name carries its
     // position too: a reorder moves the folder while everything beneath it stays where it is. A
     // sync asks this to put a file the destination does not hold yet in with its siblings rather
     // than in a new folder beside them, which is the course splitting in two (ADR-0009). `verify`
     // asks only about files, so it never reaches here.
-    directory: (segments) => walk(segments, directoryAt),
+    directory: (segments) => first(segments, directoryAt),
   };
 }
 
-async function locate(destination, directory, siblings, [segment, ...rest], listings, atLeaf) {
+async function* locate(destination, directory, siblings, [segment, ...rest], listings, atLeaf) {
   await assertDestinationPath(destination, directory);
   for (const name of await standIns(directory, siblings, segment, listings)) {
     const path = join(directory, name);
     await assertDestinationPath(destination, path);
-    const found = rest.length
-      ? await locate(destination, path, siblings.get(segment), rest, listings, atLeaf)
-      : await atLeaf(path);
-    if (found) return found;
+    if (rest.length)
+      yield* locate(destination, path, siblings.get(segment), rest, listings, atLeaf);
+    else {
+      const found = await atLeaf(path);
+      if (found) yield found;
+    }
   }
-  return null;
 }
 
 async function fileAt(path) {

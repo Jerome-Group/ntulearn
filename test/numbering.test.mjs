@@ -95,6 +95,27 @@ test("names the same older number on every run", async () => {
   assert.equal(found, "02 Notes.md");
 });
 
+test("enumerates safe numbered regular files without changing the first-match contract", async () => {
+  const destination = await destinationHolding(
+    "02 Week/03 Notes.md",
+    "01 Week/04 Notes.md",
+    "01 Week/02 Notes.md/Student.md",
+  );
+  const tree = numbering(destination, "02 Week/03 Notes.md");
+  assert.deepEqual(await tree.findAll(["02 Week", "03 Notes.md"]), [
+    "02 Week/03 Notes.md",
+    "01 Week/04 Notes.md",
+  ]);
+  assert.equal(await tree.find(["02 Week", "03 Notes.md"]), "02 Week/03 Notes.md");
+  assert.equal(await tree.directory(["02 Week"]), "02 Week");
+});
+
+test("enumeration keeps the sibling ambiguity rule", async () => {
+  const destination = await destinationHolding("02 Notes.md");
+  const tree = numbering(destination, "03 Notes.md", "04 Notes.md");
+  assert.deepEqual(await tree.findAll(["03 Notes.md"]), []);
+});
+
 test("does not take a directory for the file it expects", async () => {
   const destination = await destinationHolding("02 Week 1.pdf/kept.txt");
   const found = await numbering(destination, "03 Week 1.pdf").find(segmentsOf("03 Week 1.pdf"));
@@ -117,5 +138,6 @@ test("refuses a linked candidate before inspecting files beneath it", async () =
   await symlink(outside, join(destination, "04 Week"));
   const tree = numbering(destination, "01 Week/01 File.pdf");
   await assert.rejects(tree.find(["01 Week", "01 File.pdf"]), /symlink/);
+  await assert.rejects(tree.findAll(["01 Week", "01 File.pdf"]), /symlink/);
   await assert.rejects(tree.directory(["01 Week"]), /symlink/);
 });

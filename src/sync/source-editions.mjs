@@ -1,10 +1,11 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import { ambiguousPaths, comparablePath } from "./expected.mjs";
 import { fileDigest, isFilePresent } from "./files.mjs";
-import { assertDestinationPath, safeSegment } from "./paths.mjs";
+import { assertDestinationPath, safeSegment, unnumbered } from "./paths.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { provenanceRecords } from "./source-provenance.mjs";
 
@@ -227,6 +228,10 @@ export async function resolveSourceEditions({
         continue;
       }
     }
+    if (new Set(records.map((r) => JSON.stringify([r.sha256, r.bytes, r.originalPath]))).size > 1) {
+      resolved.push({ ...expected, sourceFailure: "SOURCE_REVISION_UNRESOLVED" });
+      continue;
+    }
     source.originalPath = history.length
       ? history[0].originalPath
       : (statePath ?? retainedPath ?? expected.placement.path);
@@ -237,7 +242,10 @@ export async function resolveSourceEditions({
       await assertDestinationPath(destination, target);
       if (await isFilePresent(target)) present.push(path);
     }
-    if (present.length > 1 || (paths.length > 1 && !present.length)) {
+    const distinctPlacements = new Set(
+      paths.map((path) => path.split(sep).map(unnumbered).join(sep)),
+    );
+    if (present.length > 1 || (!present.length && distinctPlacements.size > 1)) {
       resolved.push({ ...expected, sourceFailure: "SOURCE_PLACEMENT_AMBIGUOUS" });
       continue;
     }
@@ -247,19 +255,19 @@ export async function resolveSourceEditions({
       sourcePath;
     if (provenance) {
       sourcePath = provenance.relativePath;
+      const leaf = provenance.relativePath.split(sep).at(-1);
+      const currentPrefix = expected.placement.segments.at(-1).match(/^\d+ /)?.[0];
+      const numberedLeaf = currentPrefix ? leaf.replace(/^\d+ /, currentPrefix) : leaf;
+      const probe = [...expected.placement.segments.slice(0, -1), numberedLeaf];
+      if (leaf.includes("[source ")) placement = atPath(placement, probe.join(sep));
       if (!present.length) {
-        const leaf = provenance.relativePath.split(sep).at(-1);
-        const currentPrefix = expected.placement.segments.at(-1).match(/^\d+ /)?.[0] ?? "";
-        const probe = leaf.includes("[source ")
-          ? [...expected.placement.segments.slice(0, -1), leaf.replace(/^\d+ /, currentPrefix)]
-          : expected.placement.segments;
-        sourcePath = (await numbering.find(probe)) ?? sourcePath;
+        const candidates = await numbering.findAll(probe);
+        if (candidates.length > 1) {
+          resolved.push({ ...expected, placement, sourceFailure: "SOURCE_PLACEMENT_AMBIGUOUS" });
+          continue;
+        }
+        sourcePath = candidates[0] ?? sourcePath;
       }
-      if (provenance.relativePath.split(sep).at(-1).includes("[source "))
-        placement = atPath(
-          placement,
-          [...placement.segments.slice(0, -1), provenance.relativePath.split(sep).at(-1)].join(sep),
-        );
     } else if (expected.kind === "attachment") {
       if (fetchedRevision && (history.length || retainedDigest !== source.version))
         placement = suffixed(
@@ -310,13 +318,20 @@ export async function resolveSourceEditions({
     await assertDestinationPath(destination, path);
     let sourceFailure;
     if (provenance && !verify) {
-      const digest = await regularDigest(path);
-      if (digest === NONREGULAR) {
-        resolved.push({ ...expected, sourceFailure: "SOURCE_PUBLICATION_CONFLICT" });
-        continue;
+      if (source.kind === "attachment") {
+        const digest = await regularDigest(path);
+        if (digest !== null && digest !== provenance.sha256)
+          sourceFailure = "SOURCE_PUBLICATION_CONFLICT";
+      } else {
+        const body = await regularBody(path);
+        if (body === NONREGULAR) sourceFailure = "SOURCE_PUBLICATION_CONFLICT";
+        else {
+          const accepted = body ?? Buffer.from(content);
+          if (accepted.length !== provenance.bytes || hash(accepted) !== provenance.sha256)
+            sourceFailure = "SOURCE_PUBLICATION_CONFLICT";
+          else content = accepted.toString("utf8");
+        }
       }
-      if (digest !== null && digest !== provenance.sha256)
-        sourceFailure = "SOURCE_PUBLICATION_CONFLICT";
     }
     resolved.push({
       ...expected,
@@ -343,6 +358,22 @@ export async function resolveSourceEditions({
       ? { ...each, sourceFailure: "SOURCE_PLACEMENT_AMBIGUOUS" }
       : each,
   );
+}
+
+async function regularBody(path) {
+  const file = await open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!file) return null;
+  try {
+    return (await file.stat()).isFile() ? await file.readFile() : NONREGULAR;
+  } finally {
+    await file.close();
+  }
 }
 
 async function regularDigest(path) {
