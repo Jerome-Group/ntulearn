@@ -19,9 +19,24 @@ const HEADLESS_VIEWPORT = { width: 1280, height: 900 };
 
 export async function openLoginWindow(profilePath) {
   const context = await launchChrome(profilePath, { headless: false });
-  const page = context.pages()[0] ?? (await context.newPage());
-  await page.goto(COURSES_URL, { waitUntil: "domcontentloaded" });
-  return { page, close: () => context.close() };
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    await page.goto(COURSES_URL, { waitUntil: "domcontentloaded" });
+    return { page, close: () => context.close() };
+  } catch (error) {
+    try {
+      await context.close();
+    } catch (cause) {
+      throw Object.assign(
+        new Error(
+          "Login browser startup cleanup is unconfirmed. Inspect the owned session before retrying.",
+          { cause },
+        ),
+        { code: "NTULEARN_BROWSER_CLEANUP" },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function openSignedInContext(profilePath) {
