@@ -124,7 +124,7 @@ export async function resolveSourceEditions({
     let statePath = null;
     let records = history.filter((r) => r.version === source.version);
     if (source.kind === "attachment") {
-      if (!history.length && !colliding) {
+      if (!verify && !history.length && !colliding) {
         retainedPath = await numbering.find(expected.placement.segments);
         if (retainedPath) {
           const target = join(destination, retainedPath);
