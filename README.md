@@ -26,11 +26,12 @@ private configuration file; relative values inside it still resolve from the che
 ```bash
 npm run health               # offline config/filesystem observations; never opens the session
 npm run status               # offline receipts and watchdog digest freshness; no source contents
+npm run library              # offline course pages and attachment filenames
 npm run check                # shared CI/agent syntax, contracts, format, lint and fixture checks
 npm run check -- test        # one check; unselected checks explicitly unrun
 ```
 
-These three commands emit `schemaVersion: 1`, per-check `passed`, `failed`, `blocked` or `unrun`,
+Health, status, and check emit `schemaVersion: 1`, per-check `passed`, `failed`, `blocked` or `unrun`,
 actions and bounded evidence. Exit codes: `0` passed, `1` failed, `2` blocked/unrun/usage. Health
 reads only profile directory metadata; it does not validate login. Status counts sync receipts
 and watchdog evidence, treating evidence older than 48 hours as stale. Neither proves upstream
@@ -70,6 +71,50 @@ replaced or pruned; recovery requires a fresh requested directory. Old digest-on
 recover their original assertions and are not retroactively claimed fixed by a later passing run.
 
 No TypeScript is present: syntax, lint, runtime contracts and fixture/process regressions are the applicable checks.
+
+### Read and search saved courses
+
+```bash
+npm run library
+npm run library -- --course AB1234 --query convergence
+npm run --silent library -- --html > /private/path/study-desk.html
+```
+
+`library` reads configured destinations without signing in. Its versioned JSON lists course receipts,
+local material, matching snippets, exclusions, and scan diagnostics. Course keys match exactly without
+case sensitivity. Queries match literal substrings in Markdown text and relative filenames without
+case sensitivity. Empty queries list everything observed. Attachment contents are never read.
+
+Open the HTML export in a browser for search, course filters, a plain-text document reader, and local
+attachment links. The selected courses' full bounded catalogue stays in the export so you can clear
+the initial query. JavaScript-disabled browsers retain local file links. Markdown stays literal text;
+embedded links, images, and HTML do not run. The desk uses no network, server, cache, or browser storage.
+
+Keep JSON and HTML exports private and **outside course destinations**. They contain course text and
+local file locations. Shell redirection creates the export before the CLI starts, so the CLI cannot
+enforce its location. Local links need the original files and may break after a move or rename.
+
+The scan and receipt have separate outcomes. Exit `0` means a complete safe local scan, including an
+empty result. Exit `1` means partial or unavailable scanning. Exit `2` means a usage, configuration,
+runtime-boundary, or platform refusal. Missing, invalid, stale, running, partial, or failed receipts
+remain visible without hiding material or changing the scan exit. Freshness uses 48 hours since the
+receipt's finish or start. A running receipt may be active or interrupted. Nothing here establishes
+upstream completeness, the current source revision, or attachment contents.
+
+Each invocation bounds work to 128 selected courses, 10,000 entries, 1,000 directories, depth 16, and
+5,000 material records. A directory with more than 512 entries is skipped whole. Markdown is limited
+to 256 KiB per file and 8 MiB overall; oversized text remains listed by filename with an explicit
+omission. Receipts are limited to 16 KiB. Each course retains 100 detailed diagnostics plus a suppressed
+count. Queries accept at most 256 Unicode code points. Limits always appear in output.
+
+Hidden paths, the root `Source editions` provenance tree, operational files, temporary publications,
+nested symlinks, and special files are excluded and counted. A configured destination alias is allowed.
+A destination overlapping the configured profile or state runtime directory is refused before scanning,
+including physical aliases and ancestor overlap. Handles refuse leaf symlinks and special files and
+detect observed identity or content changes. Portable Node cannot provide an atomic snapshot against
+hostile concurrent ancestor replacements. See [ADR-0030](docs/adr/0030-the-offline-library-is-a-bounded-local-observation.md).
+
+### Use NTULearn
 
 ```bash
 npm run login                 # refresh the NTU SSO/MFA session

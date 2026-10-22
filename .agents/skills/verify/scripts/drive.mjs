@@ -2,14 +2,24 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const SCRIPTS =
-  "capabilities health status check check:syntax check:contracts login discover watchdog sync verify renumber test lint format format:check"
+  "capabilities health status library check check:syntax check:contracts login discover watchdog sync verify renumber test lint format format:check"
     .split(" ")
     .sort();
 const CASES = {
@@ -40,6 +50,17 @@ const CASES = {
     [["status"], "red-digest", 1, "DIGEST_RED"],
     [["status"], "invalid-receipt", 1, "SYNC_RECEIPTS_INCOMPLETE"],
   ],
+  library: [
+    [["library"], "library-ready", 0],
+    [["library", "--course", "ab1234", "--query", "CONVERGENCE"], "library-ready", 0],
+    [["library", "--query", "exam ü"], "library-ready", 0],
+    [["library", "--query", "no matching phrase"], "library-ready", 0],
+    [["library", "--html", "--query", "convergence"], "library-ready", 0],
+    [["library"], "library-partial", 1],
+    [["library"], "library-runtime", 2, "RUNTIME_OVERLAP"],
+    [["library"], "missing-config", 2, "CONFIG_UNAVAILABLE"],
+    [["library", "--unknown"], "missing-config", 2, "USAGE"],
+  ],
   session: [
     [["login"], "missing-config", 1],
     [["discover"], "missing-config", 1],
@@ -57,7 +78,7 @@ const PREREQUISITES = {
 const journey = process.argv[2];
 assert(
   CASES[journey] && process.argv.length === 3,
-  "Usage: drive.mjs <doctor|cli|local|session|copy|watchdog>",
+  "Usage: drive.mjs <doctor|cli|local|library|session|copy|watchdog>",
 );
 await mkdir(join(ROOT, ".scratch"), { recursive: true });
 const evidence = await mkdtemp(join(ROOT, ".scratch", "verify-"));
@@ -112,6 +133,10 @@ async function doctor() {
 
 async function observe(record, [args, kind, exit, code]) {
   assert.equal(record.exitCode, exit);
+  if (args[0] === "library") {
+    observeLibrary(record, args, kind, code);
+    return;
+  }
   if (!record.stdout) {
     assert(
       args[0] === "media-worker"
@@ -180,9 +205,69 @@ async function observe(record, [args, kind, exit, code]) {
   }
 }
 
+function observeLibrary(record, args, kind, code) {
+  assert.equal(record.stderr, "");
+  if (args.includes("--html")) {
+    assert(record.stdout.startsWith("<!doctype html>"));
+    const payload = record.stdout.match(
+      /<script id="catalogue" type="application\/json">([\s\S]*?)<\/script>/,
+    );
+    assert(payload, "HTML embeds a safe catalogue");
+    const catalogue = JSON.parse(payload[1]);
+    assert.equal(catalogue.materials.length, 3, "clearing the query retains all selected material");
+    assert(catalogue.materials.some((entry) => entry.text.value?.includes("</script><img")));
+    assert(!record.stdout.includes('</script><img src="https://example.invalid/injected">'));
+    assert(record.stdout.includes("Content-Security-Policy"));
+    assert(record.stdout.includes('id="reader-text"'));
+    return;
+  }
+  const value = JSON.parse(record.stdout);
+  assert.equal(value.schemaVersion, 1);
+  assert.equal(value.command, "library");
+  assert.equal(value.exitCode, record.exitCode);
+  if (code) {
+    assert(value.diagnostics.some((entry) => entry.code === code && entry.action));
+    return;
+  }
+  assert.equal(value.evidence.upstreamCompleteness, "unverified");
+  assert.equal(value.evidence.currentSourceRevision, "unverified");
+  assert.equal(
+    value.materialCount,
+    kind === "library-partial" ? 4 : args.includes("--course") ? 2 : 3,
+  );
+  assert.equal(
+    value.matchCount,
+    args.includes("CONVERGENCE") || args.includes("exam ü")
+      ? 1
+      : args.includes("no matching phrase")
+        ? 0
+        : value.materialCount,
+  );
+  assert.equal(value.courses[0].receipt.state, "partial");
+  assert.equal(value.courses[0].receipt.stale, true);
+  assert.deepEqual(value.courses[0].receipt.value.unread, ["announcements"]);
+  assert.equal(value.courses[0].exclusions.symlink, 1);
+  assert.equal(value.courses[0].exclusions.provenance, 1);
+  assert.equal(value.courses[0].exclusions.hidden, 1);
+  assert.equal(value.courses[0].exclusions.temporary, 1);
+  assert(!record.stdout.includes("ATTACHMENT_BYTES_NOT_SEARCHABLE"));
+  assert(!record.stdout.includes("PROVENANCE_NOT_SEARCHABLE"));
+  if (args.includes("CONVERGENCE")) assert(value.materials[0].snippet.includes("convergence"));
+  if (kind === "library-partial") {
+    assert.equal(value.status, "partial");
+    assert(value.courses[0].diagnostics.some((entry) => entry.code === "TEXT_LIMIT"));
+    assert(
+      value.materials.some(
+        (entry) => entry.name === "Oversized.md" && entry.text.state === "omitted",
+      ),
+    );
+  }
+}
+
 async function fixture(root, kind) {
   const path = join(root, "courses.json");
   if (kind === "missing-config") return path;
+  if (kind.startsWith("library-")) return libraryFixture(root, kind, path);
   const profile = join(root, "profile"),
     destination = join(root, "Drive", "course"),
     state = join(root, "state");
@@ -219,6 +304,55 @@ async function fixture(root, kind) {
   return path;
 }
 
+async function libraryFixture(root, kind, path) {
+  const destination = join(root, "AB1234");
+  const second = join(root, "CD5678");
+  const runtime = join(root, "private-runtime");
+  await mkdir(destination);
+  await mkdir(second);
+  await mkdir(runtime, { mode: 0o700 });
+  await json(path, {
+    profilePath:
+      kind === "library-runtime"
+        ? join(destination, "nonhidden-profile")
+        : join(runtime, "profile"),
+    statePath: join(runtime, "state.json"),
+    courses: [
+      { key: "AB1234", courseId: "_verification_fixture_1", destination },
+      { key: "CD5678", courseId: "_verification_fixture_2", destination: second },
+    ],
+  });
+  await writeFile(
+    join(destination, "Page.md"),
+    '# Saved page\nUniform convergence is in the document body.\n</script><img src="https://example.invalid/injected">\n',
+  );
+  await writeFile(join(destination, "Exam ü #1.pdf"), "ATTACHMENT_BYTES_NOT_SEARCHABLE");
+  await writeFile(join(second, "Announcement.md"), "# Announcement\nThe lecture moved.");
+  await mkdir(join(destination, "Source editions"));
+  await writeFile(
+    join(destination, "Source editions", "provenance.md"),
+    "PROVENANCE_NOT_SEARCHABLE",
+  );
+  await mkdir(join(destination, ".hidden"));
+  await writeFile(join(destination, ".hidden", "private.md"), "HIDDEN_NOT_SEARCHABLE");
+  await writeFile(join(destination, "Pending.md.part-123"), "TEMPORARY_NOT_SEARCHABLE");
+  await symlink(second, join(destination, "Nested alias"));
+  const timestamp = new Date(Date.now() - 72 * 3600000).toISOString();
+  await json(join(destination, "Sync status.json"), {
+    schemaVersion: 1,
+    producer: "ntulearn",
+    status: "partial",
+    startedAt: timestamp,
+    finishedAt: timestamp,
+    lastSuccessfulAt: null,
+    counts: { downloaded: 0, skipped: 0, markdown: 1, uncopied: 0, failures: 1 },
+    unread: ["announcements"],
+  });
+  if (kind === "library-partial")
+    await writeFile(join(destination, "Oversized.md"), "x".repeat(256 * 1024 + 1));
+  return path;
+}
+
 async function drive(entry) {
   assert(!interrupted && !run.unsettled, "previous child must settle before another drive");
   const [args, kind] = entry;
@@ -243,11 +377,16 @@ async function drive(entry) {
     );
     record.assertions.push("child settled without timeout or signal");
     assert(
-      !record.stdout.includes(root) &&
-        !/VERIFY_PRIVATE_FIXTURE|_verification_fixture_1/.test(record.stdout),
-      "stdout excludes private fixture identifiers and paths",
+      !/VERIFY_PRIVATE_FIXTURE|_verification_fixture_[12]/.test(record.stdout),
+      "stdout excludes upstream identifiers",
     );
-    record.assertions.push("stdout excludes private fixture identifiers and paths");
+    if (args[0] !== "library")
+      assert(!record.stdout.includes(root), "operational output excludes private paths");
+    record.assertions.push(
+      args[0] === "library"
+        ? "private local output excludes upstream identifiers"
+        : "stdout excludes private fixture identifiers and paths",
+    );
     await observe(record, entry);
     record.assertions.push("expected command response, schema, exit and observations");
   } catch (error) {

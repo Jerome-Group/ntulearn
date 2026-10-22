@@ -79,7 +79,7 @@ jobs:
 
       - name: Verify supported CLI journeys
         run: |
-          for feature in cli local session copy watchdog; do
+          for feature in cli local library session copy watchdog; do
             node .agents/skills/verify/scripts/drive.mjs "$feature"
           done
 

@@ -6,11 +6,13 @@ Start here: `README.md`, then `AGENTS.md`.
 
 Machine entry point: `npm run capabilities`; verification: `npm run check`;
 offline operational observations: `npm run health`, `npm run status`.
+Read saved courses with `npm run library`.
 
 | Area | What lives there | Entry point |
 |------|------------------|-------------|
 | Commands | Login, course discovery, additive sync, verify, renumber and watchdog | `src/cli.mjs`, `src/watchdog/`, `src/courses.mjs`, `src/output.mjs`, `package.json` |
 | Capabilities | Machine command/feature index, shared CI/agent checks with explicit bounded private failure evidence, and offline health/status | `src/capabilities/`, `npm run capabilities`, `npm run check` |
+| Offline library | Bounded read-only course catalogue, shared text search, and standalone reading desk | `src/library/`, `npm run library` |
 | Configuration | Reading `config/courses.json` — which courses sync, where each one goes and physical course-tree overlap checks. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | NTULearn | Everything that speaks to NTULearn: the saved session and browser signal ownership, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Verification driver | Real CLI journeys, retained proof and feature map | `.agents/skills/verify/SKILL.md`, `.agents/skills/verify/features/README.md` |
