@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, symlink, lstat, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, parse, resolve } from "node:path";
 import test from "node:test";
 import { loadConfig, selectCourses } from "../src/config.mjs";
 
@@ -129,6 +129,31 @@ test("rejects a destination sitting inside another course's", async () => {
     /CC0006-TUT.*is inside.*CC0006.*Give each NTULearn site its own folder/s,
   );
 });
+
+for (const alias of [false, true]) {
+  for (const reverse of [false, true]) {
+    test(`rejects a filesystem root ${alias ? "alias " : ""}overlap with the root course ${reverse ? "last" : "first"}`, async (t) => {
+      const root = await repositoryWith(JSON.stringify({ courses: [] }));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      let destination = parse(root).root;
+      if (alias) {
+        await symlink(destination, join(root, "root-alias"));
+        destination = join(root, "root-alias");
+      }
+      const courses = [
+        { key: "ROOT", courseId: "root", destination },
+        { key: "NESTED", courseId: "nested", destination: join(root, "missing/child") },
+      ];
+      if (reverse) courses.reverse();
+      await writeFile(join(root, "config/courses.json"), JSON.stringify({ courses }));
+      await assert.rejects(
+        loadConfig(root),
+        /Course NESTED's destination .* is inside course ROOT's .*Give each NTULearn site its own folder/s,
+      );
+      await assert.rejects(lstat(join(root, "missing")), { code: "ENOENT" });
+    });
+  }
+}
 
 // A destination is hand-edited JSON, so a trailing separator or a `..` is ordinary rather than
 // exotic — and either one used to make a nested folder read as an unrelated one (#34).
