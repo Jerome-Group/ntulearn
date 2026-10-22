@@ -16,6 +16,7 @@
     "capabilities": "node src/cli.mjs capabilities",
     "health": "node src/cli.mjs health",
     "status": "node src/cli.mjs status",
+    "library": "node src/cli.mjs library",
     "check": "node src/cli.mjs check",
     "check:syntax": "node src/cli.mjs check syntax",
     "check:contracts": "node src/cli.mjs check contracts",

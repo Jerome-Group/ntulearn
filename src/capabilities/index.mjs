@@ -64,6 +64,15 @@ const routes = {
     ["src/watchdog/run.mjs", "src/watchdog/verdict.mjs"],
     ["test/watchdog-run.test.mjs", "test/watchdog.test.mjs"],
   ],
+  library: [
+    [
+      "src/library/catalogue.mjs",
+      "src/library/search.mjs",
+      "src/library/html.mjs",
+      "src/config.mjs",
+    ],
+    ["test/library.test.mjs", "test/library-cli.test.mjs"],
+  ],
   capabilities: [
     [
       "src/capabilities/index.mjs",
@@ -260,6 +269,37 @@ const commands = [
     { kind: "status", output: "capability-result-v1", exitCodes: offlineCodes },
   ),
   command(
+    "library",
+    "library",
+    "library",
+    ["local-configuration", "distinct-course-destinations", "runtime-outside-destinations"],
+    {
+      reads: [
+        "configuration",
+        "course-Markdown",
+        "attachment-filenames",
+        "sync-receipts",
+        "filesystem-metadata",
+      ],
+    },
+    {
+      kind: "read",
+      arguments: ["[--course <key>]", "[--query <text>]", "[--html]"],
+      output: "local-library-v1-or-self-contained-html",
+      exitCodes: {
+        0: "complete-local-scan",
+        1: "partial-or-unavailable-local-scan",
+        2: "usage-config-or-platform-refusal",
+      },
+      limitations: [
+        "Private stdout contains local course text snippets, names, and file locations. Keep HTML exports outside course destinations.",
+        "Literal case-insensitive substring search over Markdown and filenames. Attachments are never opened.",
+        "Receipts are independent of scan success. No upstream completeness or current source revision claim.",
+        "Bounded no-follow local observation detects observed changes; portable Node cannot exclude hostile concurrent ancestor swaps.",
+      ],
+    },
+  ),
+  command(
     "check",
     "check",
     "capabilities",
@@ -344,6 +384,33 @@ export function capabilityIndex(selection) {
         "Real course identifiers and storage paths belong in private configuration; never copy session profile contents.",
     },
     outputContracts: {
+      "local-library-v1-or-self-contained-html": {
+        fields: [
+          "schemaVersion",
+          "command",
+          "status",
+          "exitCode",
+          "observedAt",
+          "query",
+          "courses",
+          "materialCount",
+          "matchCount",
+          "materials",
+          "limits",
+          "diagnostics",
+          "evidence",
+        ],
+        statuses: ["complete", "partial", "blocked"],
+        courseEvidence: [
+          "scan",
+          "receipt",
+          "counts",
+          "exclusions",
+          "diagnostics",
+          "suppressedDiagnostics",
+        ],
+        html: "Same selected courses' bounded catalogue, editable query, native course filter, plain-text reader, generated local file links, strict CSP; no server or network.",
+      },
       "capability-result-v1": {
         fields: ["schemaVersion", "command", "status", "exitCode", "checks", "evidence"],
         statuses: ["passed", "failed", "blocked", "unrun"],

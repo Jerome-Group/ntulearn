@@ -4,6 +4,7 @@ import { runRepositoryChecks, parseCheckArguments } from "./capabilities/check.m
 import { createCheckCapture } from "./capabilities/check-capture.mjs";
 import { localHealth } from "./capabilities/health.mjs";
 import { localStatus } from "./capabilities/status.mjs";
+import { localLibrary, libraryFailure, LIBRARY_LIMITS } from "./library/catalogue.mjs";
 import { createInterface } from "node:readline/promises";
 import { dirname, resolve } from "node:path";
 import { stderr, stdin, stdout } from "node:process";
@@ -19,7 +20,7 @@ import { runWatchdog, runWatchdogLocked } from "./watchdog/run.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = fileURLToPath(new URL("./cli.mjs", import.meta.url));
 const USAGE =
-  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run (capabilities|health|status|check)";
+  "Usage: npm run login | npm run discover | npm run watchdog | npm run (sync|verify|renumber) -- <course|all> | npm run (capabilities|health|status|check|library)";
 
 const commands = {
   login,
@@ -166,6 +167,7 @@ async function eachCourse(config, key, walk) {
 }
 
 async function main([name, ...argumentsForCommand]) {
+  if (name === "library") return libraryCommand(argumentsForCommand);
   if (["capabilities", "check", "health", "status"].includes(name)) {
     return offlineCommand(name, argumentsForCommand);
   }
@@ -175,6 +177,64 @@ async function main([name, ...argumentsForCommand]) {
     return 1;
   }
   return command(await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH), ...argumentsForCommand);
+}
+
+async function libraryCommand(args) {
+  const options = { format: "json" };
+  const seen = new Set();
+  for (let index = 0; index < args.length; index += 1) {
+    const flag = args[index];
+    if (seen.has(flag) || !["--course", "--query", "--html"].includes(flag))
+      return emitLibrary(
+        libraryFailure(
+          "USAGE",
+          "Unknown or repeated library argument.",
+          "Run: npm run library -- [--course <key>] [--query <text>] [--html]",
+        ),
+      );
+    seen.add(flag);
+    if (flag === "--html") options.format = "html";
+    else {
+      const value = args[++index];
+      if (value === undefined || (flag === "--course" && !value))
+        return emitLibrary(
+          libraryFailure(
+            "USAGE",
+            "A library option needs a value.",
+            "Run: npm run library -- [--course <key>] [--query <text>] [--html]",
+          ),
+        );
+      options[flag === "--course" ? "course" : "query"] = value;
+    }
+  }
+  if (Array.from(options.query ?? "").length > LIBRARY_LIMITS.queryCodePoints)
+    return emitLibrary(
+      libraryFailure(
+        "QUERY_LIMIT",
+        "The search query exceeds 256 characters.",
+        "Use at most 256 Unicode code points in a query.",
+        options.format,
+      ),
+    );
+  let config;
+  try {
+    config = await loadConfig(ROOT, process.env.NTULEARN_CONFIG_PATH);
+  } catch {
+    return emitLibrary(
+      libraryFailure(
+        "CONFIG_UNAVAILABLE",
+        "Private configuration is missing, invalid, or inaccessible.",
+        "Copy config/courses.example.json to a private configuration and check its course directories.",
+        options.format,
+      ),
+    );
+  }
+  return emitLibrary(await localLibrary(config, options));
+}
+
+async function emitLibrary(result) {
+  await writeLine(stdout, result.source);
+  return result.exitCode;
 }
 
 async function offlineCommand(name, argumentsForCommand) {

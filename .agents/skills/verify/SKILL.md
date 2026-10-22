@@ -27,6 +27,7 @@ Use `node .agents/skills/verify/scripts/drive.mjs` followed by one journey:
 | --- | --- |
 | `cli` | Retained npm scripts/index parity, capability selections, removed command refusal, usage |
 | `local` | Healthy and unsafe profile metadata; fresh, absent, stale, invalid, and failed local status |
+| `library` | Local full-text and filename search, standalone desk, receipt independence, safe exclusions, bounded omissions, runtime refusal |
 | `session` | Missing-config refusals for login and discovery |
 | `copy` | Missing-config refusals for sync, presence audit, and renumber |
 | `watchdog` | Missing-config refusal for the scheduled run |
@@ -35,7 +36,7 @@ The last three prove the configuration boundary only. Report full journeys as `v
 
 Run the repository's existing checks once when relevant: `npm run check -- --evidence .scratch/check-evidence-unique`. Replace `unique` with a fresh suffix. This preserves original failing invocation details; use them rather than adding another check framework. `check:syntax`, `check:contracts`, `test`, `lint`, and `format:check` are indexed alternatives. `format` writes repository files; reserve it for deliberate formatting work.
 
-CI runs the existing checks, then all five helper journeys. Failures print bounded check captures and synthetic journey evidence in the job log. Its green gate proves offline behavior and configuration refusals; full Owner journeys retain their prerequisites.
+CI runs the existing checks, then all six helper journeys. Failures print bounded check captures and synthetic journey evidence in the job log. Its green gate proves offline behavior and configuration refusals; full Owner journeys retain their prerequisites.
 Organisation conformance separately checks mirrored guidance and top-level MAP coverage.
 
 ## Evidence
@@ -52,4 +53,4 @@ The fixed command set uses short in-process offline routes and early configurati
 
 ## Helpers
 
-`scripts/drive.mjs` is executable; the invocations above need only Node and installed repository dependencies. Keep the five feature files indexed as commands change. For a full source-and-drive upkeep pass, use the installed `maintain-verification-skill` skill against this directory; retain its per-feature coverage and unreachable reasons.
+`scripts/drive.mjs` is executable; the invocations above need only Node and installed repository dependencies. Keep the six feature files indexed as commands change. For a full source-and-drive upkeep pass, use the installed `maintain-verification-skill` skill against this directory; retain its per-feature coverage and unreachable reasons.
