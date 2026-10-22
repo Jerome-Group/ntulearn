@@ -6,7 +6,7 @@ The Owner runs the guarded scheduled copy and audit, then reads its verdict and 
 
 - `readiness` checks the Drive mount, destination containment and each destination's first Drive root before attempting work.
 - `lock` avoids overlapping scheduled runs.
-- `run` copies and audits with bounded attempts; `latest.json` points to the operational result.
+- `run` copies and audits with bounded attempts. The watchdog returns its own locked child's digest after publication and validates the reply against its exit status.
 - `verdict` distinguishes green success, yellow skipped lock, and red destination/session/run failures.
 
 ## How to get to it (user POV)
@@ -26,6 +26,8 @@ Preconditions: offline boundary proof needs no session. A full run needs Owner i
 ## Gotchas
 
 - A yellow skipped lock is not a new successful copy. A green prior digest may be stale.
+- A missing, invalid, oversized, signalled, or contradictory child reply fails with an action to inspect this run's stderr or the launchd stderr log. Existing publications remain intact.
+- `latest.json` and offline `status` describe the last published digest. They cannot expose a failed attempt that never published.
 - Do not invoke internal `watchdog-locked`, acquire shared locks, clear state, or retry live work through this helper.
 - Private operational logs can contain course paths and stderr. Keep them local; never attach their raw contents to public issues or this map.
 - Sources: [runner](../../../../src/watchdog/run.mjs), [verdict](../../../../src/watchdog/verdict.mjs), [offline reader](../../../../src/capabilities/status.mjs), [CLI](../../../../src/cli.mjs).
