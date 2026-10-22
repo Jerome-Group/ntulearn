@@ -14,7 +14,7 @@ export function unnumbered(name) {
 
 export function safeResolve(root, ...parts) {
   const target = resolve(root, ...parts.map(safeSegment));
-  if (target !== root && !target.startsWith(`${root}${sep}`)) {
+  if (target !== root && !target.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) {
     throw new Error(`Unsafe output path: ${target}`);
   }
   return target;
