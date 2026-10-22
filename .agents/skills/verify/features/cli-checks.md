@@ -4,7 +4,7 @@ Users discover supported commands, select machine-readable capabilities, and run
 
 ## Sub-features
 
-- `index` lists all sixteen npm scripts with effects, prerequisites, source routes, and versioned output contracts.
+- `index` lists all sixteen npm scripts with effects, prerequisites, source routes, and output classifications. Capability indexes and results use versioned schemas; live reports and native tools retain their own output.
 - `selection` accepts a command ID or feature; an unknown selection returns structured exit `2`.
 - `checks` runs `all`, `syntax`, `contracts`, `format`, `lint`, or `test`; unselected checks remain `unrun`.
 - `tools` exposes native test, lint, and formatter scripts. `format` writes files.

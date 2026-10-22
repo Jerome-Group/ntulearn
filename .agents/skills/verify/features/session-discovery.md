@@ -5,7 +5,7 @@ The Owner signs in through Chrome and lists courses visible to that student. The
 ## Sub-features
 
 - `login` opens Chrome, lets the Owner complete SSO/MFA, then closes after Enter.
-- `discover` lists the saved student's accessible courses and closes its client.
+- `discover` lists the saved student's visible course memberships with availability and closes its client.
 - `refusal` rejects missing configuration before either handler can launch a browser.
 
 ## How to get to it (user POV)
@@ -24,6 +24,6 @@ Preconditions: offline boundary proof needs no credentials. The full journey nee
 ## Gotchas
 
 - Never copy, print, or inspect the real profile's contents. Directory metadata is the offline boundary.
-- After an authorized saved-session read times out at the identity provider, the repository requires login diagnosis before declaring expiry. Here the Owner invokes that command; hand any credentials, MFA, or CAPTCHA step to them.
+- After an authorized saved-session read times out at the identity provider, the agent runs `npm run login` before declaring expiry. If Courses appears without input, press Enter, let the window close, and retry the read. Hand credentials, MFA, or CAPTCHA steps to the Owner. The offline helper does not attempt this authenticated diagnosis.
 - Missing-config refusal proves no authenticated behavior. A course not returned by NTULearn is not evidence of an empty course.
 - Sources: [CLI ordering](../../../../src/cli.mjs), [configuration](../../../../src/config.mjs), [session](../../../../src/ntulearn/session.mjs), [client](../../../../src/ntulearn/client.mjs), [session decision](../../../../docs/adr/0004-the-session-is-a-signed-in-browser-profile.md).
