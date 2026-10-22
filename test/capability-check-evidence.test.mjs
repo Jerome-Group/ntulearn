@@ -14,7 +14,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout } from "node:timers/promises";
+import { setImmediate } from "node:timers/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { Buffer } from "node:buffer";
 import { createCheckEvidence } from "../src/capabilities/check-evidence.mjs";
 import { runRepositoryChecks, parseCheckArguments } from "../src/capabilities/check.mjs";
@@ -24,6 +25,16 @@ async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ntulearn-private-check-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   return { root, directory: join(root, ".scratch/check-evidence-fixture") };
+}
+function mockTimeouts(t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  // Publish the timer mocks to named ESM imports in the subject.
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.timers.reset();
+    syncBuiltinESMExports();
+  });
+  return t.mock.timers;
 }
 const failedRun = async () => ({
   exitCode: 9,
@@ -177,15 +188,20 @@ test("explicit overflow retains a bounded prefix with separate full-capture dige
 });
 for (const boundary of ["stat", "close", "parent"])
   test(`pending ${boundary} returns explicit cleanup uncertainty, preserves failure and cannot write late`, async (t) => {
-    const f = await fixture(t);
+    const f = await fixture(t),
+      timers = mockTimeouts(t);
     let release,
       entered,
+      finishedClose,
       closed = false;
     const pending = new Promise((resolve) => {
         release = resolve;
       }),
       started = new Promise((resolve) => {
         entered = resolve;
+      }),
+      closeFinished = new Promise((resolve) => {
+        finishedClose = resolve;
       });
     let reached = false;
     const resultPromise = invoke(f, {
@@ -219,7 +235,10 @@ for (const boundary of ["stat", "close", "parent"])
               await pending;
             }
             await handle.close();
-            if (affected) closed = true;
+            if (affected) {
+              closed = true;
+              finishedClose();
+            }
           },
         };
       },
@@ -229,6 +248,9 @@ for (const boundary of ["stat", "close", "parent"])
       started,
       resultPromise.then(() => assert.fail("fixture did not reach the pending boundary")),
     ]);
+    timers.tick(200);
+    await setImmediate();
+    timers.tick(50);
     const result = await resultPromise;
     assert.equal(result.exitCode, 1);
     assert.equal(result.checks.find((c) => c.id === "test").evidence.exitCode, 9);
@@ -240,17 +262,21 @@ for (const boundary of ["stat", "close", "parent"])
     assert.equal(closed, false);
     await assert.rejects(lstat(join(f.directory, "run.result.json")), { code: "ENOENT" });
     release();
-    await setTimeout(15);
+    await closeFinished;
     assert.equal(closed, true);
     await assert.rejects(lstat(join(f.directory, "test-001.stderr.log")), { code: "ENOENT" });
     assert.equal((await invoke(f)).exitCode, 2);
   });
 test("close rejection remains cleanup failure even when another I/O deadline expires", async (t) => {
-  const f = await fixture(t);
-  let entered;
+  const f = await fixture(t),
+    timers = mockTimeouts(t);
+  let entered, release;
   const started = new Promise((resolve) => {
-    entered = resolve;
-  });
+      entered = resolve;
+    }),
+    pending = new Promise((resolve) => {
+      release = resolve;
+    });
   const resultPromise = invoke(f, {
     ioMs: 250,
     settleMs: 250,
@@ -265,7 +291,7 @@ test("close rejection remains cleanup failure even when another I/O deadline exp
         close: async () => {
           if (affected) {
             entered();
-            await setTimeout(300);
+            await pending;
           }
           await handle.close();
           if (affected) throw new Error("private cleanup failure");
@@ -273,10 +299,14 @@ test("close rejection remains cleanup failure even when another I/O deadline exp
       };
     },
   });
+  t.after(() => release());
   await Promise.race([
     started,
     resultPromise.then(() => assert.fail("fixture did not reach the owned close boundary")),
   ]);
+  timers.tick(250);
+  await setImmediate();
+  release();
   const result = await resultPromise;
   assert.equal(result.exitCode, 1);
   assert.equal(result.checks.find((c) => c.id === "test").evidence.exitCode, 9);
