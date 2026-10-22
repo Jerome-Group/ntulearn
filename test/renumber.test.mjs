@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, lstat, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  lstat,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +20,7 @@ import { attachmentsOf } from "../src/ntulearn/content.mjs";
 import { syncCourse } from "../src/sync/course.mjs";
 import { renumberCourse, renumberReport } from "../src/sync/renumber.mjs";
 import { fileDigest } from "../src/sync/files.mjs";
+import { verifyCourse } from "../src/sync/verify.mjs";
 
 // MH2500's shape, trimmed: handouts at the root of the course, and one tutorial inserted above them
 // a week later that moved every one of their numbers by one (#74).
@@ -367,4 +380,562 @@ test("inverse numbering reports an occupied target and preserves its student con
     at.before["Student notes.md"],
   );
   assert.equal(JSON.stringify(at.state), at.stateBefore);
+});
+
+const digest = (body) => createHash("sha256").update(body).digest("hex");
+const revisionAttachment = {
+  id: "stable-file",
+  fileName: "Guide.pdf",
+  resourceUrl: "/bbcswebdav/guide",
+};
+
+function revisionClient(revision, position = 0, files = [revisionAttachment]) {
+  return {
+    ...client([
+      {
+        id: "guide",
+        title: "Guide",
+        position,
+        modifiedDate: `2026-10-0${revision}T00:00:00Z`,
+        contentHandler: "resource/x-bb-file",
+      },
+    ]),
+    readAttachments: async () => files,
+    download: async () => ({ body: Buffer.from(`PDF ${revision}`), headers: {} }),
+  };
+}
+
+async function revisionFixture(t, revisions = 2, files = [revisionAttachment]) {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-editions-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const state = { courses: {} };
+  for (let revision = 1; revision <= revisions; revision++) {
+    const result = await syncCourse({
+      client: revisionClient(revision, 0, files),
+      course: course(destination),
+      state,
+    });
+    assert.equal(result.failures.length, 0);
+  }
+  const current = (await readdir(destination)).find((name) =>
+    name.includes(`revision ${digest(`PDF ${revisions}`).slice(0, 24)}`),
+  );
+  const source = revisionClient(revisions, 1, files);
+  source.download = async () => assert.fail("renumber and current-revision reuse cannot fetch");
+  return { destination, state, current, source };
+}
+
+async function editionRecords(destination) {
+  const root = join(destination, "Source editions");
+  const [identity] = await readdir(root);
+  const directory = join(root, identity);
+  const records = await Promise.all(
+    (await readdir(directory)).map(async (name) =>
+      JSON.parse(await readFile(join(directory, name), "utf8")),
+    ),
+  );
+  return { directory, records };
+}
+
+async function addRecord(directory, record) {
+  const body = JSON.stringify(record) + "\n";
+  await writeFile(join(directory, digest(body) + ".json"), body);
+}
+
+test("renumbers only the current attachment edition and round-trips without copies", async (t) => {
+  const at = await revisionFixture(t, 3, [
+    { ...revisionAttachment, fileName: "資料".repeat(25) + ".pdf" },
+  ]);
+  at.source.readAttachments = async () => [
+    { ...revisionAttachment, fileName: "New upstream filename.pdf" },
+  ];
+  const older = (await readdir(at.destination)).filter(
+    (name) => name.endsWith(".pdf") && name !== at.current,
+  );
+  for (const name of older) await writeFile(join(at.destination, name), `Student notes in ${name}`);
+  const before = await directoryDigests(at.destination);
+  const stateBefore = JSON.stringify(at.state);
+  const renamed = at.current.replace(/^01 /, "02 ");
+
+  const result = await renumberCourse({
+    client: at.source,
+    course: course(at.destination),
+    state: at.state,
+  });
+
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => ({ from, to })),
+    [{ from: at.current, to: renamed }],
+  );
+  assert.ok(!result.kept);
+  const after = { ...before, [renamed]: before[at.current] };
+  delete after[at.current];
+  assert.deepEqual(await directoryDigests(at.destination), after);
+  assert.equal(JSON.stringify(at.state), stateBefore);
+  const verified = await verifyCourse({ client: at.source, course: course(at.destination) });
+  assert.deepEqual(verified.missing, []);
+  assert.ok(!verified.renumbered);
+  assert.deepEqual(
+    (await renumberCourse({ client: at.source, course: course(at.destination), state: at.state }))
+      .renamed,
+    [],
+  );
+  for (let repeat = 0; repeat < 2; repeat++) {
+    const synced = await syncCourse({
+      client: at.source,
+      course: course(at.destination),
+      state: at.state,
+    });
+    assert.equal(synced.failures.length, 0);
+    assert.equal(synced.newEditions, 0);
+    assert.equal(synced.downloaded, 0);
+    assert.deepEqual(
+      (await renumberCourse({ client: at.source, course: course(at.destination), state: at.state }))
+        .renamed,
+      [],
+    );
+    const files = await directoryDigests(at.destination);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(files).filter(([path]) => path.endsWith(".pdf"))),
+      Object.fromEntries(Object.entries(after).filter(([path]) => path.endsWith(".pdf"))),
+    );
+  }
+});
+
+test("later reorders recover one edition after all equivalent recorded paths disappear", async (t) => {
+  const at = await revisionFixture(t);
+  for (const position of [1, 2, 3]) {
+    const source = revisionClient(2, position);
+    source.download = async () => assert.fail("the recorded current revision must be reused");
+    const renamed = await renumberCourse({
+      client: source,
+      course: course(at.destination),
+      state: at.state,
+    });
+    assert.equal(renamed.renamed.length, 1);
+    const verified = await verifyCourse({ client: source, course: course(at.destination) });
+    assert.deepEqual(verified.missing, []);
+    assert.ok(!verified.renumbered);
+    const result = await syncCourse({
+      client: source,
+      course: course(at.destination),
+      state: at.state,
+    });
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.newEditions, 0);
+    assert.equal((await readdir(at.destination)).filter((name) => name.endsWith(".pdf")).length, 2);
+  }
+});
+
+test("attachment editions still require compatible State evidence", async (t) => {
+  for (const refusal of ["missing", "digest", "identity"]) {
+    await t.test(refusal, async (t) => {
+      const at = await revisionFixture(t);
+      const record = Object.values(at.state.courses.MH2500.downloads)[0];
+      if (refusal === "missing") at.state = { courses: {} };
+      if (refusal === "digest") record.sha256 = digest("PDF 1");
+      if (refusal === "identity") record.sourceIdentity = "a".repeat(64);
+      const before = await directoryDigests(at.destination);
+      const stateBefore = JSON.stringify(at.state);
+      const result = await renumberCourse({
+        client: at.source,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.deepEqual(result.renamed, []);
+      assert.equal(result.kept.length, 1);
+      assert.equal(result.kept[0].onDisk, at.current);
+      assert.match(result.kept[0].why, refusal === "missing" ? /no recorded digest/ : /State/);
+      assert.deepEqual(await directoryDigests(at.destination), before);
+      assert.equal(JSON.stringify(at.state), stateBefore);
+    });
+  }
+});
+
+test("edited current attachment edition stays at its held name", async (t) => {
+  const at = await revisionFixture(t);
+  await writeFile(join(at.destination, at.current), "Student annotation");
+  const before = await directoryDigests(at.destination);
+  const result = await renumberCourse({
+    client: at.source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  assert.deepEqual(result.renamed, []);
+  assert.equal(result.kept[0].onDisk, at.current);
+  assert.match(result.kept[0].why, /changed since the sync wrote/);
+  assert.deepEqual(await directoryDigests(at.destination), before);
+});
+
+test("unresolved current attachment never falls back to its historical original", async (t) => {
+  for (const refusal of [
+    "fingerprint",
+    "identity",
+    "missing identity",
+    "legacy",
+    "revision",
+    "placement",
+  ]) {
+    await t.test(refusal, async (t) => {
+      const at = await revisionFixture(t);
+      if (refusal === "fingerprint") at.source = revisionClient(3, 1);
+      if (refusal === "identity")
+        at.source = revisionClient(2, 1, [revisionAttachment, revisionAttachment]);
+      if (refusal === "missing identity")
+        at.source = revisionClient(2, 1, [
+          { fileName: "Guide.pdf", resourceUrl: "/download?id=missing" },
+        ]);
+      const { directory, records } = await editionRecords(at.destination);
+      const current = records.find((record) => record.sha256 === digest("PDF 2"));
+      if (refusal === "legacy") {
+        await rm(directory, { recursive: true });
+        await mkdir(directory);
+        const legacy = { ...current, schemaVersion: 1, version: null };
+        delete legacy.fingerprint;
+        await addRecord(directory, legacy);
+      }
+      if (refusal === "revision")
+        await addRecord(directory, {
+          ...current,
+          version: digest("CONFLICTING REVISION"),
+          sha256: digest("CONFLICTING REVISION"),
+        });
+      if (refusal === "placement") {
+        const alternate = at.current.replace(/^01 /, "03 ");
+        await copyFile(join(at.destination, at.current), join(at.destination, alternate));
+        await addRecord(directory, { ...current, relativePath: alternate });
+      }
+      at.source.download = async () => assert.fail("unresolved sources cannot fetch for renumber");
+      const before = await directoryDigests(at.destination);
+      const result = await renumberCourse({
+        client: at.source,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.deepEqual(result.renamed, []);
+      assert.ok(result.kept.length > 0);
+      assert.ok(
+        result.kept.every((entry) => /source|revision|placement|identity/i.test(entry.why)),
+      );
+      assert.ok(result.kept.every((entry) => !entry.onDisk));
+      assert.deepEqual(await directoryDigests(at.destination), before);
+    });
+  }
+});
+
+test("malformed provenance refuses before any renumbering", async (t) => {
+  const at = await revisionFixture(t);
+  const { directory } = await editionRecords(at.destination);
+  await writeFile(join(directory, "malformed.json"), "{}");
+  const before = await directoryDigests(at.destination);
+  await assert.rejects(
+    renumberCourse({ client: at.source, course: course(at.destination), state: at.state }),
+    /provenance is malformed/,
+  );
+  assert.deepEqual(await directoryDigests(at.destination), before);
+});
+
+test("missing recorded placement requires a unique numbered fallback", async (t) => {
+  const at = await revisionFixture(t);
+  const second = at.current.replace(/^01 /, "02 ");
+  const third = at.current.replace(/^01 /, "03 ");
+  await rename(join(at.destination, at.current), join(at.destination, second));
+  await copyFile(join(at.destination, second), join(at.destination, third));
+  const before = await directoryDigests(at.destination);
+  const result = await renumberCourse({
+    client: at.source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  assert.deepEqual(result.renamed, []);
+  assert.match(result.kept[0].why, /ambiguous.*placement|placement.*ambiguous/);
+  assert.ok(!result.kept[0].onDisk);
+  const verified = await verifyCourse({ client: at.source, course: course(at.destination) });
+  assert.equal(verified.missing.length, 1);
+  assert.deepEqual(await directoryDigests(at.destination), before);
+});
+
+test("a nonregular stale name does not hide the uniquely proven current attachment", async (t) => {
+  const at = await revisionFixture(t);
+  const alternate = at.current.replace(/^01 /, "03 ");
+  await rename(join(at.destination, at.current), join(at.destination, alternate));
+  await mkdir(join(at.destination, at.current));
+  await writeFile(join(at.destination, at.current, "Student.md"), "Student directory");
+  const before = await directoryDigests(at.destination);
+  const result = await renumberCourse({
+    client: at.source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  const target = at.current.replace(/^01 /, "02 ");
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => ({ from, to })),
+    [{ from: alternate, to: target }],
+  );
+  const after = { ...before, [target]: before[alternate] };
+  delete after[alternate];
+  assert.deepEqual(await directoryDigests(at.destination), after);
+});
+
+test("different recorded stems remain ambiguous even when only one numbered file remains", async (t) => {
+  const at = await revisionFixture(t);
+  const { directory, records } = await editionRecords(at.destination);
+  const current = records.find((record) => record.sha256 === digest("PDF 2"));
+  await addRecord(directory, {
+    ...current,
+    relativePath: current.relativePath.replace("Guide", "Other"),
+  });
+  await rename(
+    join(at.destination, at.current),
+    join(at.destination, at.current.replace(/^01 /, "03 ")),
+  );
+  const before = await directoryDigests(at.destination);
+  const result = await renumberCourse({
+    client: at.source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  assert.deepEqual(result.renamed, []);
+  assert.match(result.kept[0].why, /placement is ambiguous/);
+  assert.deepEqual(await directoryDigests(at.destination), before);
+});
+
+test("distinct colliding identities renumber their editions and retain the unproven original", async (t) => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-collisions-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  await writeFile(join(destination, "01 Guide.pdf"), "Student original");
+  const state = { courses: {} };
+  const files = ["one", "two"].map((id) => ({
+    id,
+    fileName: "Guide.pdf",
+    resourceUrl: `/bbcswebdav/${id}`,
+  }));
+  const first = revisionClient(1, 0, files);
+  first.download = async (file) => ({ body: Buffer.from(file.resourceUrl), headers: {} });
+  const synced = await syncCourse({ client: first, course: course(destination), state });
+  assert.deepEqual(synced.failures, []);
+  const editions = (await readdir(destination)).filter((name) => name.includes("[source"));
+  const source = revisionClient(1, 1, files);
+  source.download = async () => assert.fail("renumber cannot download colliding identities");
+  const result = await renumberCourse({ client: source, course: course(destination), state });
+  assert.deepEqual(
+    result.renamed
+      .map(({ from, to }) => ({ from, to }))
+      .sort((a, b) => a.from.localeCompare(b.from)),
+    editions.sort().map((from) => ({ from, to: from.replace(/^01 /, "02 ") })),
+  );
+  assert.equal(await readFile(join(destination, "01 Guide.pdf"), "utf8"), "Student original");
+  const verified = await verifyCourse({ client: source, course: course(destination) });
+  assert.deepEqual(verified.missing, []);
+  assert.ok(!verified.renumbered);
+});
+
+test("exact recorded edition keeps authority when its desired name is occupied", async (t) => {
+  for (const occupant of ["file", "directory", "symlink"]) {
+    await t.test(occupant, async (t) => {
+      const at = await revisionFixture(t);
+      const targetName = at.current.replace(/^01 /, "02 ");
+      const target = join(at.destination, targetName);
+      const marker = join(at.destination, "Student notes.md");
+      await writeFile(marker, "Student bytes");
+      if (occupant === "file") await writeFile(target, "Occupied bytes");
+      if (occupant === "directory") await mkdir(target);
+      if (occupant === "symlink") await symlink(marker, target);
+      const currentBefore = await fileDigest(join(at.destination, at.current));
+      const result = await renumberCourse({
+        client: at.source,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.deepEqual(result.renamed, []);
+      assert.deepEqual(
+        result.blocked.map(({ from, to }) => ({ from, to })),
+        [{ from: at.current, to: targetName }],
+      );
+      assert.equal(await fileDigest(join(at.destination, at.current)), currentBefore);
+      assert.equal(await readFile(marker, "utf8"), "Student bytes");
+      if (occupant === "file") assert.equal(await readFile(target, "utf8"), "Occupied bytes");
+      if (occupant === "directory") assert.deepEqual(await readdir(target), []);
+      if (occupant === "symlink") assert.ok((await lstat(target)).isSymbolicLink());
+    });
+  }
+});
+
+function pageClient(body, parentPosition = 0, position = 0) {
+  return {
+    ...client([
+      {
+        id: "folder",
+        title: "Folder",
+        position: parentPosition,
+        contentHandler: "resource/x-bb-folder",
+      },
+      {
+        id: "page",
+        parentId: "folder",
+        title: "Page",
+        position,
+        contentHandler: "resource/x-bb-document",
+        body: { rawText: body },
+      },
+    ]),
+    readAttachments: async () => [],
+    download: async () => assert.fail("pages have no attachment download"),
+  };
+}
+
+async function pageFixture(t) {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-page-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const state = { courses: {} };
+  for (const body of ["First", "Second"]) {
+    const result = await syncCourse({
+      client: pageClient(body),
+      course: course(destination),
+      state,
+    });
+    assert.equal(result.failures.length, 0);
+  }
+  const current = (await readdir(join(destination, "01 Folder"))).find((name) =>
+    name.includes("[source"),
+  );
+  return { destination, state, current };
+}
+
+test("current page editions retain complete bytes through leaf and parent renumbering", async (t) => {
+  for (const leafPosition of [0, 1]) {
+    await t.test(leafPosition ? "leaf and parent" : "parent only", async (t) => {
+      const at = await pageFixture(t);
+      const source = pageClient("Second", 1, leafPosition);
+      await writeFile(
+        join(at.destination, "01 Folder", "01 Page.md"),
+        "Student original page notes",
+      );
+      const before = await directoryDigests(at.destination);
+      const stateBefore = JSON.stringify(at.state);
+      const oldPath = `01 Folder/${at.current}`;
+      const newPath = `02 Folder/${at.current.replace(/^01 /, leafPosition ? "02 " : "01 ")}`;
+      const result = await renumberCourse({
+        client: source,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.equal(result.renamed.length, leafPosition ? 2 : 1);
+      if (leafPosition)
+        assert.deepEqual(
+          result.renamed.map(({ from, to }) => ({ from, to })),
+          [
+            { from: oldPath, to: newPath },
+            { from: "01 Folder", to: "02 Folder" },
+          ],
+        );
+      assert.ok(!result.kept);
+      assert.ok(!result.blocked);
+      assert.equal(await fileDigest(join(at.destination, newPath)), before[oldPath]);
+      assert.equal(
+        await fileDigest(join(at.destination, "02 Folder", "01 Page.md")),
+        before["01 Folder/01 Page.md"],
+      );
+      assert.equal(JSON.stringify(at.state), stateBefore);
+      assert.deepEqual(
+        Object.fromEntries(
+          Object.entries(await directoryDigests(at.destination)).filter(([path]) =>
+            path.startsWith("Source editions/"),
+          ),
+        ),
+        Object.fromEntries(
+          Object.entries(before).filter(([path]) => path.startsWith("Source editions/")),
+        ),
+      );
+      const verified = await verifyCourse({ client: source, course: course(at.destination) });
+      assert.deepEqual(verified.missing, []);
+      assert.ok(!verified.renumbered);
+      assert.deepEqual(
+        (await renumberCourse({ client: source, course: course(at.destination), state: at.state }))
+          .renamed,
+        [],
+      );
+      for (let repeat = 0; repeat < 2; repeat++) {
+        const synced = await syncCourse({
+          client: source,
+          course: course(at.destination),
+          state: at.state,
+        });
+        assert.deepEqual(synced.failures, []);
+        assert.equal(synced.newEditions, 0);
+        assert.equal(synced.markdownWritten, 0);
+        assert.deepEqual(
+          (await readdir(join(at.destination, "02 Folder"))).sort(),
+          ["01 Page.md", newPath.split("/").at(-1)].sort(),
+        );
+        assert.equal(await fileDigest(join(at.destination, newPath)), before[oldPath]);
+      }
+      const later = pageClient("Second", 2, leafPosition ? 2 : 0);
+      const laterRenumber = await renumberCourse({
+        client: later,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.equal(laterRenumber.renamed.length, leafPosition ? 2 : 1);
+      const laterVerified = await verifyCourse({ client: later, course: course(at.destination) });
+      assert.deepEqual(laterVerified.missing, []);
+      assert.ok(!laterVerified.renumbered);
+      const laterSynced = await syncCourse({
+        client: later,
+        course: course(at.destination),
+        state: at.state,
+      });
+      assert.deepEqual(laterSynced.failures, []);
+      assert.equal(laterSynced.newEditions, 0);
+      assert.equal(
+        await fileDigest(
+          join(
+            at.destination,
+            "03 Folder",
+            at.current.replace(/^01 /, leafPosition ? "03 " : "01 "),
+          ),
+        ),
+        before[oldPath],
+      );
+    });
+  }
+});
+
+test("edited current page edition refuses movement while its parent can move", async (t) => {
+  const at = await pageFixture(t);
+  await writeFile(join(at.destination, "01 Folder", at.current), "Student page annotation");
+  const result = await renumberCourse({
+    client: pageClient("Second", 1, 1),
+    course: course(at.destination),
+    state: { courses: {} },
+  });
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => ({ from, to })),
+    [{ from: "01 Folder", to: "02 Folder" }],
+  );
+  assert.equal(result.kept[0].onDisk, `02 Folder/${at.current}`);
+  assert.match(result.kept[0].why, /changed since the sync wrote/);
+  assert.equal(
+    await readFile(join(at.destination, result.kept[0].onDisk), "utf8"),
+    "Student page annotation",
+  );
+});
+
+test("child rename reports its actual parent when the desired parent is occupied", async (t) => {
+  const at = await pageFixture(t);
+  await mkdir(join(at.destination, "02 Folder"));
+  await writeFile(join(at.destination, "02 Folder", "Student.md"), "Student folder");
+  const result = await renumberCourse({
+    client: pageClient("Second", 1, 1),
+    course: course(at.destination),
+    state: { courses: {} },
+  });
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => ({ from, to })),
+    [{ from: `01 Folder/${at.current}`, to: `01 Folder/${at.current.replace(/^01 /, "02 ")}` }],
+  );
+  assert.equal(
+    await readFile(join(at.destination, "02 Folder", "Student.md"), "utf8"),
+    "Student folder",
+  );
 });

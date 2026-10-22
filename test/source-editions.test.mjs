@@ -666,3 +666,87 @@ test("upstream colliding renames retain distinct proven paths through sync and v
     for (const [index, name] of originals.entries())
       assert.deepEqual(await readFile(join(course.destination, name)), bytes[index]);
   }));
+
+test("page mutation after current-byte selection is refused by publication", () =>
+  fixture(async (course) => {
+    const state = { courses: {} };
+    const page = {
+      ...item,
+      contentHandler: "resource/x-bb-document",
+      body: { rawText: "First page" },
+    };
+    const descriptor = { id: "stable", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/guide" };
+    const source = (body, revision) => ({
+      readCourse: async () => ({
+        course: { displayName: "Synthetic" },
+        items: [{ ...page, body: { rawText: body }, modifiedDate: `revision-${revision}` }],
+        announcements: [],
+        conversations: [],
+      }),
+      readAttachments: async () => [descriptor],
+      download: async () => ({ body: Buffer.from(`PDF ${revision}`), headers: {} }),
+    });
+    await syncCourse({ client: source("First page", 1), course, state });
+    await syncCourse({ client: source("Second page", 2), course, state });
+    const edition = (await readdir(course.destination)).find(
+      (name) => name.endsWith(".md") && name.includes("[source"),
+    );
+    const original = await readFile(join(course.destination, edition));
+    const changed = source("Second page", 3);
+    let mutations = 0;
+    changed.download = async () => {
+      mutations++;
+      await writeFile(join(course.destination, edition), "Student edit after page selection");
+      return { body: Buffer.from("PDF 3"), headers: {} };
+    };
+    const result = await syncCourse({ client: changed, course, state });
+    assert.ok(mutations > 0);
+    assert.equal(result.publicationConflicts, 1);
+    assert.ok(result.failures.some((failure) => failure.file === "Files.md"));
+    assert.equal(
+      await readFile(join(course.destination, edition), "utf8"),
+      "Student edit after page selection",
+    );
+    const provenanceRoot = join(course.destination, "Source editions");
+    const records = [];
+    for (const identity of await readdir(provenanceRoot))
+      for (const name of await readdir(join(provenanceRoot, identity)))
+        records.push(JSON.parse(await readFile(join(provenanceRoot, identity, name), "utf8")));
+    const pageRecords = records.filter(
+      (record) => record.kind === "page" && record.relativePath === edition,
+    );
+    assert.equal(pageRecords.length, 1);
+    assert.equal(pageRecords[0].sha256, hash(original));
+    assert.ok(
+      !records.some((record) => record.sha256 === hash("Student edit after page selection")),
+    );
+  }));
+
+test("conflicting complete-byte evidence cannot select a current page revision", () =>
+  fixture(async (course) => {
+    const page = { ...item, contentHandler: "resource/x-bb-document", body: { rawText: "Page" } };
+    const client = {
+      ...reader([]),
+      readCourse: async () => ({
+        course: { displayName: "Synthetic" },
+        items: [page],
+        announcements: [],
+        conversations: [],
+      }),
+    };
+    const state = { courses: {} };
+    await syncCourse({ client, course, state });
+    const root = join(course.destination, "Source editions");
+    const [identity] = await readdir(root);
+    const directory = join(root, identity);
+    const [name] = await readdir(directory);
+    const record = JSON.parse(await readFile(join(directory, name), "utf8"));
+    const body = JSON.stringify({ ...record, sha256: hash("Conflicting bytes") }) + "\n";
+    await writeFile(join(directory, hash(body) + ".json"), body);
+    const before = await readFile(join(course.destination, record.relativePath));
+    const result = await syncCourse({ client, course, state });
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].code, "SOURCE_REVISION_UNRESOLVED");
+    assert.equal((await verifyCourse({ client, course })).missing.length, 1);
+    assert.deepEqual(await readFile(join(course.destination, record.relativePath)), before);
+  }));
