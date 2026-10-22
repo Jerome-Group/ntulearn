@@ -156,5 +156,5 @@ function nestingError(inner, innerPath, outer, outerPath) {
 // alike enough to share: that one keeps a written path from escaping its root and must stay exact,
 // and this one asks whether two configured folders overlap on the filesystem in hand.
 function contains(folder, other) {
-  return other.startsWith(`${folder}${sep}`);
+  return other.startsWith(folder.endsWith(sep) ? folder : `${folder}${sep}`);
 }
