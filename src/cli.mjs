@@ -94,6 +94,7 @@ async function watchdog(config) {
 
 async function watchdogLocked(config) {
   const digest = await runWatchdogLocked({ config, root: ROOT, runner: watchdogRunner() });
+  await writeLine(stdout, asJson(digest));
   return digest.verdict === "red" ? 1 : 0;
 }
 

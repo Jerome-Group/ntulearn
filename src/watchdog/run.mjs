@@ -1,5 +1,6 @@
+import { Buffer, isUtf8 } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { clearTimeout, setTimeout as schedule } from "node:timers";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -8,6 +9,7 @@ import { isDirectoryPresent, writeAtomically } from "../sync/files.mjs";
 import { isCrashOrTimeout, sessionLapsed, watchdogVerdict } from "./verdict.mjs";
 
 const LOCK_HELD = 75;
+const MAX_DIGEST_BYTES = 64 * 1024;
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 15 * 60 * 1000;
 
@@ -33,14 +35,12 @@ export async function runWatchdog({ config, root, runner }) {
   }
 
   const result = await runWithLock({ root, runner, lockPath: paths.lockPath });
-  if (result.code === LOCK_HELD) {
+  if (result.code === LOCK_HELD && result.signal === null) {
     const digest = await writeSkippedDigest(paths, timeoutFor(config));
     return { digest, exitCode: 0 };
   }
 
-  const digest = await readJson(paths.latestPath);
-  if (!digest) throw new Error("Watchdog did not write latest.json. Run: npm run watchdog.");
-  return { digest, exitCode: result.code ?? 1 };
+  return currentChildResult(result);
 }
 
 export async function runWatchdogLocked({ config, root, runner, wait = sleep }) {
@@ -176,14 +176,69 @@ function preChecksFor(destinationReadiness, history) {
 
 async function runWithLock({ root, runner, lockPath }) {
   const { command, argumentsFor } = runner.lock(lockPath);
-  return new Promise((resolveResult, reject) => {
-    const child = runner.spawn(command, argumentsFor, {
-      cwd: root,
-      stdio: ["ignore", "ignore", "inherit"],
+  try {
+    return await new Promise((resolveResult, reject) => {
+      const child = runner.spawn(command, argumentsFor, {
+        cwd: root,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const chunks = [];
+      let bytes = 0;
+      let failure = null;
+      child.stdout.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes <= MAX_DIGEST_BYTES) chunks.push(chunk);
+      });
+      child.stdout.once("error", (error) => {
+        failure ??= error;
+      });
+      child.once("error", (error) => {
+        failure ??= error;
+      });
+      child.once("close", (code, signal) => {
+        if (failure) reject(failure);
+        else
+          resolveResult({
+            code,
+            signal,
+            stdout: Buffer.concat(chunks),
+            oversized: bytes > MAX_DIGEST_BYTES,
+          });
+      });
     });
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolveResult({ code, signal }));
-  });
+  } catch (error) {
+    throw new Error(
+      `Watchdog locked process could not run (${error.code ?? error.message}). Check the lock command and inspect this run's stderr before retrying.`,
+      { cause: error },
+    );
+  }
+}
+
+function currentChildResult({ code, signal, stdout, oversized }) {
+  const digest = !oversized && isUtf8(stdout) ? parseReport(stdout.toString("utf8")) : null;
+  const verdict = code === 0 ? "green" : code === 1 ? "red" : null;
+  const timestamp = new Date(typeof digest?.timestamp === "string" ? digest.timestamp : NaN);
+  const logPath = typeof digest?.runLog === "string" ? digest.runLog.split(sep) : [];
+  if (
+    signal !== null ||
+    !verdict ||
+    digest?.verdict !== verdict ||
+    typeof digest.message !== "string" ||
+    !digest.message.trim() ||
+    typeof digest.timestamp !== "string" ||
+    !Number.isFinite(timestamp.getTime()) ||
+    timestamp.toISOString() !== digest.timestamp ||
+    logPath[0] !== "logs" ||
+    logPath.length !== 2 ||
+    !logPath[1].endsWith(".json") ||
+    logPath.some((part) => !part || part === "." || part === ".." || part.includes("\0"))
+  ) {
+    const ending = signal ? `stopped by ${signal}` : `exited ${code ?? "without a status"}`;
+    throw new Error(
+      `Watchdog locked process ${ending} without a valid digest. Inspect this run's stderr or the configured launchd stderr log before retrying.`,
+    );
+  }
+  return { digest, exitCode: code };
 }
 
 function captureCommand({ root, runner, command, timeoutAt }) {
@@ -292,14 +347,6 @@ async function writeRunLog(paths, run) {
 async function writeJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
   await writeAtomically(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-async function readJson(path) {
-  const raw = await readFile(path, "utf8").catch((error) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  return raw === null ? null : JSON.parse(raw);
 }
 
 function parseReport(stdout) {
