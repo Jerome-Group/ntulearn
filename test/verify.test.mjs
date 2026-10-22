@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import fs, {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -106,6 +117,60 @@ test("reports a destination that has everything as missing nothing", async () =>
   assert.equal(result.present, 4);
   assert.deepEqual(result.missing, []);
 });
+
+for (const [placement, onDisk] of [
+  ["current", "01 Lecture Notes/01 Week 1.pdf"],
+  ["earlier", "02 Lecture Notes/01 Week 1.pdf"],
+]) {
+  test(`counts unreadable legacy attachments at their ${placement} placement without opening bytes`, async (t) => {
+    const destination = await destinationHolding("Course.md", onDisk);
+    const path = join(destination, onDisk);
+    const bytes = await readFile(path);
+    t.after(async () => {
+      await chmod(path, 0o600);
+      await rm(destination, { recursive: true, force: true });
+    });
+    await chmod(path, 0o000);
+    const mode = (await stat(path)).mode;
+    const byteReads = [];
+    const observers = ["readFile", "open"].map((method) => {
+      const original = fs[method];
+      return t.mock.method(fs, method, async (target, ...args) => {
+        if (target === path) {
+          byteReads.push(method);
+          throw Object.assign(new Error("Unreadable legacy attachment"), { code: "EACCES" });
+        }
+        return original(target, ...args);
+      });
+    });
+    syncBuiltinESMExports();
+    try {
+      const result = await verify(destination, clientReading(ITEMS.slice(0, 2)));
+      assert.equal(result.present, 2);
+      assert.deepEqual(result.missing, []);
+      assert.deepEqual(
+        result.renumbered ?? [],
+        placement === "earlier"
+          ? [
+              {
+                file: "Week 1.pdf",
+                trail: "Lecture Notes",
+                path: "01 Lecture Notes/01 Week 1.pdf",
+                onDisk,
+              },
+            ]
+          : [],
+      );
+      assert.deepEqual(byteReads, []);
+      assert.equal((await stat(path)).mode, mode);
+    } finally {
+      for (const observer of observers) observer.mock.restore();
+      syncBuiltinESMExports();
+    }
+    await chmod(path, 0o600);
+    assert.deepEqual(await readFile(path), bytes);
+  });
+}
 
 // `ML0004-TUT` was fourteen items and no attachments at all, so the whole check was `0 === 0`: it
 // reported complete for a destination that was empty, and would have for one that never existed.
