@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Script } from "node:vm";
 import { localLibrary, LIBRARY_LIMITS } from "../src/library/catalogue.mjs";
 import { searchMaterials } from "../src/library/search.mjs";
 
@@ -275,9 +276,12 @@ test("HTML retains the full selected catalogue, literal hostile text, encoded fi
     source.match(/<script>([\s\S]*?)<\/script>/)[1],
   ])
     assert(source.includes(`sha256-${createHash("sha256").update(content).digest("base64")}`));
+  assert.doesNotThrow(() => new Script(source.match(/<script>([\s\S]*?)<\/script>/)[1]));
+  assert(source.includes(searchMaterials.toString()));
   assert.match(source, /default-src &#39;none&#39;/);
   assert.match(source, /id="fallback"/);
   assert.match(source, /textContent/);
+  assert.match(source, /connect-src &#39;none&#39;/);
   assert.doesNotMatch(source, /\.innerHTML\s*=|fetch\(|localStorage|sessionStorage/);
 });
 

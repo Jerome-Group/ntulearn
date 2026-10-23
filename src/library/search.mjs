@@ -40,7 +40,7 @@ export function searchMaterials(materials, { query = "", course = "", limits }) 
     const passages = [];
     if (!needle) return { passages, total: 0 };
     const folded = text.toLowerCase();
-    let cursor = 0;
+    let cursor;
     let source = 0;
     let lower = 0;
     let line = 1;

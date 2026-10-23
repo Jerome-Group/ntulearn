@@ -69,6 +69,7 @@ test("real library CLI lists, searches and exports without dependencies, browser
   assert.equal(html.exitCode, 0);
   assert.equal(html.stderr, "");
   assert.match(html.stdout, /^<!doctype html>/);
+  assert.equal((await run(cli, configPath, ["--query", "😀".repeat(256)])).exitCode, 0);
   assert.equal(await readFile(join(destination, "Page.md"), "utf8"), page);
 });
 
@@ -82,6 +83,7 @@ test("real library CLI usage and configuration refusals are structured stdout wi
     [["--course"], "USAGE"],
     [["--html", "--html"], "USAGE"],
     [["--query", "x".repeat(257)], "QUERY_LIMIT"],
+    [["--query", "😀".repeat(257)], "QUERY_LIMIT"],
   ]) {
     const result = await run(CLI, configPath, args);
     assert.equal(result.exitCode, 2);

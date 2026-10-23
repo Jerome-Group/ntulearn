@@ -85,10 +85,19 @@ local material, matching snippets, exclusions, and scan diagnostics. Course keys
 case sensitivity. Queries match literal substrings in Markdown text and relative filenames without
 case sensitivity. Empty queries list everything observed. Attachment contents are never read.
 
-Open the HTML export in a browser for search, course filters, a plain-text document reader, and local
-attachment links. The selected courses' full bounded catalogue stays in the export so you can clear
-the initial query. JavaScript-disabled browsers retain local file links. Markdown stays literal text;
-embedded links, images, and HTML do not run. The desk uses no network, server, cache, or browser storage.
+Open the HTML export in a browser. Search a phrase, choose **Read page**, and use **Previous occurrence**
+or **Next occurrence** to navigate the whole saved Markdown document. Each highlighted passage names
+its course, path, line, and column. Choose **Compare** on another readable page to keep both sources
+open with independent occurrence positions. Search and course changes preserve both readers.
+
+Use **Add to queue**, **Move up**, **Move down**, and **Open next queued page** to plan a reading order.
+The queue holds up to 50 distinct readable pages and clears on reload. Opening a queued page preserves
+the comparison and leaves the queue intact. Jump links move between results, readers, and queue on
+narrow screens. Attachments and omitted pages retain explicit local-file links.
+
+The selected courses' full bounded catalogue stays in the export so you can clear the initial query.
+JavaScript-disabled browsers retain local file links. Markdown stays literal text; embedded links,
+images, and HTML do not run. The desk uses no network, server, cache, or browser storage.
 
 Keep JSON and HTML exports private and **outside course destinations**. They contain course text and
 local file locations. Shell redirection creates the export before the CLI starts, so the CLI cannot
@@ -106,6 +115,19 @@ Each invocation bounds work to 128 selected courses, 10,000 entries, 1,000 direc
 to 256 KiB per file and 8 MiB overall; oversized text remains listed by filename with an explicit
 omission. Receipts are limited to 16 KiB. Each course retains 100 detailed diagnostics plus a suppressed
 count. Queries accept at most 256 Unicode code points. Limits always appear in output.
+
+JSON schema version `1` retains `matchCount` as matching material records. Each result adds `passages`
+and `occurrences` with exact `total`, `returned`, and `omitted` counts within successfully read local
+text. Literal matches do not overlap in the lowercased text. Empty queries and filename-only matches
+have no text occurrences. Passage `start` and exclusive `end` are zero-based UTF-16 source offsets.
+`line` and `column` start at one; columns count original Unicode code points and CRLF counts as one
+line break. `context` retains exact source whitespace and up to 70 code points on either side.
+
+A search retains at most 20 passages per document and 200 overall, while counting later matches.
+Every matching item stays listed when the passage budget runs out. Open readers search their own
+document independently of that budget and the course filter. Results show at most 25 items per page;
+two readers show at most two whole documents and one current highlight each. See
+[ADR-0032](docs/adr/0032-study-workspaces-preserve-bounded-source-context.md).
 
 Hidden paths, the root `Source editions` provenance tree, operational files, temporary publications,
 nested symlinks, and special files are excluded and counted. A configured destination alias is allowed.
