@@ -8,7 +8,7 @@ Read this index before driving. Each recipe uses real CLI processes with fresh s
 | [Local health and status](local-health-status.md) | `health`, `status` | `src/capabilities/health.mjs`, `src/capabilities/status.mjs`, `src/sync/import-status.mjs` |
 | [Offline library](offline-library.md) | `library` | `src/library/`, `src/cli.mjs`, `src/config.mjs` |
 | [Session and discovery](session-discovery.md) | `login`, `discover` | `src/ntulearn/session.mjs`, `src/ntulearn/client.mjs`, `src/config.mjs` |
-| [Copy, audit, renumber](copy-audit-renumber.md) | `sync`, `verify`, `renumber` | `src/sync/course.mjs`, `src/sync/verify.mjs`, `src/sync/renumber.mjs` |
+| [Copy, audit, renumber](copy-audit-renumber.md) | `sync`, `verify`, `renumber` | `src/sync/course.mjs`, `src/sync/verify.mjs`, `src/sync/renumber.mjs`, `src/sync/renumber-files.mjs` |
 | [Watchdog](watchdog.md) | `watchdog` | `src/watchdog/run.mjs`, `src/watchdog/verdict.mjs` |
 
 Run from the checkout root after `npm ci --ignore-scripts`. All helper commands begin `node .agents/skills/verify/scripts/drive.mjs`. Each journey includes doctor; avoid rerunning all repository checks for every feature. Read `run.json`, assertions, and cleanup records before reporting coverage. Keep evidence local.
