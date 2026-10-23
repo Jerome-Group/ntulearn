@@ -23,6 +23,25 @@ test("defaults the profile and state paths, and resolves them against the root",
   assert.deepEqual(config.courses, []);
 });
 
+for (const value of [[], null, true, false, 0, 42, "", "private value"]) {
+  test(`rejects a ${JSON.stringify(value)} configuration root with an actionable error`, async (t) => {
+    const root = await repositoryWith(JSON.stringify(value));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await assert.rejects(
+      loadConfig(root),
+      /config\/courses\.json must contain a JSON object.*Copy config\/courses\.example\.json/s,
+    );
+  });
+}
+
+test("accepts an empty configuration object for discovery", async (t) => {
+  const root = await repositoryWith("{}");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = await loadConfig(root);
+  assert.deepEqual(config.courses, []);
+  assert.equal(config.profilePath, resolve(root, ".data/chrome-profile"));
+});
+
 test("ignores retired media settings while preserving course metadata", async () => {
   const root = await repositoryWith(
     JSON.stringify({

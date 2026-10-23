@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { localStatus } from "../src/capabilities/status.mjs";
 
 const now = () => new Date("2026-10-02T00:00:00.000Z");
@@ -85,3 +90,68 @@ test("status rejects future receipts", async () => {
   assert.equal(result.status, "failed");
   assert.equal(result.checks.find((check) => check.id === "sync-receipts").evidence.invalid, 1);
 });
+
+for (const fifo of ["receipt", "digest"]) {
+  test(`status rejects a FIFO ${fifo} without waiting for a writer`, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "ntulearn-status-fifo-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const destination = join(root, "course");
+    const configPath = join(root, "courses.json");
+    await mkdir(destination);
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        statePath: join(root, "state.json"),
+        courses: [{ key: "PRIVATE", courseId: "_private_1", destination }],
+      }),
+    );
+    const receiptPath = join(destination, "Sync status.json");
+    const digestPath = join(root, "latest.json");
+    const timestamp = new Date().toISOString();
+    await writeFile(
+      receiptPath,
+      JSON.stringify({
+        ...receipt(),
+        startedAt: timestamp,
+        finishedAt: timestamp,
+        lastSuccessfulAt: timestamp,
+      }),
+    );
+    await writeFile(digestPath, JSON.stringify({ verdict: "green", timestamp }));
+    const evidencePath = fifo === "receipt" ? receiptPath : digestPath;
+    await rm(evidencePath);
+    execFileSync("mkfifo", [evidencePath]);
+
+    const result = await new Promise((done) => {
+      execFile(
+        process.execPath,
+        [fileURLToPath(new URL("../src/cli.mjs", import.meta.url)), "status"],
+        {
+          env: { ...process.env, NTULEARN_CONFIG_PATH: configPath },
+          timeout: 5000,
+          killSignal: "SIGKILL",
+          maxBuffer: 65536,
+        },
+        (error, stdout, stderr) =>
+          done({ code: error?.code ?? 0, killed: error?.killed ?? false, stdout, stderr }),
+      );
+    });
+    assert.equal(result.killed, false, "status must settle before the child timeout");
+    assert.equal(result.code, 1);
+    assert.equal(result.stderr, "");
+    const observed = JSON.parse(result.stdout);
+    assert.equal(observed.status, "failed");
+    if (fifo === "receipt")
+      assert.equal(
+        observed.checks.find((check) => check.id === "sync-receipts").evidence.invalid,
+        1,
+      );
+    else
+      assert.equal(
+        observed.checks.find((check) => check.id === "watchdog-digest").status,
+        "failed",
+      );
+    assert.ok(!result.stdout.includes(root));
+    assert.ok(!result.stdout.includes("PRIVATE"));
+  });
+}
