@@ -1,5 +1,5 @@
 {
-  "syncCommit": "c80c9e3d6ebef7a373ed42d4e08312f6ca786b4a",
+  "syncCommit": "705727602b72866c188cef7b83a66f5bc919708b",
   "sources": {
     "src/sync/files.mjs": {
       "imports": [
