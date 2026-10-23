@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   attachmentName,
   attachmentsOf,
-  externalLinkOf,
+  itemPresentationOf,
   isAttachedFile,
   isFile,
   isFolder,
@@ -193,19 +193,23 @@ test("names an attachment, falling back until something is available", () => {
 });
 
 test("resolves an external link against the NTULearn origin", () => {
-  assert.equal(
-    externalLinkOf({ contentDetail: { lti: { url: "/webapps/tool" } } }),
-    "https://ntulearn.ntu.edu.sg/webapps/tool",
+  assert.deepEqual(itemPresentationOf({ contentDetail: { lti: { url: "/webapps/tool" } } }), {
+    kind: "external-link",
+    url: "https://ntulearn.ntu.edu.sg/webapps/tool",
+  });
+  assert.deepEqual(
+    itemPresentationOf({ contentDetail: { link: { url: "https://example.org/x" } } }),
+    { kind: "external-link", url: "https://example.org/x" },
   );
-  assert.equal(
-    externalLinkOf({ contentDetail: { link: { url: "https://example.org/x" } } }),
-    "https://example.org/x",
+  assert.deepEqual(
+    itemPresentationOf({ contentDetail: { lti: { placement: { launchLink: "/launch" } } } }),
+    { kind: "external-link", url: "https://ntulearn.ntu.edu.sg/launch" },
   );
-  assert.equal(
-    externalLinkOf({ contentDetail: { lti: { placement: { launchLink: "/launch" } } } }),
-    "https://ntulearn.ntu.edu.sg/launch",
-  );
-  assert.equal(externalLinkOf({}), null);
+  assert.deepEqual(itemPresentationOf({ contentDetail: { unknown: { launchLink: "/tool" } } }), {
+    kind: "external-link",
+    url: "https://ntulearn.ntu.edu.sg/tool",
+  });
+  assert.equal(itemPresentationOf({}), null);
 });
 
 // A SCORM package is a launch rather than a file, so the link is the whole of what can be kept.
@@ -218,10 +222,233 @@ test("a launch address is a link, whichever of NTULearn's names it arrives under
       },
     },
   };
-  assert.equal(
-    externalLinkOf(scorm),
-    "https://ntulearn.ntu.edu.sg/webapps/scor-scormengine-BB5/delivery" +
+  assert.deepEqual(itemPresentationOf(scorm), {
+    kind: "external-link",
+    url:
+      "https://ntulearn.ntu.edu.sg/webapps/scor-scormengine-BB5/delivery" +
       "?action=launchPackage&content_id=_1_1",
+  });
+});
+
+const ASSESSMENT = {
+  id: "assessment",
+  contentHandler: "resource/x-bb-asmt-test-link",
+  genericReadOnlyData: { dueDate: "2026-10-30T23:59:00+08:00" },
+  contentDetail: {
+    "resource/x-bb-asmt-test-link": {
+      test: {
+        assessment: {
+          description: "Hidden description",
+          instructions: "Hidden instructions",
+          showDescription: false,
+          showInstructions: false,
+        },
+        gradingColumn: { dueDate: "2026-10-01T00:00:00.000Z" },
+      },
+    },
+  },
+};
+const COURSE_LINK = {
+  id: "source",
+  contentHandler: "resource/x-bb-courselink",
+  contentDetailUrl: "/learn/api/v1/courses/synthetic/contents/target",
+  contentDetail: {
+    "resource/x-bb-courselink": {
+      courseContent: "source",
+      linkSourceTable: "CONTENT",
+      linkSourceId: "target",
+    },
+  },
+};
+
+test("projects only the personal due instant and course outline for an assessment", () => {
+  assert.deepEqual(itemPresentationOf(ASSESSMENT, { courseId: "synthetic" }), {
+    kind: "assessment-card",
+    dueDate: "2026-10-30T15:59:00.000Z",
+    courseUrl: "https://ntulearn.ntu.edu.sg/ultra/courses/synthetic/outline",
+  });
+});
+
+test("refuses absent or invalid personal dates without falling back to grading dates", () => {
+  for (const dueDate of [
+    undefined,
+    null,
+    1_800_000_000_000,
+    "",
+    "tomorrow",
+    "2026-10-30",
+    "2026-10-30T15:59:00",
+    "2026-02-29T15:59:00Z",
+    "2026-04-31T15:59:00Z",
+    "2026-13-01T15:59:00Z",
+    "2026-10-30T24:00:00Z",
+    "2026-10-30T15:60:00Z",
+    "2026-10-30T15:59:60Z",
+    "2026-10-30T15:59:00+24:00",
+    "2026-10-30T15:59:00Z extra",
+  ]) {
+    assert.equal(
+      itemPresentationOf(
+        { ...ASSESSMENT, genericReadOnlyData: { dueDate } },
+        { courseId: "synthetic" },
+      ),
+      null,
+      String(dueDate),
+    );
+  }
+  const leapDay = { ...ASSESSMENT, genericReadOnlyData: { dueDate: "2028-02-29T00:00:00Z" } };
+  assert.equal(
+    itemPresentationOf(leapDay, { courseId: "synthetic" }).dueDate,
+    "2028-02-29T00:00:00.000Z",
+  );
+});
+
+test("requires the assessment handler, test detail and course identity", () => {
+  assert.equal(itemPresentationOf(ASSESSMENT), null);
+  assert.equal(itemPresentationOf(ASSESSMENT, { courseId: "" }), null);
+  assert.equal(
+    itemPresentationOf({ ...ASSESSMENT, contentDetail: {} }, { courseId: "synthetic" }),
+    null,
+  );
+  assert.equal(
+    itemPresentationOf({ ...ASSESSMENT, contentHandler: "unknown" }, { courseId: "synthetic" }),
+    null,
+  );
+  for (const test of [null, [], "assessment", true]) {
+    assert.equal(
+      itemPresentationOf(
+        { ...ASSESSMENT, contentDetail: { "resource/x-bb-asmt-test-link": { test } } },
+        { courseId: "synthetic" },
+      ),
+      null,
+    );
+  }
+});
+
+test("projects only validated same-course link identity and outline navigation", () => {
+  const expected = {
+    kind: "course-link",
+    targetContentId: "target",
+    courseUrl: "https://ntulearn.ntu.edu.sg/ultra/courses/synthetic/outline",
+  };
+  assert.deepEqual(itemPresentationOf(COURSE_LINK, { courseId: "synthetic" }), expected);
+  assert.deepEqual(
+    itemPresentationOf(
+      {
+        ...COURSE_LINK,
+        contentDetailUrl:
+          "https://ntulearn.ntu.edu.sg/learn/api/v1/courses/synthetic/contents/target",
+      },
+      { courseId: "synthetic" },
+    ),
+    expected,
+  );
+  const encoded = {
+    ...COURSE_LINK,
+    contentDetailUrl: "/learn/api/v1/courses/synthetic%20course/contents/target%20item",
+    contentDetail: {
+      "resource/x-bb-courselink": {
+        ...COURSE_LINK.contentDetail["resource/x-bb-courselink"],
+        linkSourceId: "target item",
+      },
+    },
+  };
+  assert.deepEqual(itemPresentationOf(encoded, { courseId: "synthetic course" }), {
+    ...expected,
+    targetContentId: "target item",
+    courseUrl: "https://ntulearn.ntu.edu.sg/ultra/courses/synthetic%20course/outline",
+  });
+});
+
+test("refuses inconsistent, cross-course, ambiguous and malformed course-link targets", () => {
+  const detail = COURSE_LINK.contentDetail["resource/x-bb-courselink"];
+  for (const changed of [
+    { courseContent: "other-source" },
+    { linkSourceId: "source" },
+    { linkSourceId: "" },
+    { linkSourceId: null },
+    { linkSourceId: "different-target" },
+    { linkSourceTable: "FORUM" },
+  ]) {
+    assert.equal(
+      itemPresentationOf(
+        {
+          ...COURSE_LINK,
+          contentDetail: { "resource/x-bb-courselink": { ...detail, ...changed } },
+        },
+        { courseId: "synthetic" },
+      ),
+      null,
+    );
+  }
+  for (const contentDetailUrl of [
+    undefined,
+    "",
+    "/learn/api/v1/courses/another-course/contents/target",
+    "/learn/api/v1/courses/synthetic/contents/another-target",
+    "/learn/api/v1/courses/synthetic/contents/target/extra",
+    "/learn/api/v1/courses/synthetic/contents/target/",
+    "/wrong/../learn/api/v1/courses/synthetic/contents/target",
+    "/learn/api/v1/courses/synthetic/contents/target?expand=anything",
+    "/learn/api/v1/courses/synthetic/contents/target?",
+    "/learn/api/v1/courses/synthetic/contents/target#section",
+    "/learn/api/v1/courses/synthetic/contents/target#",
+    "/learn/api/v1/courses/synthetic/contents/%ZZ",
+    "https://example.test/learn/api/v1/courses/synthetic/contents/target",
+    "https://student@ntulearn.ntu.edu.sg/learn/api/v1/courses/synthetic/contents/target",
+    "http://ntulearn.ntu.edu.sg/learn/api/v1/courses/synthetic/contents/target",
+  ]) {
+    assert.equal(
+      itemPresentationOf({ ...COURSE_LINK, contentDetailUrl }, { courseId: "synthetic" }),
+      null,
+      String(contentDetailUrl),
+    );
+  }
+  assert.equal(itemPresentationOf(COURSE_LINK), null);
+  assert.equal(
+    itemPresentationOf(
+      {
+        ...COURSE_LINK,
+        contentDetailUrl: "/learn/api/v1/courses/synthetic/contents/tar\nget",
+        contentDetail: { "resource/x-bb-courselink": { ...detail, linkSourceId: "tar\nget" } },
+      },
+      { courseId: "synthetic" },
+    ),
+    null,
+  );
+});
+
+test("keeps folders body-only and targetless links without a presentation", () => {
+  assert.equal(
+    itemPresentationOf(
+      {
+        ...ASSESSMENT,
+        contentDetail: { ...ASSESSMENT.contentDetail, folder: { isFolder: true, url: "/launch" } },
+      },
+      { courseId: "synthetic" },
+    ),
+    null,
+  );
+  assert.equal(
+    itemPresentationOf(
+      {
+        contentHandler: "resource/x-bb-externallink",
+        contentDetail: { "resource/x-bb-externallink": {} },
+      },
+      { courseId: "synthetic" },
+    ),
+    null,
+  );
+  assert.deepEqual(
+    itemPresentationOf(
+      {
+        ...ASSESSMENT,
+        genericReadOnlyData: {},
+        contentDetail: { "resource/x-bb-asmt-test-link": { url: "/launch" } },
+      },
+      { courseId: "synthetic" },
+    ),
+    { kind: "external-link", url: "https://ntulearn.ntu.edu.sg/launch" },
   );
 });
 

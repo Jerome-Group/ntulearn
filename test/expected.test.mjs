@@ -201,3 +201,78 @@ test("recovers personal assessment dates and validated course links as useful do
   assert.deepEqual(pathsOf(found, "uncopied"), ["03 Blank link.md"]);
   assert.match(found.find((each) => each.item?.id === "assessment").content, /2026-10-30T15:59/);
 });
+
+test("classifies a synthetic 69-assessment, five-link inventory with one targetless item", async () => {
+  const assessments = Array.from({ length: 69 }, (_, index) => ({
+    id: `assessment-${index}`,
+    parentId: null,
+    position: index,
+    title: `Check ${index + 1}`,
+    contentHandler: "resource/x-bb-asmt-test-link",
+    genericReadOnlyData: { dueDate: "2026-10-30T15:59:00.000Z" },
+    contentDetail: {
+      "resource/x-bb-asmt-test-link": {
+        test: {
+          assessment: { instructions: "Hidden instructions", description: "Hidden description" },
+        },
+      },
+    },
+  }));
+  const links = Array.from({ length: 5 }, (_, index) => ({
+    id: `link-${index}`,
+    parentId: null,
+    position: index + 69,
+    title: `Conversation ${index + 1}`,
+    contentHandler: "resource/x-bb-courselink",
+    contentDetailUrl: `/learn/api/v1/courses/_9_1/contents/target-${index}`,
+    contentDetail: {
+      "resource/x-bb-courselink": {
+        courseContent: `link-${index}`,
+        linkSourceTable: "CONTENT",
+        linkSourceId: `target-${index}`,
+      },
+    },
+  }));
+  const blank = {
+    id: "blank",
+    parentId: null,
+    position: 74,
+    title: "Blank link",
+    contentHandler: "resource/x-bb-externallink",
+    contentDetail: { "resource/x-bb-externallink": {} },
+  };
+  const found = await expected([...assessments, ...links, blank]);
+  const documents = found.filter((each) => each.kind === "document" && each.item);
+  assert.equal(documents.length, 74);
+  assert.deepEqual(pathsOf(found, "uncopied"), ["75 Blank link.md"]);
+  assert.deepEqual(pathsOf(found, "attachment"), []);
+  for (const [index, item] of [...assessments, ...links].entries()) {
+    const document = documents[index];
+    assert.equal(document.item, item);
+    assert.equal(document.placement.path, `${String(index + 1).padStart(2, "0")} ${item.title}.md`);
+    assert.match(document.content, /online/);
+    assert.match(
+      document.content,
+      /\[Open course in NTULearn\]\(https:\/\/ntulearn\.ntu\.edu\.sg\/ultra\/courses\/_9_1\/outline\)/,
+    );
+    assert.doesNotMatch(document.content, /Hidden/);
+    assert.doesNotMatch(document.content.replace(/<!--[^]*?-->/g, ""), /target-/);
+  }
+});
+
+test("keeps folder launch metadata from creating a folder document", async () => {
+  const folder = {
+    id: "folder",
+    parentId: null,
+    position: 0,
+    title: "Weekly checks",
+    contentHandler: "resource/x-bb-folder",
+    genericReadOnlyData: { dueDate: "2026-10-30T15:59:00.000Z" },
+    contentDetail: { "resource/x-bb-folder": { isFolder: true, url: "/launch" } },
+  };
+  assert.deepEqual(pathsOf(await expected([folder]), "document"), ["Course.md"]);
+  assert.deepEqual(
+    pathsOf(await expected([{ ...folder, body: { rawText: "Folder body" } }]), "document"),
+    ["Course.md", "01 Weekly checks/_NTULearn.md"],
+  );
+});

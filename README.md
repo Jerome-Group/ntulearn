@@ -12,6 +12,10 @@ In use. Course pages, announcements and attachments sync today. Audio and video 
 ordinary course attachments are copied unchanged. Lecture Media Gallery capture and all transcript
 processing are retired. External players remain links. See [ADR-0028](docs/adr/0028-retire-gallery-and-transcript-processing.md).
 
+Personal assessment due dates and validated same-course links become online-only cards with a
+link to the course outline. Questions, attempts, answers, grades, submissions, and discussion posts
+remain in NTULearn.
+
 ## Commands
 
 Start with `npm run capabilities`: its versioned JSON index lists prerequisites, Owner restrictions,
