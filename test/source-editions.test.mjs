@@ -627,12 +627,53 @@ test("legacy fingerprints migrate without refetch or retaining signed addresses 
       fingerprint: `::${files[0].resourceUrl}`,
       unknown: "https://example.invalid/?ks=unexpected-fixture",
     };
+    delete downloads[files[0].resourceUrl].sourceIdentity;
     const result = await syncCourse({ client, course, state });
     assert.equal(result.failures.length, 0);
     assert.equal(calls, 1);
     assert.ok(!JSON.stringify(state).includes("?ks="));
     assert.ok(!JSON.stringify(state).includes("unexpected-fixture"));
     assert.match(Object.values(state.courses.SYNTHETIC.downloads)[0].fingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(
+      Object.values(state.courses.SYNTHETIC.downloads)[0].sourceIdentity,
+      record.sourceIdentity,
+    );
+  }));
+
+test("an incompatible identity record cannot borrow legacy State ownership", () =>
+  fixture(async (course) => {
+    const state = { courses: {} };
+    const files = [{ id: "one", fileName: "Guide.pdf", resourceUrl: "/bbcswebdav/shared" }];
+    const client = reader(files);
+    await syncCourse({ client, course, state });
+    const downloads = state.courses.SYNTHETIC.downloads;
+    const [key] = Object.keys(downloads);
+    const accepted = downloads[key];
+    downloads[key] = { ...accepted, sourceIdentity: "a".repeat(64) };
+    downloads[files[0].resourceUrl] = { ...accepted };
+    delete downloads[files[0].resourceUrl].sourceIdentity;
+    await rm(join(course.destination, "Source editions"), { recursive: true });
+    let calls = 0;
+    client.download = async () => {
+      calls++;
+      return { body: Buffer.from("CURRENT SOURCE"), headers: {} };
+    };
+    const synced = await syncCourse({ client, course, state });
+    assert.deepEqual(synced.failures, []);
+    assert.equal(calls, 2);
+    assert.equal(synced.newEditions, 1);
+    assert.equal(
+      await readFile(join(course.destination, "01 Guide.pdf"), "utf8"),
+      files[0].resourceUrl,
+    );
+    const edition = (await readdir(course.destination)).find((name) => name.includes("[source "));
+    assert.equal(await readFile(join(course.destination, edition), "utf8"), "CURRENT SOURCE");
+    assert.equal(
+      Object.values(state.courses.SYNTHETIC.downloads)[0].sourceIdentity,
+      accepted.sourceIdentity,
+    );
+    const verified = await verifyCourse({ client, course });
+    assert.deepEqual(verified.missing, []);
   }));
 
 test("upstream colliding renames retain distinct proven paths through sync and verification", () =>

@@ -1,9 +1,10 @@
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { attachmentState } from "./attachment-state.mjs";
 import { expectedFiles } from "./expected.mjs";
 import { fileDigest, isFilePresent, moveDirectory, readText, relinkFile } from "./files.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { assertDestinationPath, safeSegment, unnumbered } from "./paths.mjs";
-import { attachmentStateKey, resolveSourceEditions } from "./source-editions.mjs";
+import { resolveSourceEditions } from "./source-editions.mjs";
 import { courseState } from "./state.mjs";
 
 // Why something the numbering has moved was left where it is. Said in the report rather than
@@ -144,15 +145,14 @@ async function unproven(expected, from, previous) {
     return (await readText(from)) === expected.content ? null : CHANGED;
   }
 
-  const record =
-    previous.downloads?.[attachmentStateKey(expected.attachment)] ??
-    previous.downloads?.[expected.attachment.resourceUrl];
+  const { record, identityConflict } = attachmentState(
+    previous,
+    expected.source,
+    expected.attachment,
+  );
+  if (identityConflict) return STATE_CONFLICT;
   if (!/^[a-f0-9]{64}$/.test(record?.sha256 ?? "")) return UNRECORDED;
-  if (
-    (record.sourceIdentity != null && record.sourceIdentity !== expected.source.identity) ||
-    (expected.provenance && record.sha256 !== expected.provenance.sha256)
-  )
-    return STATE_CONFLICT;
+  if (expected.provenance && record.sha256 !== expected.provenance.sha256) return STATE_CONFLICT;
   if (expected.provenance && !(await isFilePresent(from, expected.provenance.bytes)))
     return CHANGED;
   return (await fileDigest(from)) === record.sha256 ? null : CHANGED;

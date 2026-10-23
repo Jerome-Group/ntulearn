@@ -386,7 +386,6 @@ test("keeps what the last run recorded when a category could not be read", async
 // would write today, so the whole tail of the course read as changed and was fetched again under
 // its new number — 61 files in one course, with nothing to say which copy was current (#70).
 const REORDERED = WEEK_1.map((item) => ({ ...item, position: item.position + 1 }));
-const WEEK_1_PPT = "/bbcswebdav/w1";
 // The whole of the destination's root once the course has been synced. Asserted rather than the
 // folder alone, because the failure this is watching for is a *second* `Week 1` beside the first.
 const ROOT = [
@@ -501,7 +500,7 @@ test("records where the file is rather than the number the course gives it today
   await again(destination, state, REORDERED);
 
   assert.equal(
-    state.courses.CC0006.downloads[WEEK_1_PPT].relativePath,
+    Object.values(state.courses.CC0006.downloads)[0].relativePath,
     "01 Week 1/05 Week 1 PPT.pptx",
   );
 });
@@ -542,7 +541,7 @@ test("records the type the download arrived with, not the type NTULearn claimed"
     CLAIMS_PDF,
   );
 
-  const record = state.courses.CC0006.downloads[RESOURCE];
+  const [record] = Object.values(state.courses.CC0006.downloads);
 
   assert.equal(record.mimeType, "application/octet-stream");
   assert.equal(record.claimedMimeType, "application/pdf");
@@ -553,13 +552,17 @@ test("records the type the download arrived with, not the type NTULearn claimed"
 // (ADR-0003).
 test("does not download again a file whose record was written before the type moved", async () => {
   const { destination, state } = await sync(downloads("pdf"), CLAIMS_PDF);
-  const { fingerprint, relativePath, bytes, sha256 } = state.courses.CC0006.downloads[RESOURCE];
-  state.courses.CC0006.downloads[RESOURCE] = {
-    fingerprint,
-    relativePath,
-    bytes,
-    sha256,
-    mimeType: "application/pdf",
+  const [{ fingerprint, relativePath, bytes, sha256 }] = Object.values(
+    state.courses.CC0006.downloads,
+  );
+  state.courses.CC0006.downloads = {
+    [RESOURCE]: {
+      fingerprint,
+      relativePath,
+      bytes,
+      sha256,
+      mimeType: "application/pdf",
+    },
   };
 
   const again = await syncCourse({
@@ -737,12 +740,12 @@ test("uses recorded bytes to skip inaccurate upstream sizes and preserves trunca
   assert.equal(calls, 1);
   assert.equal(repeat.skipped, 1);
   assert.equal(repeat.downloaded, 0);
-  assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
-  delete state.courses.CC0006.downloads[RESOURCE].bytes;
+  assert.equal(Object.values(state.courses.CC0006.downloads)[0].bytes, 3);
+  delete Object.values(state.courses.CC0006.downloads)[0].bytes;
   const legacy = await syncCourse({ client: reader, course, state });
   assert.equal(calls, 1);
   assert.equal(legacy.skipped, 1);
-  assert.equal(state.courses.CC0006.downloads[RESOURCE].bytes, 3);
+  assert.equal(Object.values(state.courses.CC0006.downloads)[0].bytes, 3);
   const held = join(destination, AT);
   await writeFile(held, "pd");
   const damaged = await syncCourse({ client: reader, course, state });
