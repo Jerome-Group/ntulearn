@@ -8,13 +8,14 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   readdir,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -28,6 +29,7 @@ const CASES = {
     [["check", "contracts"], "missing-config", 0],
   ],
   cli: [
+    [["check", "contracts"], "check-evidence", 0],
     [["capabilities", "health"], "missing-config", 0],
     [["capabilities", "authentication"], "missing-config", 0],
     [["capabilities", "check:contracts"], "missing-config", 0],
@@ -42,6 +44,13 @@ const CASES = {
     [["health"], "missing-config", 2, "CONFIG_UNAVAILABLE"],
     [["status"], "missing-config", 2, "CONFIG_UNAVAILABLE"],
     [["health"], "unsafe-profile", 1, "PROFILE_UNAVAILABLE_OR_UNSAFE"],
+    [["health"], "profile-alias", 1, "PROFILE_UNAVAILABLE_OR_UNSAFE"],
+    [["health"], "destination-alias", 0, "DESTINATIONS_PRESENT"],
+    [["health"], "destination-escape", 2, "DESTINATIONS_UNREACHABLE"],
+    [["health"], "config-null", 1, "CONFIG_UNAVAILABLE"],
+    [["status"], "config-null", 1, "CONFIG_UNAVAILABLE"],
+    [["health"], "config-array", 1, "CONFIG_UNAVAILABLE"],
+    [["health"], "config-string", 1, "CONFIG_UNAVAILABLE"],
     [["status"], "ready", 0, "SYNC_RECEIPTS_COMPLETE"],
     [["status"], "missing-receipt", 2, "SYNC_RECEIPTS_INCOMPLETE"],
     [["status"], "old-receipt", 2, "SYNC_RECEIPTS_INCOMPLETE"],
@@ -49,12 +58,24 @@ const CASES = {
     [["status"], "failed-receipt", 1, "SYNC_RECEIPTS_INCOMPLETE"],
     [["status"], "red-digest", 1, "DIGEST_RED"],
     [["status"], "invalid-receipt", 1, "SYNC_RECEIPTS_INCOMPLETE"],
+    ...["alias", "fifo", "oversized"].flatMap((boundary) => [
+      [["status"], `receipt-${boundary}`, 1, "SYNC_RECEIPTS_INCOMPLETE"],
+      [
+        ["status"],
+        `digest-${boundary}`,
+        1,
+        boundary === "alias" ? "EVIDENCE_UNREADABLE" : "EVIDENCE_SIZE",
+      ],
+    ]),
   ],
   library: [
     [["library"], "library-ready", 0],
     [["library", "--course", "ab1234", "--query", "CONVERGENCE"], "library-ready", 0],
     [["library", "--query", "exam ü"], "library-ready", 0],
     [["library", "--query", "no matching phrase"], "library-ready", 0],
+    [["library", "--query", "İ"], "library-unicode", 0],
+    [["library", "--query", "ος"], "library-unicode", 0],
+    [["library", "--query", "needle"], "library-dense", 0],
     [["library", "--html", "--query", "convergence"], "library-ready", 0],
     [["library"], "library-partial", 1],
     [["library"], "library-runtime", 2, "RUNTIME_OVERLAP"],
@@ -170,27 +191,60 @@ async function observe(record, [args, kind, exit, code]) {
         value.checks.some((entry) => entry.code === code),
         code,
       );
-    if (args[0] === "check" && exit === 0)
+    if (args[0] === "check" && exit === 0) {
       assert(
         value.evidence.selection === "contracts" &&
           value.checks.filter((entry) => entry.status === "passed").length >= 4,
         "actual repository contracts passed",
       );
-    if (args[0] === "status" && kind !== "missing-config") {
+      assert.deepEqual(
+        value.checks
+          .filter((entry) => entry.code === "NOT_SELECTED")
+          .map(({ id, status }) => ({ id, status })),
+        ["syntax", "format", "lint", "test"].map((id) => ({ id, status: "unrun" })),
+      );
+      if (kind === "check-evidence") {
+        const directory = record.command.at(-1);
+        const info = await lstat(directory);
+        assert(info.isDirectory() && !info.isSymbolicLink());
+        assert.equal(info.mode & 0o777, 0o700);
+        const retained = value.evidence.privateEvidence;
+        assert.equal(retained.complete, true);
+        assert.deepEqual(
+          retained.files.map(({ file }) => file),
+          ["run.start.json", "run.result.json"],
+        );
+        for (const file of retained.files) {
+          const path = join(directory, file.file),
+            bytes = await readFile(path),
+            stat = await lstat(path);
+          assert(stat.isFile() && !stat.isSymbolicLink());
+          assert.equal(stat.mode & 0o777, 0o600);
+          assert.equal(bytes.length, file.bytes);
+          assert.equal(createHash("sha256").update(bytes).digest("hex"), file.sha256);
+        }
+        const receipt = JSON.parse(await readFile(join(directory, "run.result.json"), "utf8"));
+        assert.equal(receipt.evidenceStatus, "pending-final-settlement");
+        assert.equal(receipt.checkResult.status, "passed");
+        record.privateEvidence = { directory, ...retained };
+      }
+    }
+    if (args[0] === "status" && kind !== "missing-config" && !kind.startsWith("config-")) {
       const receipts = value.checks.find((entry) => entry.id === "sync-receipts");
-      const counter = {
-        ready: "complete",
-        "missing-receipt": "missing",
-        "old-receipt": "stale",
-        "old-digest": "complete",
-        "failed-receipt": "failed",
-        "red-digest": "complete",
-        "invalid-receipt": "invalid",
-      }[kind];
+      const counter =
+        {
+          ready: "complete",
+          "missing-receipt": "missing",
+          "old-receipt": "stale",
+          "old-digest": "complete",
+          "failed-receipt": "failed",
+          "red-digest": "complete",
+          "invalid-receipt": "invalid",
+        }[kind] ?? (kind.startsWith("receipt-") ? "invalid" : "complete");
       assert.equal(receipts.evidence[counter], 1, `observed ${counter} receipt`);
       assert.equal(
         receipts.status,
-        ["failed-receipt", "invalid-receipt"].includes(kind)
+        ["failed-receipt", "invalid-receipt"].includes(kind) || kind.startsWith("receipt-")
           ? "failed"
           : ["missing-receipt", "old-receipt"].includes(kind)
             ? "blocked"
@@ -217,8 +271,24 @@ function observeLibrary(record, args, kind, code) {
     assert.equal(catalogue.materials.length, 3, "clearing the query retains all selected material");
     assert(catalogue.materials.some((entry) => entry.text.value?.includes("</script><img")));
     assert(!record.stdout.includes('</script><img src="https://example.invalid/injected">'));
-    assert(record.stdout.includes("Content-Security-Policy"));
-    assert(record.stdout.includes('id="reader-text"'));
+    const policy = record.stdout
+      .match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)[1]
+      .replaceAll("&#39;", "'");
+    const script = record.stdout.match(/<script>([\s\S]*?)<\/script>/)[1];
+    const style = record.stdout.match(/<style>([\s\S]*?)<\/style>/)[1];
+    for (const [type, content] of [
+      ["script", script],
+      ["style", style],
+    ])
+      assert(
+        policy.includes(
+          `${type}-src 'sha256-${createHash("sha256").update(content).digest("base64")}'`,
+        ),
+      );
+    assert(policy.includes("connect-src 'none'"));
+    assert(record.stdout.includes('id="readers"') && record.stdout.includes('id="queue"'));
+    assert.equal(catalogue.limits.passagesPerDocument, 20);
+    assert.equal(catalogue.limits.passagesPerSearch, 200);
     return;
   }
   const value = JSON.parse(record.stdout);
@@ -227,6 +297,45 @@ function observeLibrary(record, args, kind, code) {
   assert.equal(value.exitCode, record.exitCode);
   if (code) {
     assert(value.diagnostics.some((entry) => entry.code === code && entry.action));
+    return;
+  }
+  if (["library-unicode", "library-dense"].includes(kind)) {
+    assert.equal(value.materialCount, kind === "library-dense" ? 12 : 3);
+    assert.equal(value.matchCount, kind === "library-dense" ? 12 : 1);
+    assert(value.materials.every((material) => !("value" in material.text)));
+    if (kind === "library-dense") {
+      assert.equal(
+        value.materials.reduce((sum, material) => sum + material.occurrences.total, 0),
+        360,
+      );
+      assert.equal(
+        value.materials.reduce((sum, material) => sum + material.passages.length, 0),
+        200,
+      );
+      assert(value.materials.every((material) => material.passages.length <= 20));
+      for (const material of value.materials)
+        assert.deepEqual(material.occurrences, {
+          total: 30,
+          returned: material.passages.length,
+          omitted: 30 - material.passages.length,
+        });
+      assert.deepEqual(value.materials.at(-1).occurrences, { total: 30, returned: 0, omitted: 30 });
+    } else {
+      const material = value.materials[0];
+      const dotted = args.at(-1) === "İ";
+      const start = dotted ? 2 : 6,
+        end = dotted ? 3 : 8;
+      assert.deepEqual(material.occurrences, { total: 1, returned: 1, omitted: 0 });
+      assert.deepEqual(material.passages, [
+        {
+          start,
+          end,
+          line: dotted ? 1 : 2,
+          column: dotted ? 2 : 1,
+          context: { start: 0, end: 8, text: "😀İx\r\nΟΣ" },
+        },
+      ]);
+    }
     return;
   }
   assert.equal(value.evidence.upstreamCompleteness, "unverified");
@@ -253,6 +362,11 @@ function observeLibrary(record, args, kind, code) {
   assert(!record.stdout.includes("ATTACHMENT_BYTES_NOT_SEARCHABLE"));
   assert(!record.stdout.includes("PROVENANCE_NOT_SEARCHABLE"));
   if (args.includes("CONVERGENCE")) assert(value.materials[0].snippet.includes("convergence"));
+  assert(value.materials.every((material) => !("value" in material.text)));
+  if (args.includes("exam ü")) {
+    assert(value.materials[0].url.endsWith("Exam%20%C3%BC%20%231.pdf"));
+    assert.deepEqual(value.materials[0].occurrences, { total: 0, returned: 0, omitted: 0 });
+  }
   if (kind === "library-partial") {
     assert.equal(value.status, "partial");
     assert(value.courses[0].diagnostics.some((entry) => entry.code === "TEXT_LIMIT"));
@@ -266,7 +380,11 @@ function observeLibrary(record, args, kind, code) {
 
 async function fixture(root, kind) {
   const path = join(root, "courses.json");
-  if (kind === "missing-config") return path;
+  if (["missing-config", "check-evidence"].includes(kind)) return path;
+  if (kind.startsWith("config-")) {
+    await json(path, { "config-null": null, "config-array": [], "config-string": "invalid" }[kind]);
+    return path;
+  }
   if (kind.startsWith("library-")) return libraryFixture(root, kind, path);
   const profile = join(root, "profile"),
     destination = join(root, "Drive", "course"),
@@ -275,11 +393,25 @@ async function fixture(root, kind) {
   await chmod(profile, kind === "unsafe-profile" ? 0o755 : 0o700);
   await mkdir(destination, { recursive: true });
   await mkdir(state);
+  let configuredDestination = destination;
+  if (kind.startsWith("destination-")) {
+    const target = kind === "destination-escape" ? join(root, "outside") : destination;
+    await mkdir(target, { recursive: true });
+    configuredDestination = join(root, "Drive", "alias");
+    await symlink(target, configuredDestination);
+  }
+  if (kind === "profile-alias") await symlink(profile, join(root, "profile-alias"));
   await json(path, {
-    profilePath: profile,
+    profilePath: kind === "profile-alias" ? join(root, "profile-alias") : profile,
     statePath: join(state, "state.json"),
     driveMountPath: join(root, "Drive"),
-    courses: [{ key: "VERIFY_PRIVATE_FIXTURE", courseId: "_verification_fixture_1", destination }],
+    courses: [
+      {
+        key: "VERIFY_PRIVATE_FIXTURE",
+        courseId: "_verification_fixture_1",
+        destination: configuredDestination,
+      },
+    ],
   });
   await writeFile(join(destination, "owner-note.txt"), "Synthetic fixture.\n");
   const timestamp = new Date(
@@ -301,6 +433,25 @@ async function fixture(root, kind) {
     verdict: kind === "red-digest" ? "red" : "green",
     timestamp: new Date(Date.now() - (kind === "old-digest" ? 72 * 3600000 : 1000)).toISOString(),
   });
+  if (/^(receipt|digest)-(alias|fifo|oversized)$/.test(kind)) {
+    const receipt = kind.startsWith("receipt-");
+    const evidencePath = receipt
+      ? join(destination, "Sync status.json")
+      : join(state, "latest.json");
+    if (kind.endsWith("alias")) {
+      const target = join(root, "evidence-target.json");
+      await writeFile(target, await readFile(evidencePath));
+      await rm(evidencePath);
+      await symlink(target, evidencePath);
+    } else if (kind.endsWith("fifo")) {
+      await rm(evidencePath);
+      await new Promise((resolve, reject) =>
+        execFile("mkfifo", [evidencePath], { timeout: 2000 }, (error) =>
+          error ? reject(error) : resolve(),
+        ),
+      );
+    } else await writeFile(evidencePath, "x".repeat((receipt ? 16384 : 1048576) + 1));
+  }
   return path;
 }
 
@@ -328,6 +479,17 @@ async function libraryFixture(root, kind, path) {
   );
   await writeFile(join(destination, "Exam ü #1.pdf"), "ATTACHMENT_BYTES_NOT_SEARCHABLE");
   await writeFile(join(second, "Announcement.md"), "# Announcement\nThe lecture moved.");
+  if (kind === "library-unicode") await writeFile(join(destination, "Page.md"), "😀İx\r\nΟΣ");
+  if (kind === "library-dense") {
+    await rm(join(destination, "Page.md"));
+    await rm(join(destination, "Exam ü #1.pdf"));
+    await rm(join(second, "Announcement.md"));
+    for (let index = 0; index < 12; index += 1)
+      await writeFile(
+        join(destination, `${String(index).padStart(2, "0")}.md`),
+        "needle ".repeat(30),
+      );
+  }
   await mkdir(join(destination, "Source editions"));
   await writeFile(
     join(destination, "Source editions", "provenance.md"),
@@ -355,11 +517,19 @@ async function libraryFixture(root, kind, path) {
 
 async function drive(entry) {
   assert(!interrupted && !run.unsettled, "previous child must settle before another drive");
-  const [args, kind] = entry;
+  const [requested, kind] = entry;
+  const args =
+    kind === "check-evidence"
+      ? [
+          ...requested,
+          "--evidence",
+          join(ROOT, ".scratch", `check-evidence-${basename(evidence)}-${run.records.length}`),
+        ]
+      : requested;
   const root = await mkdtemp(join(tmpdir(), "ntulearn-verify-"));
   const path = join(
     evidence,
-    `${String(run.records.length + 1).padStart(2, "0")}-${args.join("-")}-${kind}.json`,
+    `${String(run.records.length + 1).padStart(2, "0")}-${requested.join("-")}-${kind}.json`,
   );
   const record = {
     command: [process.execPath, join(ROOT, "src", "cli.mjs"), ...args],
@@ -464,7 +634,16 @@ async function snapshot(root) {
       entries.push({
         path: relative,
         mode: (info.mode & 0o777).toString(8),
-        type: info.isDirectory() ? "directory" : info.isFile() ? "file" : "other",
+        type: info.isDirectory()
+          ? "directory"
+          : info.isFile()
+            ? "file"
+            : info.isSymbolicLink()
+              ? "symlink"
+              : info.isFIFO()
+                ? "fifo"
+                : "other",
+        ...(info.isSymbolicLink() ? { target: await readlink(path) } : {}),
         ...(info.isFile()
           ? {
               sha256: createHash("sha256")

@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { Script } from "node:vm";
 import { localLibrary, LIBRARY_LIMITS } from "../src/library/catalogue.mjs";
 import { searchMaterials } from "../src/library/search.mjs";
 
@@ -259,7 +260,10 @@ test("HTML retains the full selected catalogue, literal hostile text, encoded fi
   const catalogue = JSON.parse(payload);
   assert.equal(catalogue.materials.length, 2);
   assert(catalogue.materials.some((entry) => entry.text.value?.includes(hostile)));
-  const matches = searchMaterials(catalogue.materials, catalogue.query);
+  const matches = searchMaterials(catalogue.materials, {
+    query: catalogue.query,
+    limits: catalogue.limits,
+  });
   assert.equal(matches.length, 1);
   assert.match(matches[0].url, /R%C3%A9sum%C3%A9%20%231%20&%20notes\.md$/);
   const json = await listing(config, { query: "CONVERGENCE" });
@@ -272,8 +276,109 @@ test("HTML retains the full selected catalogue, literal hostile text, encoded fi
     source.match(/<script>([\s\S]*?)<\/script>/)[1],
   ])
     assert(source.includes(`sha256-${createHash("sha256").update(content).digest("base64")}`));
+  assert.doesNotThrow(() => new Script(source.match(/<script>([\s\S]*?)<\/script>/)[1]));
+  assert(source.includes(searchMaterials.toString()));
   assert.match(source, /default-src &#39;none&#39;/);
   assert.match(source, /id="fallback"/);
   assert.match(source, /textContent/);
+  assert.match(source, /connect-src &#39;none&#39;/);
   assert.doesNotMatch(source, /\.innerHTML\s*=|fetch\(|localStorage|sessionStorage/);
+});
+
+function savedPage(value, path = "Page.md", course = "AB1234") {
+  return {
+    course,
+    path,
+    name: path,
+    url: `file:///synthetic/${course}/${path}`,
+    kind: "markdown",
+    text: { state: "read", value },
+  };
+}
+
+test("passages preserve source coordinates after lowercase expansion, astral text and line endings", () => {
+  for (const [source, query, expected] of [
+    ["İ".repeat(300) + "needle", "needle", [300, 306, 1, 301, "needle"]],
+    ["İ", "i", [0, 1, 1, 1, "İ"]],
+    ["İ", "\u0307", [0, 1, 1, 1, "İ"]],
+    ["😀\r\nİ needle", "needle", [6, 12, 2, 3, "needle"]],
+    ["a\rb\nc", "c", [4, 5, 3, 1, "c"]],
+    ["ΟΣ", "ος", [0, 2, 1, 1, "ΟΣ"]],
+    ["a😀b", "😀", [1, 3, 1, 2, "😀"]],
+  ]) {
+    const [match] = searchMaterials([savedPage(source)], { query, limits: LIBRARY_LIMITS });
+    const [passage] = match.passages;
+    assert.deepEqual(
+      [
+        passage.start,
+        passage.end,
+        passage.line,
+        passage.column,
+        source.slice(passage.start, passage.end),
+      ],
+      expected,
+    );
+    assert.equal(passage.context.text, source.slice(passage.context.start, passage.context.end));
+    assert(match.snippet.includes(expected[4]));
+    assert.equal(match.occurrences.total, 1);
+  }
+  const source = "😀".repeat(100) + "  needle\r\n" + "😀".repeat(100);
+  const [
+    {
+      passages: [passage],
+    },
+  ] = searchMaterials([savedPage(source)], {
+    query: "needle",
+    limits: LIBRARY_LIMITS,
+  });
+  assert.equal(Array.from(source.slice(passage.context.start, passage.start)).length, 70);
+  assert.equal(Array.from(source.slice(passage.end, passage.context.end)).length, 70);
+  assert(passage.context.text.includes("  needle\r\n"));
+  assert.equal(passage.context.text.charCodeAt(0), 0xd83d);
+  assert.equal(passage.context.text.charCodeAt(passage.context.text.length - 1), 0xde00);
+});
+
+test("nonoverlapping counts remain exact after per-document and catalogue passage budgets", () => {
+  const materials = Array.from({ length: 12 }, (_, index) =>
+    savedPage("needle ".repeat(25), `Page${index}.md`),
+  );
+  const matches = searchMaterials(materials, { query: "needle", limits: LIBRARY_LIMITS });
+  assert.equal(matches.length, 12);
+  assert.equal(
+    matches.reduce((sum, match) => sum + match.occurrences.total, 0),
+    300,
+  );
+  assert.equal(
+    matches.reduce((sum, match) => sum + match.passages.length, 0),
+    200,
+  );
+  assert.deepEqual(matches[0].occurrences, { total: 25, returned: 20, omitted: 5 });
+  assert.deepEqual(matches[11].occurrences, { total: 25, returned: 0, omitted: 25 });
+  assert.match(matches[11].snippet, /Passage limit reached/);
+  const [selected] = searchMaterials([materials[11]], { query: "needle", limits: LIBRARY_LIMITS });
+  assert.deepEqual(selected.occurrences, { total: 25, returned: 20, omitted: 5 });
+  const [nonoverlap] = searchMaterials([savedPage("aaa")], { query: "aa", limits: LIBRARY_LIMITS });
+  assert.equal(nonoverlap.occurrences.total, 1);
+  assert.equal(nonoverlap.passages[0].context.text, "aaa");
+  assert.equal(
+    searchMaterials([savedPage("ΟΣ")], { query: "οσ", limits: LIBRARY_LIMITS }).length,
+    0,
+  );
+});
+
+test("empty and filename matches never invent occurrences and browser matcher stays portable", () => {
+  const materials = [savedPage("", "Empty.md"), savedPage("Other text", "Needle.md")];
+  const empty = searchMaterials(materials, { limits: LIBRARY_LIMITS });
+  assert.equal(empty.length, 2);
+  for (const match of empty) {
+    assert.deepEqual(match.passages, []);
+    assert.deepEqual(match.occurrences, { total: 0, returned: 0, omitted: 0 });
+  }
+  const options = { query: "needle", course: "ab1234", limits: LIBRARY_LIMITS };
+  const matches = searchMaterials(materials, options);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].match, "filename");
+  assert.deepEqual(matches[0].passages, []);
+  const portableMatcher = Function(`return (${searchMaterials.toString()})`)();
+  assert.deepEqual(portableMatcher(materials, options), matches);
 });

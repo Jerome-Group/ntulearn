@@ -31,7 +31,7 @@ test("real library CLI lists, searches and exports without dependencies, browser
   });
   const destination = join(root, "course");
   await mkdir(destination);
-  const page = "# A saved page\nNeedle appears only in this document body.\n";
+  const page = `# A saved page\r\n${"İ".repeat(300)}Needle appears only in this document body.\r\n`;
   await writeFile(join(destination, "Page.md"), page);
   const configPath = join(root, "config.json");
   await writeFile(
@@ -55,12 +55,21 @@ test("real library CLI lists, searches and exports without dependencies, browser
     const value = JSON.parse(result.stdout);
     assert.equal(value.schemaVersion, 1);
     assert.equal(value.matchCount, args.at(-1) === "nothing" ? 0 : 1);
+    if (args.includes("NEEDLE")) {
+      const match = value.materials[0];
+      assert.match(match.snippet, /Needle appears/);
+      assert.deepEqual(match.occurrences, { total: 1, returned: 1, omitted: 0 });
+      assert.equal(match.passages[0].start, page.indexOf("Needle"));
+      assert.equal(match.passages[0].line, 2);
+      assert.equal(match.passages[0].column, 301);
+    }
     assert(!result.stdout.includes("_private_1"));
   }
   const html = await run(cli, configPath, ["--html", "--query", "needle"]);
   assert.equal(html.exitCode, 0);
   assert.equal(html.stderr, "");
   assert.match(html.stdout, /^<!doctype html>/);
+  assert.equal((await run(cli, configPath, ["--query", "😀".repeat(256)])).exitCode, 0);
   assert.equal(await readFile(join(destination, "Page.md"), "utf8"), page);
 });
 
@@ -74,6 +83,7 @@ test("real library CLI usage and configuration refusals are structured stdout wi
     [["--course"], "USAGE"],
     [["--html", "--html"], "USAGE"],
     [["--query", "x".repeat(257)], "QUERY_LIMIT"],
+    [["--query", "😀".repeat(257)], "QUERY_LIMIT"],
   ]) {
     const result = await run(CLI, configPath, args);
     assert.equal(result.exitCode, 2);

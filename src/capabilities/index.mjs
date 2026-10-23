@@ -72,6 +72,7 @@ const routes = {
       "src/library/catalogue.mjs",
       "src/library/search.mjs",
       "src/library/html.mjs",
+      "src/library/workspace.mjs",
       "src/config.mjs",
     ],
     ["test/library.test.mjs", "test/library-cli.test.mjs"],
@@ -321,6 +322,7 @@ const commands = [
       limitations: [
         "Private stdout contains local course text snippets, names, and file locations. Keep HTML exports outside course destinations.",
         "Literal case-insensitive substring search over Markdown and filenames. Attachments are never opened.",
+        "Source passages and exact read-text counts are bounded independently. The standalone workspace keeps two plain-text readers and a temporary ordered queue without browser storage.",
         "Receipts are independent of scan success. No upstream completeness or current source revision claim.",
         "Bounded no-follow local observation detects observed changes; portable Node cannot exclude hostile concurrent ancestor swaps.",
       ],
@@ -436,7 +438,7 @@ export function capabilityIndex(selection) {
           "diagnostics",
           "suppressedDiagnostics",
         ],
-        html: "Same selected courses' bounded catalogue, editable query, native course filter, plain-text reader, generated local file links, strict CSP; no server or network.",
+        html: "Same selected courses' bounded catalogue, editable query, native course filter, source passage navigation, two plain-text readers, temporary ordered queue, generated local file links, strict CSP; no server, network, or browser storage.",
       },
       "capability-result-v1": {
         fields: ["schemaVersion", "command", "status", "exitCode", "checks", "evidence"],
