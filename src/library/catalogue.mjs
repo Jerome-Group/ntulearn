@@ -34,6 +34,12 @@ export const LIBRARY_LIMITS = Object.freeze({
   receiptBytes: 16 * 1024,
   diagnosticsPerCourse: 100,
   queryCodePoints: 256,
+  passagesPerDocument: 20,
+  passagesPerSearch: 200,
+  contextCodePoints: 70,
+  previewCodePoints: 220,
+  resultsPerPage: 25,
+  queue: 50,
 });
 const STALE_AFTER_MS = 48 * 60 * 60 * 1000;
 const INSPECT = "Inspect the local folder and its permissions, then rerun library.";
@@ -133,7 +139,10 @@ function emptyCatalogue(query) {
 
 function output(catalogue, format) {
   if (format === "html") return { source: libraryHtml(catalogue), exitCode: catalogue.exitCode };
-  const results = searchMaterials(catalogue.materials, catalogue.query);
+  const results = searchMaterials(catalogue.materials, {
+    query: catalogue.query,
+    limits: catalogue.limits,
+  });
   return {
     source: JSON.stringify(
       {

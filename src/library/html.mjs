@@ -65,7 +65,13 @@ function readingDesk(document) {
     error.textContent = invalid
       ? `Use at most ${catalogue.limits.queryCodePoints} characters in a query.`
       : "";
-    const matches = invalid ? [] : searchMaterials(catalogue.materials, query.value, course.value);
+    const matches = invalid
+      ? []
+      : searchMaterials(catalogue.materials, {
+          query: query.value,
+          course: course.value,
+          limits: catalogue.limits,
+        });
     results.replaceChildren();
     for (const material of matches) {
       const item = document.createElement("li");
