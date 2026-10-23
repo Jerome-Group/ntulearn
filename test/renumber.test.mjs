@@ -730,6 +730,72 @@ test("distinct colliding identities renumber their editions and retain the unpro
   assert.ok(!verified.renumbered);
 });
 
+test("distinct content items sharing an attachment URL keep independent renumber evidence", async (t) => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-renumber-shared-url-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const state = { courses: {} };
+  const items = HANDOUTS.map((each) => ({
+    ...each,
+    contentDetail: {
+      "resource/x-bb-file": {
+        file: { fileName: "Shared.pdf", permanentUrl: "/bbcswebdav/shared" },
+      },
+    },
+  }));
+  const later = items.map((each) => ({ ...each, position: each.position + 2 }));
+  const first = client(items);
+  const current = client(later, async () => assert.fail("unchanged sources must not download"));
+  assert.deepEqual(
+    (await syncCourse({ client: first, course: course(destination), state })).failures,
+    [],
+  );
+  for (let repeat = 0; repeat < 2; repeat++) {
+    const synced = await syncCourse({ client: current, course: course(destination), state });
+    assert.deepEqual(synced.failures, []);
+    assert.equal(synced.downloaded, 0);
+    assert.equal(synced.newEditions, 0);
+  }
+  const before = await directoryDigests(destination);
+  const refused = await renumberCourse({
+    client: current,
+    course: course(destination),
+    state: { courses: {} },
+  });
+  assert.deepEqual(refused.renamed, []);
+  assert.equal(refused.kept.length, 2);
+  assert.ok(refused.kept.every((each) => /no recorded digest/.test(each.why)));
+  assert.deepEqual(await directoryDigests(destination), before);
+  const stateBefore = JSON.stringify(state);
+  const result = await renumberCourse({ client: current, course: course(destination), state });
+  assert.deepEqual(
+    result.renamed.map(({ from, to }) => ({ from, to })),
+    [
+      { from: "01 Shared.pdf", to: "03 Shared.pdf" },
+      { from: "02 Shared.pdf", to: "04 Shared.pdf" },
+    ],
+  );
+  assert.ok(!result.kept);
+  assert.ok(!result.blocked);
+  assert.equal(JSON.stringify(state), stateBefore);
+  for (const { from, to } of result.renamed)
+    assert.equal(await fileDigest(join(destination, to)), before[from]);
+  const verified = await verifyCourse({ client: current, course: course(destination) });
+  assert.deepEqual(verified.missing, []);
+  assert.ok(!verified.renumbered);
+  for (let repeat = 0; repeat < 2; repeat++) {
+    const synced = await syncCourse({ client: current, course: course(destination), state });
+    assert.deepEqual(synced.failures, []);
+    assert.equal(synced.downloaded, 0);
+    assert.equal(synced.newEditions, 0);
+    assert.deepEqual((await readdir(destination)).filter((name) => name.endsWith(".pdf")).sort(), [
+      "03 Shared.pdf",
+      "04 Shared.pdf",
+    ]);
+    assert.equal(await fileDigest(join(destination, "03 Shared.pdf")), before["01 Shared.pdf"]);
+    assert.equal(await fileDigest(join(destination, "04 Shared.pdf")), before["02 Shared.pdf"]);
+  }
+});
+
 test("exact recorded edition keeps authority when its desired name is occupied", async (t) => {
   for (const occupant of ["file", "directory", "symlink"]) {
     await t.test(occupant, async (t) => {

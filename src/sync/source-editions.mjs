@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, sep } from "node:path";
+import { attachmentFingerprint, attachmentState } from "./attachment-state.mjs";
 import { ambiguousPaths, comparablePath } from "./expected.mjs";
 import { fileDigest, isFilePresent } from "./files.mjs";
 import { assertDestinationPath, safeSegment, unnumbered } from "./paths.mjs";
@@ -47,27 +48,6 @@ export function sourceIdentity(expected) {
     }
   }
   return id ? hash(JSON.stringify(["attachment", expected.item.id, id])) : null;
-}
-
-export function attachmentStateKey(attachment) {
-  const address = String(attachment.resourceUrl ?? "");
-  let secret = /[?#]|\/(?:ks|%6bs|k%73|%6b%73|session|token)\//i.test(address);
-  try {
-    const url = new URL(address, "https://ntulearn.ntu.edu.sg");
-    secret ||= Boolean(url.username || url.password);
-  } catch {}
-  return secret ? "source:" + hash(address) : address;
-}
-export function attachmentFingerprint(item, attachment, { legacy = false } = {}) {
-  if (legacy)
-    return `${item.modifiedDate ?? ""}:${attachment.fileSize ?? ""}:${attachment.resourceUrl}`;
-  return hash(
-    JSON.stringify([
-      item.modifiedDate ?? null,
-      attachment.fileSize ?? null,
-      attachmentStateKey(attachment),
-    ]),
-  );
 }
 
 export async function resolveSourceEditions({
@@ -115,8 +95,7 @@ export async function resolveSourceEditions({
     const history = await provenanceRecords(destination, source);
     const old =
       expected.kind === "attachment"
-        ? (previous.downloads?.[attachmentStateKey(expected.attachment)] ??
-          previous.downloads?.[expected.attachment.resourceUrl])
+        ? attachmentState(previous, source, expected.attachment).record
         : null;
     let fetchedRevision = false;
     let retainedPath = null;
@@ -160,7 +139,6 @@ export async function resolveSourceEditions({
             r.schemaVersion === 1 &&
             r.relativePath === old?.relativePath &&
             r.sha256 === old?.sha256 &&
-            (old?.sourceIdentity === source.identity || !old?.sourceIdentity) &&
             (old?.fingerprint === source.fingerprint ||
               old?.fingerprint ===
                 attachmentFingerprint(expected.item, expected.attachment, { legacy: true })) &&
@@ -183,7 +161,6 @@ export async function resolveSourceEditions({
           (old?.fingerprint === source.fingerprint ||
             old?.fingerprint ===
               attachmentFingerprint(expected.item, expected.attachment, { legacy: true })) &&
-          (old?.sourceIdentity === source.identity || !old?.sourceIdentity) &&
           DIGEST.test(old?.sha256 ?? "") &&
           validPath(old?.relativePath) &&
           Number.isSafeInteger(old?.bytes) &&

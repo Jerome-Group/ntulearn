@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { downloadedType } from "../ntulearn/download.mjs";
+import { attachmentFingerprint, attachmentState } from "./attachment-state.mjs";
 import { ambiguousPaths, comparablePath, expectedFiles } from "./expected.mjs";
 import {
   fileDigest,
@@ -15,11 +16,7 @@ import { isUncopiedDocument, syncStamp } from "./markdown.mjs";
 import { numberingOf } from "./numbering.mjs";
 import { assertDestinationPath, safeResolve, safeSegment } from "./paths.mjs";
 import { recordSourceEdition } from "./source-provenance.mjs";
-import {
-  resolveSourceEditions,
-  attachmentStateKey,
-  attachmentFingerprint,
-} from "./source-editions.mjs";
+import { resolveSourceEditions } from "./source-editions.mjs";
 import { courseState, newIds } from "./state.mjs";
 
 // Alone here rather than beside the other destination filenames in `expected.mjs`, because that
@@ -143,9 +140,11 @@ async function syncCourseAttempt({ client, course, state }) {
         break;
       case "attachment": {
         const { item, attachment, placement } = expected;
-        const previousRecord =
-          previous.downloads?.[attachmentStateKey(attachment)] ??
-          previous.downloads?.[attachment.resourceUrl];
+        const { key, record: previousRecord } = attachmentState(
+          previous,
+          expected.source,
+          attachment,
+        );
         const record = expected.provenance
           ? {
               fingerprint: attachmentFingerprint(item, attachment),
@@ -174,7 +173,7 @@ async function syncCourseAttempt({ client, course, state }) {
             saved,
           );
           if (expected.edition && tally.downloaded > beforeDownloads) tally.newEditions++;
-          downloads[attachmentStateKey(attachment)] = {
+          downloads[key] = {
             ...saved,
             relativePath: place.sourcePinned ? place.at : saved.relativePath,
             sourceIdentity: expected.source.identity,
