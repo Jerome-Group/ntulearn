@@ -31,7 +31,7 @@ Require both named model counterexamples and both predicted source byte mismatch
 
 ## Review source correspondence
 
-The confirmed source commit is `4d783d7f6ece6a4fc9fdc5b3363902e72ba1a147`. [coverage.json](coverage.json) records that commit and fingerprints the covered functions and imports. Whole-file hashes are evidence, not coverage claims. Changes to unrelated functions in `files.mjs` do not establish publication coverage. Removing the retired renumber movers changed only an unused import; the covered publication functions remain byte-identical. Renumber claim/recovery operations remain outside this model.
+The confirmed source commit is `c9bb2a4d7c7e7ce85a498943b819b7780f441d8e`. [coverage.json](coverage.json) records that commit and fingerprints the covered functions and imports. Whole-file hashes are evidence, not coverage claims. Changes to unrelated functions in `files.mjs` do not establish publication coverage. Removing the retired renumber movers changed only an unused import; the covered publication functions remain byte-identical. Renumber claim/recovery operations remain outside this model.
 
 | Model action | Covered production function | Boundary |
 | --- | --- | --- |
