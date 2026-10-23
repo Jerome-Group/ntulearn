@@ -27,11 +27,11 @@ To prove that the checks still detect the guarded mistakes, run this command.
 node .agents/skills/additive-publication/scripts/check.mjs --self-test
 ```
 
-Require both named model counterexamples and both predicted source byte mismatches. The replacement mutant makes B replace A's complete body. The truncation mutant returns `true` after publishing A's body without its final newline. Import errors, timeouts, and generic failures do not count. The command removes scratch source mirrors and finishes with pristine model and native reruns. Production files remain intact.
+Require both named model counterexamples and both predicted source byte mismatches. The replacement mutant makes B replace A's complete body. Its mirrored filesystem import adds the `rename` binding when absent; the retained import diff records it. Pristine and truncation mirrors keep their original bindings. The truncation mutant returns `true` after publishing A's body without its final newline. Import errors, timeouts, and generic failures do not count. The command removes scratch source mirrors and finishes with pristine model and native reruns. Production files remain intact.
 
 ## Review source correspondence
 
-The confirmed source commit is `705727602b72866c188cef7b83a66f5bc919708b`. [coverage.json](coverage.json) records that commit and fingerprints the covered functions and imports. Whole-file hashes are evidence, not coverage claims. Changes to unrelated functions in `files.mjs`, including `relinkFile`, do not establish publication coverage.
+The confirmed source commit is `4d783d7f6ece6a4fc9fdc5b3363902e72ba1a147`. [coverage.json](coverage.json) records that commit and fingerprints the covered functions and imports. Whole-file hashes are evidence, not coverage claims. Changes to unrelated functions in `files.mjs` do not establish publication coverage. Removing the retired renumber movers changed only an unused import; the covered publication functions remain byte-identical. Renumber claim/recovery operations remain outside this model.
 
 | Model action | Covered production function | Boundary |
 | --- | --- | --- |
