@@ -43,6 +43,7 @@ async function runFormatFixture(t, source) {
   return {
     ...result,
     check,
+    fixtureFile: (name) => readFile(join(root, name)),
     evidenceFile: (name) => readFile(join(root, ".scratch/check-evidence-output", name)),
   };
 }
@@ -68,7 +69,10 @@ setTimeout(() => { process.${stream}.write(bytes.subarray(1)); process.exitCode 
   test(`native check stops ${stream} above the byte limit`, async (t) => {
     const result = await runFormatFixture(
       t,
-      `process.${stream}.write("€".repeat(750000)); setTimeout(() => {}, 80);`,
+      `const fs = require("node:fs");
+fs.writeFileSync("child.pid", String(process.pid));
+process.${stream}.write("€".repeat(750000));
+setTimeout(() => fs.writeFileSync("completed", "yes"), 1000);`,
     );
     assert.equal(result.code, 1);
     assert.equal(result.check.code, "CHECK_FAILED");
@@ -81,5 +85,26 @@ setTimeout(() => { process.${stream}.write(bytes.subarray(1)); process.exitCode 
     assert.equal(proof.sha256, createHash("sha256").update(raw).digest("hex"));
     assert.ok(result.check.evidence.outputBytes <= CHECK_CAPTURE_BYTES);
     assert.equal(result.check.evidence.timedOut, false);
+    await assert.rejects(result.fixtureFile("completed"), { code: "ENOENT" });
+    const pid = Number(await result.fixtureFile("child.pid"));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
   });
 }
+
+test("native check accepts the exact byte limit independently for both streams", async (t) => {
+  const result = await runFormatFixture(
+    t,
+    `process.stdout.write("A".repeat(${CHECK_CAPTURE_BYTES}));
+process.stderr.write("B".repeat(${CHECK_CAPTURE_BYTES}));`,
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.check.code, "CHECK_PASSED");
+  assert.equal(result.check.evidence.outputBytes, 2 * CHECK_CAPTURE_BYTES);
+  assert.equal(
+    result.check.evidence.outputSha256,
+    createHash("sha256")
+      .update(Buffer.alloc(CHECK_CAPTURE_BYTES, 65))
+      .update(Buffer.alloc(CHECK_CAPTURE_BYTES, 66))
+      .digest("hex"),
+  );
+});

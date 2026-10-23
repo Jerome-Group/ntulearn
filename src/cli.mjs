@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { capabilityIndex } from "./capabilities/index.mjs";
 import { runRepositoryChecks, parseCheckArguments } from "./capabilities/check.mjs";
-import { createCheckCapture } from "./capabilities/check-capture.mjs";
+import { createCheckCapture, CHECK_CAPTURE_BYTES } from "./capabilities/check-capture.mjs";
+import { StringDecoder } from "node:string_decoder";
 import { localHealth } from "./capabilities/health.mjs";
 import { localStatus } from "./capabilities/status.mjs";
 import { localLibrary, libraryFailure, LIBRARY_LIMITS } from "./library/catalogue.mjs";
@@ -320,14 +321,13 @@ function checkRunner(command, argumentsFor, { cwd, timeout, retainOutput = false
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
-    const parts = { stdout: "", stderr: "" };
+    const streams = Object.fromEntries(
+      ["stdout", "stderr"].map((key) => [
+        key,
+        { decoder: new StringDecoder("utf8"), output: "", bytes: 0 },
+      ]),
+    );
     const capture = retainOutput ? createCheckCapture() : null;
-    let completed = false;
-    const complete = (result) => {
-      if (completed) return;
-      completed = true;
-      done({ ...result, ...(capture ? { rawOutput: capture.result() } : {}) });
-    };
     let timedOut = false;
     let stopped = false;
     const stop = () => {
@@ -342,17 +342,31 @@ function checkRunner(command, argumentsFor, { cwd, timeout, retainOutput = false
     }, timeout);
     for (const key of ["stdout", "stderr"])
       child[key].on("data", (chunk) => {
-        if (!completed) capture?.append(key, chunk);
-        parts[key] += chunk.toString();
-        if (parts[key].length > 2 * 1024 * 1024) stop();
+        capture?.append(key, chunk);
+        const stream = streams[key],
+          remaining = Math.max(0, CHECK_CAPTURE_BYTES - stream.bytes);
+        stream.output += stream.decoder.write(chunk.subarray(0, remaining));
+        stream.bytes += chunk.length;
+        if (stream.bytes > CHECK_CAPTURE_BYTES) stop();
       });
     child.once("error", () => {
       clearTimeout(timer);
-      complete({ exitCode: 1, ...parts, timedOut });
+      stop();
     });
     child.once("close", (code) => {
       clearTimeout(timer);
-      complete({ exitCode: code ?? 1, ...parts, timedOut });
+      const output = Object.fromEntries(
+        Object.entries(streams).map(([key, stream]) => [
+          key,
+          stream.output + (stream.bytes <= CHECK_CAPTURE_BYTES ? stream.decoder.end() : ""),
+        ]),
+      );
+      done({
+        exitCode: stopped ? 1 : (code ?? 1),
+        ...output,
+        timedOut,
+        ...(capture ? { rawOutput: capture.result() } : {}),
+      });
     });
   });
 }
