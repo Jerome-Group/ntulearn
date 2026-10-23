@@ -1,5 +1,5 @@
 import { courseUrl } from "../ntulearn/urls.mjs";
-import { externalLinkOf, isFolder } from "../ntulearn/content.mjs";
+import { itemPresentationOf, isFolder } from "../ntulearn/content.mjs";
 import {
   announcementDocument,
   contentDocument,
@@ -66,7 +66,7 @@ function* expectedOfFolder(item, placement) {
 }
 
 async function* expectedOfItem({ client, courseId, item, placement }) {
-  const page = contentDocument(item, externalLinkOf(item));
+  const page = contentDocument(item, itemPresentationOf(item, { courseId }));
   const document = placedFile(
     placement,
     `${orderedName(item.position, item.title)}.md`,

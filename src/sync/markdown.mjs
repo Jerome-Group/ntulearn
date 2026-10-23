@@ -100,15 +100,36 @@ export function syncStamp(when) {
 }
 
 // Empty when the item carries neither text nor a link, so the caller writes no file for it.
-export function contentDocument(item, externalLink = null) {
+export function contentDocument(item, presentation = null) {
   const description = htmlToMarkdown(item.description);
   const body = htmlToMarkdown(item.body?.displayText || item.body?.rawText);
   const sections = [
     description && `## Description\n\n${description}`,
     body && `## Content\n\n${body}`,
-    externalLink && `## External link\n\n${externalLink}`,
+    presentationSection(presentation),
   ];
   return sections.some(Boolean) ? document(item.title, sections) : "";
+}
+
+function presentationSection(presentation) {
+  if (!presentation) return "";
+  switch (presentation.kind) {
+    case "external-link":
+      return `## External link\n\n${presentation.url}`;
+    case "assessment-card":
+      return (
+        `## Assessment\n\n- Due: ${presentation.dueDate}\n\n` +
+        "This assessment is online only. Questions, attempts, answers, grades, and submissions are not copied.\n\n" +
+        `[Open course in NTULearn](${presentation.courseUrl})`
+      );
+    case "course-link":
+      return (
+        "## Course link\n\n" +
+        "The linked content remains online in NTULearn. Open the course to find it.\n\n" +
+        `[Open course in NTULearn](${presentation.courseUrl})\n\n` +
+        `<!-- ntulearn: course-link target=${encodeURIComponent(presentation.targetContentId)} -->`
+      );
+  }
 }
 
 // A later run may correct one of these and must never touch a page, so a document says which it is

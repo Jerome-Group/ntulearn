@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NtulearnReader } from "../src/ntulearn/reader.mjs";
+import { expectedFiles } from "../src/sync/expected.mjs";
 
 test("course list follows membership pages", async () => {
   const reader = new NtulearnReader(async (path) => {
@@ -56,4 +57,57 @@ test("later optional-unavailable stays explicit without poisoning the course tre
   const snapshot = await reader.readCourse("synthetic");
   assert.deepEqual(snapshot.announcements, []);
   assert.equal(snapshot.unavailable.announcements, true);
+});
+
+test("recovers interaction metadata without requesting assessments or course-link targets", async () => {
+  const requests = [];
+  const reader = new NtulearnReader(async (path) => {
+    requests.push(path);
+    if (path === "/learn/api/v1/courses/synthetic") return { displayName: "Synthetic" };
+    if (path.includes("/children?")) {
+      return {
+        results: [
+          {
+            id: "assessment",
+            title: "Weekly check",
+            position: 0,
+            contentHandler: "resource/x-bb-asmt-test-link",
+            genericReadOnlyData: { dueDate: "2026-10-30T15:59:00.000Z" },
+            contentDetail: { "resource/x-bb-asmt-test-link": { test: {} } },
+          },
+          {
+            id: "link",
+            title: "Weekly conversation",
+            position: 1,
+            contentHandler: "resource/x-bb-courselink",
+            contentDetailUrl: "/learn/api/v1/courses/synthetic/contents/target",
+            contentDetail: {
+              "resource/x-bb-courselink": {
+                courseContent: "link",
+                linkSourceId: "target",
+                linkSourceTable: "CONTENT",
+              },
+            },
+          },
+        ],
+      };
+    }
+    if (path.includes("/announcements?") || path.includes("/conversations?"))
+      return { results: [] };
+    assert.fail(`Unexpected acquisition: ${path}`);
+  });
+  const snapshot = await reader.readCourse("synthetic");
+  const files = [];
+  for await (const each of expectedFiles({ client: reader, courseId: "synthetic", snapshot }))
+    files.push(each);
+  assert.deepEqual(
+    files.map((each) => each.kind),
+    ["document", "document", "document"],
+  );
+  assert.deepEqual(requests.sort(), [
+    "/learn/api/v1/courses/synthetic",
+    "/learn/api/v1/courses/synthetic/announcements?limit=1000&offset=0&sort=startDateRestriction(desc)",
+    "/learn/api/v1/courses/synthetic/contents/ROOT/children?@view=Summary&expand=assignedGroups,selfEnrollmentGroups.group,gradebookCategory&includeInActivityTracking=false&limit=1000&offset=0",
+    "/learn/api/v1/courses/synthetic/conversations?limit=1000&offset=0",
+  ]);
 });

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { syncCourse } from "../src/sync/course.mjs";
 import { verifyCourse } from "../src/sync/verify.mjs";
+import { uncopiedDocument } from "../src/sync/markdown.mjs";
 const item = { id: "item", title: "Files", position: 0, contentHandler: "resource/x-bb-file" };
 const attachments = [
   { resourceUrl: "/bbcswebdav/one", fileName: "Quiz:1.pdf" },
@@ -34,6 +35,84 @@ function reader(files = attachments, announcements = []) {
     download: async (file) => ({ body: Buffer.from(file.resourceUrl), headers: {} }),
   };
 }
+
+test("recovers a dated assessment beside an annotated stand-in and preserves each due-date edition", () =>
+  fixture(async (course) => {
+    let assessment = {
+      id: "assessment",
+      title: "Weekly check",
+      position: 0,
+      contentHandler: "resource/x-bb-asmt-test-link",
+      genericReadOnlyData: { dueDate: "2026-10-30T15:59:00.000Z" },
+      contentDetail: {
+        "resource/x-bb-asmt-test-link": {
+          test: { assessment: { instructions: "Hidden instructions", showInstructions: false } },
+        },
+      },
+    };
+    const original = join(course.destination, "01 Weekly check.md");
+    const annotated = `${uncopiedDocument(assessment, "")}\nMy study annotation\n`;
+    await writeFile(original, annotated);
+    const originalHash = hash(annotated);
+    const client = reader([]);
+    client.readCourse = async () => ({
+      course: { displayName: "Synthetic" },
+      items: [assessment],
+      announcements: [],
+      conversations: [],
+    });
+    const state = { courses: {} };
+    let result = await syncCourse({ client, course, state });
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.newEditions, 1);
+    assert.equal(hash(await readFile(original)), originalHash);
+    const editions = (await readdir(course.destination)).filter((name) =>
+      name.startsWith("01 Weekly check [source"),
+    );
+    assert.equal(editions.length, 1);
+    const firstPath = join(course.destination, editions[0]);
+    const firstBytes = await readFile(firstPath);
+    assert.match(firstBytes.toString(), /Due: 2026-10-30T15:59:00\.000Z/);
+    assert.match(firstBytes.toString(), /online only/);
+    assert.doesNotMatch(firstBytes.toString(), /Hidden instructions/);
+    assert.equal((await verifyCourse({ client, course })).missing.length, 0);
+
+    result = await syncCourse({ client, course, state });
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.newEditions, 0);
+    assert.equal(result.markdownWritten, 0);
+    assert.deepEqual(
+      (await readdir(course.destination)).filter((name) =>
+        name.startsWith("01 Weekly check [source"),
+      ),
+      editions,
+    );
+    assert.equal(hash(await readFile(original)), originalHash);
+    assert.deepEqual(await readFile(firstPath), firstBytes);
+
+    assessment = { ...assessment, genericReadOnlyData: { dueDate: "2026-11-06T15:59:00.000Z" } };
+    result = await syncCourse({ client, course, state });
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.newEditions, 1);
+    assert.equal(hash(await readFile(original)), originalHash);
+    assert.deepEqual(await readFile(firstPath), firstBytes);
+    const changed = (await readdir(course.destination)).filter((name) =>
+      name.startsWith("01 Weekly check [source"),
+    );
+    assert.equal(changed.length, 2);
+    const second = changed.find((name) => !editions.includes(name));
+    assert.match(
+      await readFile(join(course.destination, second), "utf8"),
+      /Due: 2026-11-06T15:59:00\.000Z/,
+    );
+    assert.equal((await verifyCourse({ client, course })).missing.length, 0);
+    result = await syncCourse({ client, course, state });
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.newEditions, 0);
+    assert.equal(result.markdownWritten, 0);
+    assert.equal(hash(await readFile(original)), originalHash);
+    assert.deepEqual(await readFile(firstPath), firstBytes);
+  }));
 test("colliding sources publish distinct stable names through reorder and state loss", () =>
   fixture(async (course) => {
     const state = { courses: {} };

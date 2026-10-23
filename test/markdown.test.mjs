@@ -201,8 +201,63 @@ test("writes a content item's description, body and link", () => {
     body: { displayText: "<p>Slides attached</p>" },
   };
   assert.equal(
-    contentDocument(item, "https://example.org/tool"),
+    contentDocument(item, { kind: "external-link", url: "https://example.org/tool" }),
     "# Lecture 1\n\n## Description\n\nOverview\n\n## Content\n\nSlides attached\n\n## External link\n\nhttps://example.org/tool\n",
+  );
+});
+
+test("renders an online-only assessment card with its exact personal due instant", () => {
+  const item = {
+    title: "Weekly check",
+    contentDetail: {
+      "resource/x-bb-asmt-test-link": {
+        test: {
+          assessment: { instructions: "Hidden instructions", description: "Hidden description" },
+        },
+      },
+    },
+  };
+  const presentation = {
+    kind: "assessment-card",
+    dueDate: "2026-10-30T15:59:00.000Z",
+    courseUrl: "https://ntulearn.ntu.edu.sg/ultra/courses/synthetic/outline",
+  };
+  const markdown = contentDocument(item, presentation);
+  assert.equal(
+    markdown,
+    "# Weekly check\n\n## Assessment\n\n- Due: 2026-10-30T15:59:00.000Z\n\n" +
+      "This assessment is online only. Questions, attempts, answers, grades, and submissions are not copied.\n\n" +
+      "[Open course in NTULearn](https://ntulearn.ntu.edu.sg/ultra/courses/synthetic/outline)\n",
+  );
+  assert.doesNotMatch(markdown, /Hidden/);
+});
+
+test("renders course links with honest navigation and invisible target revision binding", () => {
+  const presentation = {
+    kind: "course-link",
+    targetContentId: "target --> [injected](https://example.test)",
+    courseUrl: "https://ntulearn.ntu.edu.sg/ultra/courses/synthetic/outline",
+  };
+  const markdown = contentDocument({ title: "Weekly conversation" }, presentation);
+  assert.match(
+    markdown,
+    /The linked content remains online in NTULearn\. Open the course to find it\./,
+  );
+  assert.match(
+    markdown,
+    /\[Open course in NTULearn\]\(https:\/\/ntulearn\.ntu\.edu\.sg\/ultra\/courses\/synthetic\/outline\)/,
+  );
+  assert.match(
+    markdown,
+    /<!-- ntulearn: course-link target=target%20--%3E%20%5Binjected%5D\(https%3A%2F%2Fexample.test\) -->/,
+  );
+  assert.doesNotMatch(markdown.replace(/<!--[^]*?-->/g, ""), /target|injected|example\.test/);
+  assert.notEqual(
+    markdown,
+    contentDocument(
+      { title: "Weekly conversation" },
+      { ...presentation, targetContentId: "another-target" },
+    ),
   );
 });
 

@@ -1,7 +1,9 @@
-import { absoluteUrl, isNtulearnUrl } from "./urls.mjs";
+import { absoluteUrl, courseUrl, isNtulearnUrl } from "./urls.mjs";
 
 const FOLDER_HANDLER = "resource/x-bb-folder";
 const FILE_HANDLER = "resource/x-bb-file";
+const ASSESSMENT_HANDLER = "resource/x-bb-asmt-test-link";
+const COURSE_LINK_HANDLER = "resource/x-bb-courselink";
 const KIND_NAMES = {
   "resource/x-bb-asmt-test-link": "Test",
   "resource/x-bb-assignment": "Assignment",
@@ -10,6 +12,7 @@ const KIND_NAMES = {
 const EMBED = /<(?:a|img)\b[^>]*\bdata-bbfile="([^"]+)"[^>]*>/g;
 const FILE_ID = /xid-[A-Za-z0-9_]+/i;
 const ELEMENT_LINK = /\b(?:href|src)="([^"]+)"/;
+const CONTENT_DETAIL_PATH = /^\/learn\/api\/v1\/courses\/([^/]+)\/contents\/([^/]+)$/;
 
 // A folder is not the only container: a Learning Module holds children too, under its own handler
 // key. Both say so the same way, with `isFolder` on whichever detail they carry, so that is what
@@ -84,14 +87,89 @@ export function attachmentName(item, attachment) {
   );
 }
 
+export function itemPresentationOf(item, { courseId } = {}) {
+  if (isFolder(item)) return null;
+  const detail = item.contentDetail?.[item.contentHandler];
+  if (isSupplied(courseId)) {
+    if (
+      item.contentHandler === ASSESSMENT_HANDLER &&
+      detail?.test &&
+      typeof detail.test === "object" &&
+      !Array.isArray(detail.test)
+    ) {
+      const dueDate = personalDueDateOf(item);
+      if (dueDate) {
+        return {
+          kind: "assessment-card",
+          dueDate,
+          courseUrl: courseUrl(encodeURIComponent(courseId)),
+        };
+      }
+    }
+    if (item.contentHandler === COURSE_LINK_HANDLER) {
+      const targetContentId = courseLinkTargetOf(item, detail, courseId);
+      if (targetContentId) {
+        return {
+          kind: "course-link",
+          targetContentId,
+          courseUrl: courseUrl(encodeURIComponent(courseId)),
+        };
+      }
+    }
+  }
+
+  const url = externalLinkOf(item);
+  return url ? { kind: "external-link", url } : null;
+}
+
 // NTULearn has four names for the same thing, and which one an item uses is its handler's business
 // rather than anything the item declares — a SCORM package says `launchUrl` where an LTI placement
 // says `launchLink`. A name missing from this list is not a link that does not exist; it is a link
 // this repository throws away, which is what ML0004's seven SCORM topics were (#53).
-export function externalLinkOf(item) {
+function externalLinkOf(item) {
   const detail = Object.values(item.contentDetail ?? {})[0] ?? {};
   const link = detail.url || detail.launchUrl || detail.launchLink || detail.placement?.launchLink;
   return link ? absoluteUrl(link) : null;
+}
+
+function personalDueDateOf(item) {
+  const value = item.genericReadOnlyData?.dueDate;
+  if (typeof value !== "string") return null;
+  const parts = value.match(
+    /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/,
+  );
+  if (!parts) return null;
+  const [year, month, day] = parts.slice(1).map(Number);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1] ? new Date(value).toISOString() : null;
+}
+
+function courseLinkTargetOf(item, detail, courseId) {
+  if (
+    detail?.linkSourceTable !== "CONTENT" ||
+    detail.courseContent !== item.id ||
+    !isSupplied(detail.linkSourceId) ||
+    detail.linkSourceId === item.id ||
+    !isSupplied(item.contentDetailUrl)
+  ) {
+    return null;
+  }
+  try {
+    const url = new URL(absoluteUrl(item.contentDetailUrl));
+    if (url.username || url.password || /[?#]/.test(url.href) || !isNtulearnUrl(url)) return null;
+    const rawPath = item.contentDetailUrl.replace(/^https:\/\/[^/]+/, "");
+    if (!CONTENT_DETAIL_PATH.test(rawPath)) return null;
+    const parts = url.pathname.match(CONTENT_DETAIL_PATH);
+    if (
+      parts &&
+      decodeURIComponent(parts[1]) === courseId &&
+      decodeURIComponent(parts[2]) === detail.linkSourceId
+    ) {
+      return detail.linkSourceId;
+    }
+  } catch {}
+  return null;
 }
 
 // The element's own link is the live one. `resourceUrl` inside `data-bbfile` is a snapshot taken
