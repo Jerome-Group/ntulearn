@@ -1,5 +1,9 @@
 # Current recorded page revisions use their accepted bytes for renumber proof
 
+The timing and concurrency interpretation of renumber proof is clarified by
+[ADR-0031](0031-renumber-claims-preserve-concurrent-edits.md). Current rendered revision and complete
+accepted digest and length remain required. Proof checks the captured inode and does not lock future writes.
+
 For positively recorded current content-item pages, renumber proves the current rendered-source
 revision and the complete accepted file digest and byte count. This narrowly supersedes
 [ADR-0010](0010-renumbering-is-its-own-command-and-renames-only-what-it-can-prove.md)'s literal walk-text proof for these pages, which

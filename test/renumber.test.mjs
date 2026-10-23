@@ -200,36 +200,26 @@ async function withFolder(items) {
   return { destination, state, items };
 }
 
-test("renames a folder whose own number moved, and carries its files with it", async () => {
+test("refuses folder renumbering and leaves its files at their existing paths", async () => {
   const at = await withFolder(WEEK(1));
-
+  const before = await directoryDigests(at.destination);
   const result = await renumber(at);
-
-  assert.deepEqual((await readdir(at.destination)).sort(), [
-    "02 Week 1",
-    "Course.md",
-    "Last synced.md",
-    "Source editions",
-    "Sync status.json",
-  ]);
-  assert.deepEqual(await readdir(join(at.destination, "02 Week 1")), ["01 Slides.pdf"]);
-  assert.deepEqual(
-    result.renamed.map(({ from, to }) => `${from} -> ${to}`),
-    ["01 Week 1 -> 02 Week 1"],
-  );
-  assert.equal(result.renamed[0].file, "Week 1");
+  assert.deepEqual(await directoryDigests(at.destination), before);
+  assert.deepEqual(result.renamed, []);
+  assert.equal(result.blocked.length, 1);
+  assert.equal(result.blocked[0].file, "Week 1");
+  assert.equal(result.blocked[0].from, "01 Week 1");
+  assert.equal(result.blocked[0].to, "02 Week 1");
+  assert.match(result.blocked[0].why, /Folder renumbering is unavailable.*rename it manually/);
+  assert.equal(renumberReport([result]).blocked, 1);
 });
 
-// The file inside it is at a path that has moved while its own name is already right, so there is
-// nothing to do to it. Counting it as a candidate made it ask for the name it already had, which
-// `link` refuses — and it was reported `blocked`, reddening a run that had done nothing wrong.
-test("says nothing about a file whose folder moved but whose own number did not", async () => {
+test("folder refusal does not count an unchanged child as a blocked file move", async () => {
   const at = await withFolder(WEEK(1));
-
   const result = await renumber(at);
-
-  assert.equal(result.renamed.length, 1);
-  assert.ok(!("blocked" in result));
+  assert.equal(result.renamed.length, 0);
+  assert.equal(result.blocked.length, 1);
+  assert.equal(result.blocked[0].file, "Week 1");
   assert.ok(!("kept" in result));
 });
 
@@ -868,7 +858,7 @@ async function pageFixture(t) {
   return { destination, state, current };
 }
 
-test("current page editions retain complete bytes through leaf and parent renumbering", async (t) => {
+test("current page editions retain complete bytes through leaf moves while parent moves refuse", async (t) => {
   for (const leafPosition of [0, 1]) {
     await t.test(leafPosition ? "leaf and parent" : "parent only", async (t) => {
       const at = await pageFixture(t);
@@ -880,26 +870,24 @@ test("current page editions retain complete bytes through leaf and parent renumb
       const before = await directoryDigests(at.destination);
       const stateBefore = JSON.stringify(at.state);
       const oldPath = `01 Folder/${at.current}`;
-      const newPath = `02 Folder/${at.current.replace(/^01 /, leafPosition ? "02 " : "01 ")}`;
+      const newPath = `01 Folder/${at.current.replace(/^01 /, leafPosition ? "02 " : "01 ")}`;
       const result = await renumberCourse({
         client: source,
         course: course(at.destination),
         state: at.state,
       });
-      assert.equal(result.renamed.length, leafPosition ? 2 : 1);
+      assert.equal(result.renamed.length, leafPosition ? 1 : 0);
       if (leafPosition)
         assert.deepEqual(
           result.renamed.map(({ from, to }) => ({ from, to })),
-          [
-            { from: oldPath, to: newPath },
-            { from: "01 Folder", to: "02 Folder" },
-          ],
+          [{ from: oldPath, to: newPath }],
         );
       assert.ok(!result.kept);
-      assert.ok(!result.blocked);
+      assert.equal(result.blocked.length, 1);
+      assert.match(result.blocked[0].why, /Folder renumbering is unavailable/);
       assert.equal(await fileDigest(join(at.destination, newPath)), before[oldPath]);
       assert.equal(
-        await fileDigest(join(at.destination, "02 Folder", "01 Page.md")),
+        await fileDigest(join(at.destination, "01 Folder", "01 Page.md")),
         before["01 Folder/01 Page.md"],
       );
       assert.equal(JSON.stringify(at.state), stateBefore);
@@ -915,7 +903,7 @@ test("current page editions retain complete bytes through leaf and parent renumb
       );
       const verified = await verifyCourse({ client: source, course: course(at.destination) });
       assert.deepEqual(verified.missing, []);
-      assert.ok(!verified.renumbered);
+      assert.ok(verified.renumbered.some((each) => each.onDisk.startsWith("01 Folder/")));
       assert.deepEqual(
         (await renumberCourse({ client: source, course: course(at.destination), state: at.state }))
           .renamed,
@@ -931,7 +919,7 @@ test("current page editions retain complete bytes through leaf and parent renumb
         assert.equal(synced.newEditions, 0);
         assert.equal(synced.markdownWritten, 0);
         assert.deepEqual(
-          (await readdir(join(at.destination, "02 Folder"))).sort(),
+          (await readdir(join(at.destination, "01 Folder"))).sort(),
           ["01 Page.md", newPath.split("/").at(-1)].sort(),
         );
         assert.equal(await fileDigest(join(at.destination, newPath)), before[oldPath]);
@@ -942,10 +930,11 @@ test("current page editions retain complete bytes through leaf and parent renumb
         course: course(at.destination),
         state: at.state,
       });
-      assert.equal(laterRenumber.renamed.length, leafPosition ? 2 : 1);
+      assert.equal(laterRenumber.renamed.length, leafPosition ? 1 : 0);
+      assert.equal(laterRenumber.blocked.length, 1);
       const laterVerified = await verifyCourse({ client: later, course: course(at.destination) });
       assert.deepEqual(laterVerified.missing, []);
-      assert.ok(!laterVerified.renumbered);
+      assert.ok(laterVerified.renumbered.some((each) => each.onDisk.startsWith("01 Folder/")));
       const laterSynced = await syncCourse({
         client: later,
         course: course(at.destination),
@@ -957,7 +946,7 @@ test("current page editions retain complete bytes through leaf and parent renumb
         await fileDigest(
           join(
             at.destination,
-            "03 Folder",
+            "01 Folder",
             at.current.replace(/^01 /, leafPosition ? "03 " : "01 "),
           ),
         ),
@@ -967,7 +956,7 @@ test("current page editions retain complete bytes through leaf and parent renumb
   }
 });
 
-test("edited current page edition refuses movement while its parent can move", async (t) => {
+test("edited current page edition and its parent both refuse movement", async (t) => {
   const at = await pageFixture(t);
   await writeFile(join(at.destination, "01 Folder", at.current), "Student page annotation");
   const result = await renumberCourse({
@@ -977,9 +966,11 @@ test("edited current page edition refuses movement while its parent can move", a
   });
   assert.deepEqual(
     result.renamed.map(({ from, to }) => ({ from, to })),
-    [{ from: "01 Folder", to: "02 Folder" }],
+    [],
   );
-  assert.equal(result.kept[0].onDisk, `02 Folder/${at.current}`);
+  assert.equal(result.blocked.length, 1);
+  assert.match(result.blocked[0].why, /Folder renumbering is unavailable/);
+  assert.equal(result.kept[0].onDisk, `01 Folder/${at.current}`);
   assert.match(result.kept[0].why, /changed since the sync wrote/);
   assert.equal(
     await readFile(join(at.destination, result.kept[0].onDisk), "utf8"),
@@ -1004,4 +995,60 @@ test("child rename reports its actual parent when the desired parent is occupied
     await readFile(join(at.destination, "02 Folder", "Student.md"), "utf8"),
     "Student folder",
   );
+});
+
+test("retained claims stop a course before reading upstream or planning any moves", async (t) => {
+  const at = await reordered();
+  t.after(() => rm(at.destination, { recursive: true, force: true }));
+  const claim = join(at.destination, ".ntulearn-renumber-incomplete");
+  await mkdir(claim, { mode: 0o700 });
+  await writeFile(join(claim, "payload"), "Retained student bytes");
+  const before = await directoryDigests(at.destination);
+  const stateBefore = JSON.stringify(at.state);
+  const source = {
+    readCourse: async () => {
+      throw new Error("must not read upstream");
+    },
+  };
+  const first = await renumberCourse({
+    client: source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  const second = await renumberCourse({
+    client: source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.renamed, []);
+  assert.equal(first.recoveries[0].claimPath, claim);
+  assert.equal(renumberReport([first]).recoveries, 1);
+  assert.deepEqual(await directoryDigests(at.destination), before);
+  assert.equal(JSON.stringify(at.state), stateBefore);
+});
+
+test("a claim discovered after planning stops the remaining course moves", async (t) => {
+  const at = await reordered();
+  t.after(() => rm(at.destination, { recursive: true, force: true }));
+  const source = client(at.items);
+  let inserted = false;
+  source.readAttachments = async (_courseId, item) => {
+    if (!inserted) {
+      inserted = true;
+      const claim = join(at.destination, ".ntulearn-renumber-interrupted");
+      await mkdir(claim);
+      await writeFile(join(claim, "payload"), "Retained student bytes");
+    }
+    return attachmentsOf(item);
+  };
+  const result = await renumberCourse({
+    client: source,
+    course: course(at.destination),
+    state: at.state,
+  });
+  assert.deepEqual(result.renamed, []);
+  assert.equal(result.recoveries.length, 1);
+  assert.equal(await readFile(join(at.destination, "01 Hand00.pdf"), "utf8"), "pdf");
+  assert.equal(await readFile(join(at.destination, "02 Hand01.pdf"), "utf8"), "pdf");
 });

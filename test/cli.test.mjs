@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { cp, mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, symlink, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,4 +118,70 @@ test("offline usage failures preserve structured output and nonzero exits", asyn
     assert.equal(result.stderr, "");
     assert.equal(JSON.parse(result.stdout).status, "blocked");
   }
+});
+
+// Only the upstream client is synthetic. The copied CLI, config, mover and reports are production code.
+test("renumber CLI exits 1 and explains folder refusal and retained recovery paths", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-renumber-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(fileURLToPath(new URL("../src", import.meta.url)), join(root, "src"), {
+    recursive: true,
+  });
+  await symlink(
+    fileURLToPath(new URL("../node_modules", import.meta.url)),
+    join(root, "node_modules"),
+  );
+  const destination = join(root, "course");
+  await mkdir(join(destination, "01 Folder"), { recursive: true });
+  const config = join(root, "courses.json");
+  await writeFile(
+    config,
+    JSON.stringify({
+      profilePath: join(root, "unused-profile"),
+      statePath: join(root, "state.json"),
+      courses: [{ key: "FIXTURE", courseId: "synthetic", destination }],
+    }),
+  );
+  await writeFile(
+    join(root, "src/ntulearn/client.mjs"),
+    `
+    export async function openClient() {
+      return {
+        readCourse: async () => ({course: {displayName: "Synthetic course"}, announcements: [], conversations: [], items: [{id: "folder", parentId: null, title: "Folder", position: 1, contentHandler: "resource/x-bb-folder"}]}),
+        readAttachments: async () => [],
+        close: async () => {},
+      };
+    }
+  `,
+  );
+  const run = () =>
+    new Promise((done) =>
+      execFile(
+        process.execPath,
+        [join(root, "src/cli.mjs"), "renumber", "all"],
+        { env: { ...process.env, NTULEARN_CONFIG_PATH: config }, timeout: 5000 },
+        (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr }),
+      ),
+    );
+  const folder = await run();
+  assert.equal(folder.code, 1, folder.stderr);
+  const report = JSON.parse(folder.stdout);
+  assert.equal(report.blocked, 1);
+  assert.equal(report.renamed, 0);
+  assert.match(
+    report.courses[0].blocked[0].why,
+    /Folder renumbering is unavailable.*rename it manually/,
+  );
+  assert.match(folder.stderr, /1 blocked moves and 0 recovery claims/);
+  const claim = join(destination, ".ntulearn-renumber-interrupted");
+  await mkdir(claim);
+  await writeFile(join(claim, "payload"), "Retained student bytes");
+  const recovery = await run();
+  assert.equal(recovery.code, 1, recovery.stderr);
+  const recovered = JSON.parse(recovery.stdout);
+  assert.equal(recovered.recoveries, 1);
+  assert.equal(recovered.courses[0].recoveries[0].claimPath, claim);
+  assert.match(recovered.courses[0].recoveries[0].why, /restore only to an empty name/);
+  assert.match(recovery.stderr, /0 blocked moves and 1 recovery claims/);
+  assert.equal(await readFile(join(claim, "payload"), "utf8"), "Retained student bytes");
 });
