@@ -24,6 +24,10 @@ export async function loadConfig(root, configPath = CONFIG_PATH) {
   } catch (error) {
     throw new Error(`${configPath} is not valid JSON: ${error.message}`, { cause: error });
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(
+      `${configPath} must contain a JSON object. Copy ${EXAMPLE_PATH} to it and edit it.`,
+    );
 
   const driveMountPath = readDriveMountPath(parsed.driveMountPath, root);
   const courses = await readCourses(parsed.courses ?? [], root);

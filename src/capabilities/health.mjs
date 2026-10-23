@@ -90,7 +90,7 @@ export async function localHealth({
   );
   let reachable = 0;
   for (const course of config.courses) {
-    const info = await metadata(course.destination, inspect);
+    const info = await metadata(course.destination, async (path) => inspect(await canonical(path)));
     if (
       info?.isDirectory() &&
       (!config.driveMountPath ||
