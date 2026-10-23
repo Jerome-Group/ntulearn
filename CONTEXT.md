@@ -33,9 +33,11 @@ after it invites the deletion `docs/adr/0003` refuses
 
 **Renumber**:
 Renaming what a *destination* already holds so its names carry the order NTULearn gives the course
-today. It is not a *sync* and never happens during one: it renames only a file it can prove the
-sync wrote and nothing has touched since, leaves every other file exactly where it is, and deletes
-nothing (`docs/adr/0010`).
+today. It is not a *sync* and never happens during one. It captures and proves a regular file
+against accepted sync bytes, then exclusively publishes the same inode inside its existing
+parent. Concurrent replacements of the old name survive. Failed captures remain for explicit
+recovery, and folder moves refuse. Proof observes bytes rather than locking future writers
+(`docs/adr/0010`, `docs/adr/0031`).
 _Avoid_: rename, tidy, reorganise — the first says nothing about which names or why, and the other
 two promise a freedom over somebody's folder this does not take
 
@@ -156,7 +158,8 @@ at the number it was written with. Nothing is missing because of one: it is the 
 number. `verify` counts it present and names it, and only where the name inside the number is its
 own folder's alone (`docs/adr/0005`). A sync leaves it where it is rather than writing a second copy
 beside it, and a renumbered folder is where its children go, so a reordered course grows in one
-place (`docs/adr/0009`). Putting the number back is *renumber*'s and nothing else's.
+place (`docs/adr/0009`). Putting a file's number back is *renumber*'s and nothing else's. Folder
+number changes require an Owner decision outside the command (`docs/adr/0031`).
 _Avoid_: misplaced, stale, out of date — all three say the file is wrong, and only its position in
 an `ls` is
 

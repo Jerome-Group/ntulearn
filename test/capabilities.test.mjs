@@ -40,3 +40,17 @@ test("indexed check exposes explicit private evidence ownership, bounds and anon
   assert.equal(route.effects.network, false);
   assert.equal(route.effects.browser, false);
 });
+
+test("renumber describes retained claims, folder refusals and its native verification routes", () => {
+  const route = capabilityIndex("renumber").commands[0];
+  assert.equal(route.effects.ownerOnly, true);
+  assert.ok(route.effects.writes.includes("private-renumber-claims"));
+  assert.match(route.renumberProtocol.publication, /never unlink or overwrite public endpoints/);
+  assert.match(route.renumberProtocol.recovery, /Retain every failed capture/);
+  assert.match(route.renumberProtocol.folders, /Refused/);
+  assert.equal(route.renumberProtocol.limits.manifestBytes, 4096);
+  assert.match(route.exitCodes[1], /recovery-claims/);
+  assert.ok(route.code.includes("src/sync/renumber-files.mjs"));
+  assert.ok(route.verification.tests.includes("test/renumber-files.test.mjs"));
+  assert.ok(route.verification.tests.includes("test/cli.test.mjs"));
+});
