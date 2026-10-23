@@ -414,14 +414,32 @@ halves.
 It selects the current source revision before proving permission to move it. Attachments require a
 State digest and compatible source identity. Their held bytes must match that digest, and current
 provenance, when present, must agree too. Losing State still prevents attachment renumbering.
-Ordinary Markdown documents require the text the walk
-is holding. A positively recorded current page instead requires its rendered-source revision and
-the complete accepted digest, including its immutable edition footer. That footer can retain an old
-link after a parent rename; sync preserves its accepted bytes. [ADR-0029](docs/adr/0029-current-page-renumber-proof.md)
-records this narrow proof change. An annotated file fails the proof, stays at its held leaf name,
-and appears under `kept` with the reason.
-Nothing is deleted, nothing is written over, nothing moves between folders, and a name that already
-holds something is reported under `blocked` rather than taken.
+Ordinary Markdown documents require the text the walk is holding. A positively recorded current
+page instead requires its rendered-source revision and the complete accepted digest, including its immutable edition footer. That footer can retain an old
+link after an earlier parent rename; sync preserves its accepted bytes. [ADR-0029](docs/adr/0029-current-page-renumber-proof.md)
+records this narrow proof change. A file already annotated when permission is checked stays at
+its held leaf name and appears under `kept` with the reason.
+Files keep their inode and change only their numeric prefix inside their actual parent. Public
+names are never overwritten or unlinked. A name already occupied is reported under `blocked`.
+Folder moves also appear under `blocked`; portable Node cannot exclusively publish a directory
+rename. Keep that folder name or rename it manually after checking both names. Files inside it
+can still be renumbered.
+
+Before moving a file, renumber writes a complete intent into a private `0700` sibling directory
+named `.ntulearn-renumber-<id>`, then atomically captures the old name as its `payload`. It proves
+that exact regular inode before exclusively linking it at the new name. An editor replacing the
+old public name keeps its replacement. Writes through an already open descriptor or another hard
+link follow the renamed inode, including writes after proof; proof does not freeze future bytes.
+
+A failure after preparation retains the claim and reports its absolute `claimPath` under
+`recoveries`. An empty old name may be restored exclusively, but the captured payload stays even
+when restoration succeeds. Inspect the claim and both public names, preserve the captured bytes,
+and restore only to an empty name. Remove the claim only after verifying recovery, then retry.
+A retained or malformed claim stops new course moves before planning. Discovery is read-only and
+bounded to 10,000 entries, 64 directory levels, 128 claims, and 4 KiB per intent; incomplete
+inspection also refuses new work. Renumber never silently replays or deletes recovery data.
+[ADR-0031](docs/adr/0031-renumber-claims-preserve-concurrent-edits.md) records the concurrency and
+process-interruption scope. Power-loss durability and hostile ancestor replacement are unproved.
 
 ```json
 {
@@ -454,14 +472,17 @@ holds something is reported under `blocked` rather than taken.
 }
 ```
 
-It exits `1` only when something was `blocked`. A `kept` file is the command working as intended,
-and the report names it on every run so a destination that has gone permanently mixed says so.
+It exits `1` when a move is `blocked` or a claim requires recovery. The summary counts
+`recoveries`, and each course names its retained paths and next actions. A `kept` file is the
+command working as intended, and the report names it on every run so a destination that has gone
+permanently mixed says so.
 
 **A rename breaks anything holding the old path as text** — a link from your own notes, a symlink, a
 script. What survives is anything tracking the file rather than its name: a macOS alias, and a Google
-Drive share link, since Drive carries a rename across and the file keeps its id. The digest proves
-nobody edited the file; it proves nothing about who linked to it. That is the cost, and it is why you
-run this rather than the sync doing it for you.
+Drive share link, since Drive carries a rename across and the file keeps its id. The digest observes
+accepted bytes at proof time; it proves nothing about who linked to the file or who can still write
+through an open descriptor. That is the cost, and it is why you run this rather than the sync doing
+it for you.
 
 ### What `complete: true` does not cover
 

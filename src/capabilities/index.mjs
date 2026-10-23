@@ -59,7 +59,10 @@ const routes = {
       "test/source-provenance.test.mjs",
     ],
   ],
-  renumber: [["src/sync/renumber.mjs"], ["test/renumber.test.mjs"]],
+  renumber: [
+    ["src/sync/renumber.mjs", "src/sync/renumber-files.mjs"],
+    ["test/renumber.test.mjs", "test/renumber-files.test.mjs", "test/cli.test.mjs"],
+  ],
   watchdog: [
     ["src/watchdog/run.mjs", "src/watchdog/verdict.mjs"],
     ["test/watchdog-run.test.mjs", "test/watchdog.test.mjs"],
@@ -221,8 +224,32 @@ const commands = [
     "renumber",
     "renumber",
     [...livePrerequisites, "Drive-mounted", "Owner-rename-decision"],
-    { ...live, writes: ["proven-unmodified-course-paths"] },
-    { arguments: courseArgument, risk: "rename" },
+    { ...live, writes: ["course-file-names", "private-renumber-claims"] },
+    {
+      arguments: courseArgument,
+      risk: "rename",
+      exitCodes: {
+        0: "completed-or-ordinary-kept-files",
+        1: "failure-blocked-moves-or-recovery-claims",
+      },
+      renumberProtocol: {
+        publication:
+          "Claim into private 0700 sibling after complete intent, prove captured regular inode, exclusive hard link; never unlink or overwrite public endpoints",
+        recovery:
+          "Retain every failed capture, even after exclusive restoration; read-only discovery gates new work; Owner verifies recovery before removing claims",
+        folders: "Refused; portable Node cannot exclusively publish a directory rename",
+        limits: {
+          discoveryEntries: 10000,
+          directoryDepth: 64,
+          claimsInspected: 128,
+          manifestBytes: 4096,
+        },
+      },
+      limitations: [
+        "Proof observes one captured inode; later writes through open descriptors or hard links follow that inode and are not frozen.",
+        "Requires no-follow and nonblocking inspection plus same-filesystem hard links. Process interruption covered; hostile ancestor replacement, filesystem corruption and power-loss durability unproved.",
+      ],
+    },
   ),
   command(
     "watchdog",

@@ -1,6 +1,11 @@
 # Renumbering is its own command, and it renames only what it can prove it wrote
 
-**Narrowed by [ADR-0029](0029-current-page-renumber-proof.md):** positively recorded current content-item pages use their rendered-source revision and complete accepted digest instead of literal walk-text proof. Attachment State requirements and all other guarantees below remain.
+Concurrency, recovery, folder movement, the no-temporary-name rationale, the unconditional
+old-path-on-refusal promise, and claims that proof excludes future edits are superseded by
+[ADR-0031](0031-renumber-claims-preserve-concurrent-edits.md). The separate opt-in command,
+unchanged-byte permission policy, same-parent scope, path-link cost, and read-only State remain.
+
+**Narrowed by [ADR-0029](0029-current-page-renumber-proof.md):** positively recorded current content-item pages use their rendered-source revision and complete accepted digest instead of literal walk-text proof. Attachment State requirements remain; concurrency and folder guarantees are subject to ADR-0031 above.
 
 `npm run renumber -- <course|all>` puts a destination back into the order NTULearn gives the course
 today. It renames a file only when it can prove the sync wrote it and nothing has touched it since —

@@ -145,11 +145,11 @@ async function renumber(config, key) {
   const report = renumberReport(courses, refused);
 
   await writeLine(stdout, asJson(report));
-  if (!report.blocked) return 0;
+  if (!report.blocked && !report.recoveries) return 0;
 
   await writeLine(
     stderr,
-    `${report.blocked} could not be renumbered: the name each wants is held by something else.`,
+    `Renumber needs attention with ${report.blocked ?? 0} blocked moves and ${report.recoveries ?? 0} recovery claims. Follow each report reason; inspect and preserve retained claim bytes before retrying.`,
   );
   return 1;
 }
