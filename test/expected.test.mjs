@@ -156,3 +156,48 @@ test("expects each announcement where the sync files it", async () => {
     "Announcements/2026-01-06 Welcome.md",
   ]);
 });
+
+test("recovers personal assessment dates and validated course links as useful documents", async () => {
+  const found = await expected([
+    {
+      id: "assessment",
+      parentId: null,
+      position: 0,
+      title: "Weekly check",
+      contentHandler: "resource/x-bb-asmt-test-link",
+      genericReadOnlyData: { dueDate: "2026-10-30T15:59:00.000Z" },
+      contentDetail: { "resource/x-bb-asmt-test-link": { test: {} } },
+    },
+    {
+      id: "course-link",
+      parentId: null,
+      position: 1,
+      title: "Weekly conversation",
+      contentHandler: "resource/x-bb-courselink",
+      contentDetailUrl: "/learn/api/v1/courses/_9_1/contents/target",
+      contentDetail: {
+        "resource/x-bb-courselink": {
+          courseContent: "course-link",
+          linkSourceTable: "CONTENT",
+          linkSourceId: "target",
+        },
+      },
+    },
+    {
+      id: "blank-link",
+      parentId: null,
+      position: 2,
+      title: "Blank link",
+      contentHandler: "resource/x-bb-externallink",
+      contentDetail: { "resource/x-bb-externallink": {} },
+    },
+  ]);
+
+  assert.deepEqual(pathsOf(found, "document"), [
+    "Course.md",
+    "01 Weekly check.md",
+    "02 Weekly conversation.md",
+  ]);
+  assert.deepEqual(pathsOf(found, "uncopied"), ["03 Blank link.md"]);
+  assert.match(found.find((each) => each.item?.id === "assessment").content, /2026-10-30T15:59/);
+});
