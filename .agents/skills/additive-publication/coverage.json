@@ -1,11 +1,11 @@
 {
-  "syncCommit": "705727602b72866c188cef7b83a66f5bc919708b",
+  "syncCommit": "4d783d7f6ece6a4fc9fdc5b3363902e72ba1a147",
   "sources": {
     "src/sync/files.mjs": {
       "imports": [
         "import { Buffer } from \"node:buffer\";",
         "import { createHash, randomUUID } from \"node:crypto\";",
-        "import { link, lstat, readFile, rename, stat, unlink } from \"node:fs/promises\";",
+        "import { link, lstat, readFile, stat, unlink } from \"node:fs/promises\";",
         "import { writeAtomically } from \"../atomic.mjs\";"
       ],
       "functions": {

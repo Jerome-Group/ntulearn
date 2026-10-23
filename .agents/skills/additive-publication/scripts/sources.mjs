@@ -61,7 +61,11 @@ export async function mirrorSources(sources, skill, mirror, evidence, mutant) {
     const originalImport = text.match(/^import .+ from "node:fs\/promises";$/m)?.[0];
     assert(originalImport, `Missing filesystem import in ${path}. Review mapping.`);
     const importLine = text.split("\n").indexOf(originalImport) + 1;
-    const replacement = originalImport.replace(
+    const filesystemImport =
+      mutant === "replace" && path === "src/sync/files.mjs" && !/\brename\b/.test(originalImport)
+        ? originalImport.replace("{ ", "{ rename, ")
+        : originalImport;
+    const replacement = filesystemImport.replace(
       '"node:fs/promises"',
       JSON.stringify(path === "src/atomic.mjs" ? "../native-fs.mjs" : "../../native-fs.mjs"),
     );
