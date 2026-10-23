@@ -1,0 +1,29 @@
+{
+  "syncCommit": "c9ffeb8a4b138773ade93ba72e053c9d97032186",
+  "sources": {
+    "src/sync/files.mjs": {
+      "imports": [
+        "import { Buffer } from \"node:buffer\";",
+        "import { createHash, randomUUID } from \"node:crypto\";",
+        "import { link, lstat, readFile, rename, stat, unlink } from \"node:fs/promises\";",
+        "import { writeAtomically } from \"../atomic.mjs\";"
+      ],
+      "functions": {
+        "writeWithoutReplacing": "f380b6964783c96501a276ac3c8303506acfc2d901560dd3fbf744f221d47c28",
+        "identicalOrAbsent": "f87839ee683cb7b41a8ac2774e55130a0404e2435e8a235132264a4cf3da3bac",
+        "destinationConflict": "4ce37f034c646da94c44ed312796c12bb07bf37cd2d8c4e7fc125a28ed86bcc0",
+        "missingAsNull": "fed4b455b1a4b05dc56090d4539cb9bcc5881429b6ad17d2e3cc41f62c4a32bb"
+      }
+    },
+    "src/atomic.mjs": {
+      "imports": [
+        "import { randomUUID } from \"node:crypto\";",
+        "import { mkdir, rename, unlink, writeFile } from \"node:fs/promises\";",
+        "import { dirname } from \"node:path\";"
+      ],
+      "functions": {
+        "writeAtomically": "4e55f34b469b7d2a02dc24a32d4f328cc6d026816a0e62f072939e0149ef7fd2"
+      }
+    }
+  }
+}

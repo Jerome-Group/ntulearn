@@ -16,6 +16,7 @@ Read saved courses with `npm run library`.
 | Configuration | Reading `config/courses.json` — which courses sync, where each one goes and physical course-tree overlap checks. The tracked example is the documented shape | `src/config.mjs`, `config/courses.example.json` |
 | NTULearn | Everything that speaks to NTULearn: the saved session and browser signal ownership, the read API, and the fields read off a content item | `src/ntulearn/` |
 | Verification driver | Real CLI journeys, retained proof and feature map | `.agents/skills/verify/SKILL.md`, `.agents/skills/verify/features/README.md` |
+| Formal publication checks | Bounded additive publication model and deterministic native source witnesses | `.agents/skills/additive-publication/SKILL.md` |
 | Decision trail | Reviewed retirement decisions and verification evidence references | `.audit/media-retirement.tsv` |
 | Sync | Everything that has a destination in hand: the course walk and its portable receipt, occupied-file conflict protection, additive identity/revision source editions, where each file lands, the Markdown documents, what has already been downloaded, the read that holds it against NTULearn, and the one command that renames in it | `src/sync/` |
 | Local state | The saved browser session and the sync state. Ignored, never committed | `.data/` (untracked) |

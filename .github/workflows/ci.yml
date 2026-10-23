@@ -83,11 +83,16 @@ jobs:
             node .agents/skills/verify/scripts/drive.mjs "$feature"
           done
 
+      - name: Check additive publication model and native witnesses
+        run: |
+          node .agents/skills/additive-publication/scripts/setup.mjs
+          node .agents/skills/additive-publication/scripts/check.mjs --self-test
+
       - name: Show failed verification evidence
         if: failure()
         run: |
           if [ -d .scratch ]; then
-            find .scratch -maxdepth 2 -type f \
-              \( -path '.scratch/check-evidence-ci/*.log' -o -path '.scratch/check-evidence-ci/*.invocation.json' -o -path '.scratch/verify-*/*.json' \) \
+            find .scratch -maxdepth 3 -type f \
+              \( -path '.scratch/check-evidence-ci/*.log' -o -path '.scratch/check-evidence-ci/*.invocation.json' -o -path '.scratch/verify-*/*.json' -o -path '.scratch/formal-additive-*/*.json' -o -path '.scratch/formal-additive-*/*/tlc.log' \) \
               -print -exec cat {} \;
           fi
