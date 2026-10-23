@@ -252,37 +252,40 @@ function captureCommand({ root, runner, command, timeoutAt }) {
     const killGroup = runner.killProcessGroup;
     let stdout = "";
     let stderr = "";
-    let settled = false;
+    let failed = false;
+    let timedOut = false;
 
-    child.stdout.on("data", (chunk) => {
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
       stderr += chunk;
     });
-    child.once("error", (error) => finish(null, null, `${stderr}${error.message}\n`));
-    child.once("close", (code, signal) => finish(code, signal, stderr));
+    child.once("error", (error) => {
+      failed = true;
+      stderr += `${error.message}\n`;
+      clearTimeout(timeout);
+    });
+    child.once("close", (code, signal) => finish(failed ? null : code, failed ? null : signal));
 
     const remaining = Math.max(0, timeoutAt - Date.now());
     const timeout = schedule(() => {
+      timedOut = true;
       killGroup(child.pid);
-      finish(1, "SIGKILL", stderr, true);
     }, remaining);
 
-    function finish(exitCode, signal, errorOutput, timedOut = false) {
-      if (settled) return;
-      settled = true;
+    function finish(exitCode, signal) {
       clearTimeout(timeout);
       const report = parseReport(stdout);
       resolveResult({
         command,
-        exitCode: exitCode ?? 1,
-        signal,
+        exitCode: timedOut ? 1 : (exitCode ?? 1),
+        signal: timedOut ? "SIGKILL" : signal,
         timedOut,
         crashed: !timedOut && report === null,
         durationMs: Date.now() - started,
         stdout,
-        stderr: errorOutput,
+        stderr,
         report,
       });
     }
