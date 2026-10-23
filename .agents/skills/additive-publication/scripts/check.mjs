@@ -93,7 +93,7 @@ async function native(sources, label, mutant = null) {
   await mkdir(directory);
   const fixtureRoot = await mkdtemp(join(tmpdir(), "ntulearn-publication-"));
   const mirror = join(fixtureRoot, "mirror");
-  let settled = false;
+  let settled = true;
   try {
     await mirrorSources(sources, skill, mirror, directory, mutant);
     const scenarios =
