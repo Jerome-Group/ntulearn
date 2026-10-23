@@ -1,10 +1,13 @@
 import { Buffer } from "node:buffer";
+import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
 export async function readEvidence(path, maximumBytes = 1024 * 1024) {
+  if (!(constants.O_NOFOLLOW > 0) || !(constants.O_NONBLOCK > 0))
+    return { status: "failed", code: "EVIDENCE_UNREADABLE" };
   let handle;
   try {
-    handle = await open(path, "r");
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = await handle.stat();
     if (!info.isFile() || info.size > maximumBytes)
       return { status: "failed", code: "EVIDENCE_SIZE" };
