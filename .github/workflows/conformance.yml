@@ -51,4 +51,4 @@ jobs:
     # `github-actions` ecosystem resolves a version from tags and releases, and against an untagged
     # repository it reports `No update needed` however stale the pin is (ADR-0046). It has never yet
     # been seen doing so, which is why the publish no longer waits to find out.
-    uses: Jerome-Group/.github/.github/workflows/conformance.yml@2e59f289d3ad3ffae4801959dca3ca0338efd5fa
+    uses: Jerome-Group/.github/.github/workflows/conformance.yml@a2d36ba8b086d5150ce10ab048aa98ccc9c9b6ce
