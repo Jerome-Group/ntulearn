@@ -13,6 +13,7 @@ const ROOT =
 const snapshot = (links) => ({
   course: { id: "_9_1", displayId: "SYNTHETIC-101", displayName: "Synthetic course" },
   items: [],
+  conversations: [],
   announcements: [
     {
       id: "_7_1",
@@ -28,7 +29,11 @@ test("announcement PDFs are missing before sync and present after additive downl
   const urls = [`${ROOT}Review.pdf`, `${ROOT}Formulas.pdf`];
   const downloaded = [];
   const client = {
-    readCourse: async () => snapshot([...urls, urls[0]]),
+    readCourse: async () => {
+      const current = snapshot([urls[0], urls[0]]);
+      current.announcements[0].body.rawText = `<a href="${urls[1]}"></a>`;
+      return current;
+    },
     download: async (attachment) => {
       downloaded.push(attachment.resourceUrl);
       return {
@@ -38,13 +43,14 @@ test("announcement PDFs are missing before sync and present after additive downl
     },
   };
   const course = { key: "SYNTHETIC", courseId: "_9_1", destination };
+  const state = { version: 1, courses: {} };
   try {
     const before = await verifyCourse({ client, course });
     assert.equal(before.attachments, 2);
     assert.equal(before.missing.filter((entry) => entry.file.endsWith(".pdf")).length, 2);
-    const result = await syncCourse({ client, course, state: { version: 1, courses: {} } });
+    const result = await syncCourse({ client, course, state });
     assert.equal(result.downloaded, 2);
-    assert.deepEqual(downloaded.sort(), urls.sort());
+    assert.deepEqual(downloaded.sort(), [...urls].sort());
     for (const name of ["Review.pdf", "Formulas.pdf"])
       assert.equal(
         await readFile(join(destination, "Announcements", "_7_1", name), "utf8"),
@@ -53,6 +59,15 @@ test("announcement PDFs are missing before sync and present after additive downl
     const after = await verifyCourse({ client, course });
     assert.deepEqual(after.missing, []);
     assert.equal(after.attachments, 2);
+    const repeated = await syncCourse({ client, course, state });
+    assert.equal(repeated.downloaded, 0);
+    assert.equal(repeated.skipped, 2);
+    assert.equal(downloaded.length, 2);
+    for (const name of ["Review.pdf", "Formulas.pdf"])
+      assert.equal(
+        await readFile(join(destination, "Announcements", "_7_1", name), "utf8"),
+        "%PDF-synthetic",
+      );
   } finally {
     await rm(destination, { recursive: true, force: true });
   }
