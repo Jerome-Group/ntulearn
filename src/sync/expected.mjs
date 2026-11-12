@@ -1,3 +1,4 @@
+import { announcementAttachments } from "../ntulearn/announcement-attachments.mjs";
 import { courseUrl } from "../ntulearn/urls.mjs";
 import { itemPresentationOf, isFolder } from "../ntulearn/content.mjs";
 import {
@@ -45,6 +46,21 @@ export async function* expectedFiles({ client, courseId, snapshot }) {
         announcementDocument(announcement) +
         `\n[Upstream course](${courseUrl(encodeURIComponent(courseId))})\n`,
     };
+    for (const attachment of announcementAttachments(snapshot.course, announcement)) {
+      yield {
+        kind: "attachment",
+        item: { id: `announcement:${announcement.id}`, modifiedDate: announcement.modifiedDate },
+        attachment,
+        placement: placedFile(
+          {
+            trail: ANNOUNCEMENTS_FOLDER,
+            segments: [ANNOUNCEMENTS_FOLDER, safeSegment(announcement.id)],
+          },
+          safeSegment(attachment.fileName),
+          attachment.fileName,
+        ),
+      };
+    }
   }
 }
 
