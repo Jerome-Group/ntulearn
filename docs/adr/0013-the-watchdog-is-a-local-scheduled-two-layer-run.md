@@ -36,7 +36,10 @@ a second course-reading authority.
   digest then exposes the watchdog's own death without needing an observer for the observer. Delivery
   is a later dumb pipe over `latest.json`, not part of this decision.
 - **Retrying reds.** Only a crash or timeout with no usable report is retried, three attempts total.
-  A completed red is evidence the run understood and must remain visible under `docs/adr/0012`;
+  A diagnostic that sign-in remains at the identity provider stops after one attempt and points at
+  `npm run login`; waiting there does not establish that the session has expired. This applies to
+  either child, retaining a completed sync's evidence when verify cannot sign in. A completed red
+  is evidence the run understood and must remain visible under `docs/adr/0012`;
   retrying it would hammer NTULearn while hiding the signal that needs a person.
 - **Pre-checks beyond the configured Drive roots.** The watchdog requires the mount and each
   destination's first root below it to exist, preventing a 05:00 run from creating a phantom local

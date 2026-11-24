@@ -27,6 +27,7 @@ Preconditions: offline boundary proof needs no session. A full run needs Owner i
 
 - A yellow skipped lock is not a new successful copy. A green prior digest may be stale.
 - A missing, invalid, oversized, signalled, or contradictory child reply fails with an action to inspect this run's stderr or the launchd stderr log. Existing publications remain intact.
+- An identity-provider sign-in stall stops after one attempt and names `npm run login`, including when verify stopped after a completed sync. It does not establish session expiry. Ordinary reportless crashes and transient NTULearn timeouts still retry up to three attempts; confirmed lapses retain their existing verdict. Offline seam regressions cover this classification; the helper does not spend a live session to prove it.
 - Retry and publication wait for child close after timeout or error. Worker streams preserve split UTF-8; the outer reply drains beyond its 64 KiB retained cap and rejects invalid UTF-8. Offline refusal does not prove native descendant termination or live retries.
 - `latest.json` and offline `status` describe the last published digest. They cannot expose a failed attempt that never published.
 - Do not invoke internal `watchdog-locked`, acquire shared locks, clear state, or retry live work through this helper.
