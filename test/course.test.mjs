@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { attachmentsOf } from "../src/ntulearn/content.mjs";
 import { syncCourse } from "../src/sync/course.mjs";
+import { verifyCourse } from "../src/sync/verify.mjs";
 
 const ITEMS = [
   {
@@ -773,4 +774,45 @@ test("retains annotations at an earlier-number marked stand-in without creating 
   assert.equal(result.failures.length, 1);
   assert.deepEqual((await readdir(folder)).sort(), before);
   assert.equal(result.skipped, 1);
+});
+
+test("sync and audit count equivalent raw and display attachment URLs once", async (t) => {
+  const destination = await mkdtemp(join(tmpdir(), "ntulearn-equivalent-attachments-"));
+  t.after(() => rm(destination, { recursive: true, force: true }));
+  const relative = "/bbcswebdav/xid-123_1";
+  const absolute = `https://ntulearn.ntu.edu.sg${relative}`;
+  const embed = (url) =>
+    `<a data-bbfile="{&quot;fileName&quot;:&quot;Guide.pdf&quot;}" href="${url}">Guide</a>`;
+  const items = [
+    {
+      id: "guide",
+      parentId: null,
+      position: 0,
+      title: "Guide",
+      contentHandler: "resource/x-bb-document",
+      body: { rawText: embed(relative), displayText: embed(absolute) },
+    },
+  ];
+  const course = { key: "fixture", courseId: "synthetic", destination };
+  const state = { version: 1, courses: {} };
+  const fetched = [];
+  const source = client(async (attachment) => {
+    fetched.push(attachment.resourceUrl);
+    return { body: Buffer.from("fixture pdf"), headers: {} };
+  }, items);
+  const before = await verifyCourse({ client: source, course });
+  const first = await syncCourse({ client: source, course, state });
+  assert.deepEqual(first.failures, []);
+  assert.equal(first.downloaded, 1);
+  assert.equal(before.attachments, 1);
+  assert.deepEqual(fetched, [absolute]);
+  assert.equal(await readFile(join(destination, "01 Guide.pdf"), "utf8"), "fixture pdf");
+  const after = await verifyCourse({ client: source, course });
+  assert.equal(after.attachments, 1);
+  assert.deepEqual(after.missing, []);
+  const repeated = await syncCourse({ client: source, course, state });
+  assert.deepEqual(repeated.failures, []);
+  assert.equal(repeated.downloaded, 0);
+  assert.equal(repeated.skipped, 1);
+  assert.deepEqual(fetched, [absolute]);
 });

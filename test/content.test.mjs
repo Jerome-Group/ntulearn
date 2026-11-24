@@ -494,3 +494,43 @@ test("an address NTULearn never supplied matches nothing", () => {
   assert.equal(isAttachedFile(attached, "undefined"), false);
   assert.equal(isAttachedFile([{ resourceUrl: undefined }], "not a url at all"), false);
 });
+
+test("deduplicates equivalent URLs without changing the selected attachment spelling", () => {
+  const relative = "/bbcswebdav/xid-123_1";
+  const absolute = `https://ntulearn.ntu.edu.sg${relative}`;
+  const embed = (resourceUrl, fileName) =>
+    `<a data-bbfile="${encode({ resourceUrl, fileName })}"></a>`;
+  for (const [first, last] of [
+    [relative, absolute],
+    [absolute, relative],
+  ]) {
+    const attachments = attachmentsOf({
+      contentDetail: { "resource/x-bb-file": { file: { permanentUrl: first } } },
+      body: { rawText: embed(first, "raw.pdf"), displayText: embed(last, "display.pdf") },
+    });
+    assert.deepEqual(attachments, [{ resourceUrl: last, fileName: "display.pdf" }]);
+  }
+});
+
+test("keeps distinct attachment URL semantics and unparseable spellings separate", () => {
+  const urls = [
+    "/bbcswebdav/xid-123_1",
+    "/bbcswebdav/xid-123_1?download=1",
+    "/bbcswebdav/xid-123_1?download=2",
+    "/bbcswebdav/xid-123_1#section",
+    "/bbcswebdav/XID-123_1",
+    "/bbcswebdav/pid-456/xid-123_1",
+    "http://ntulearn.ntu.edu.sg/bbcswebdav/xid-123_1",
+    "https://example.test/bbcswebdav/xid-123_1",
+    "https://student@ntulearn.ntu.edu.sg/bbcswebdav/xid-123_1",
+    "http://[invalid",
+    "http://[another-invalid",
+  ];
+  const rawText = urls
+    .map((resourceUrl) => `<a data-bbfile="${encode({ resourceUrl })}"></a>`)
+    .join("");
+  assert.deepEqual(
+    attachmentsOf({ body: { rawText } }).map((file) => file.resourceUrl),
+    urls,
+  );
+});

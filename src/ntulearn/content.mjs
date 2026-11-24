@@ -51,7 +51,16 @@ export function attachmentsOf(item) {
     }
   }
 
-  return [...new Map(files.map((file) => [file.resourceUrl, file])).values()];
+  return [...new Map(files.map((file) => [attachmentUrlKey(file.resourceUrl), file])).values()];
+}
+
+// Compare resolved addresses while retaining the supplied URL and metadata for fetching.
+function attachmentUrlKey(resourceUrl) {
+  try {
+    return absoluteUrl(resourceUrl);
+  } catch {
+    return resourceUrl;
+  }
 }
 
 // Whether an address written in a body is a file the item already carries — the same file, whether
