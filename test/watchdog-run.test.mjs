@@ -407,6 +407,85 @@ test("does not retry a lapsed session or a completed red run", async () => {
   assert.deepEqual(waits, []);
 });
 
+for (const interruptedCommand of ["sync", "verify"]) {
+  test(`does not retry an identity-provider sign-in stall during ${interruptedCommand}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
+    const driveMountPath = join(root, "Google Drive");
+    await mkdir(driveMountPath);
+    const commands = [];
+    const waits = [];
+    const stderr =
+      "NTULearn sign-in is still at the identity provider after 60s: https://sso.example.edu/adfs/ls/. Run: npm run login";
+    const syncReport = { courses: [{ downloaded: 2, markdownWritten: 1 }] };
+    const digest = await runWatchdogLocked({
+      config: {
+        statePath: join(root, ".data", "state.json"),
+        driveMountPath,
+        watchdogTimeoutMs: 1_000,
+      },
+      root,
+      runner: {
+        node: process.execPath,
+        argumentsFor: (command) => [command],
+        spawn(_command, [command]) {
+          commands.push(command);
+          return command === interruptedCommand
+            ? completedChild({ code: 1, stderr })
+            : completedChild({ code: 0, stdout: JSON.stringify(syncReport) });
+        },
+      },
+      wait: async (milliseconds) => waits.push(milliseconds),
+    });
+
+    assert.equal(digest.verdict, "red");
+    assert.equal(digest.message, "sign-in stalled at the identity provider — run `npm run login`");
+    assert.deepEqual(commands, interruptedCommand === "sync" ? ["sync"] : ["sync", "verify"]);
+    assert.deepEqual(waits, []);
+    const run = JSON.parse(await readFile(join(root, ".data", digest.runLog), "utf8"));
+    assert.equal(run.attempts, 1);
+    assert.equal(run.attemptResults.length, 1);
+    assert.equal(run[interruptedCommand].stderr, stderr);
+    assert.equal(run[interruptedCommand].report, null);
+    if (interruptedCommand === "verify") {
+      assert.deepEqual(run.sync.report, syncReport);
+      assert.deepEqual(run.attemptResults[0].sync.report, syncReport);
+    } else {
+      assert.equal(run.verify, null);
+    }
+  });
+}
+
+test("retries an ordinary transient sign-in timeout", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
+  const driveMountPath = join(root, "Google Drive");
+  await mkdir(driveMountPath);
+  const commands = [];
+  const waits = [];
+  const stderr =
+    "NTULearn did not answer within 60s; sign-in stopped at https://ntulearn.example.edu/. Run the command again, and if it keeps happening: Run: npm run login";
+  const digest = await runWatchdogLocked({
+    config: {
+      statePath: join(root, ".data", "state.json"),
+      driveMountPath,
+      watchdogTimeoutMs: 1_000,
+    },
+    root,
+    runner: {
+      node: process.execPath,
+      argumentsFor: (command) => [command],
+      spawn(_command, [command]) {
+        commands.push(command);
+        return completedChild({ code: 1, stderr });
+      },
+    },
+    wait: async (milliseconds) => waits.push(milliseconds),
+  });
+
+  assert.match(digest.message, /^crash\/timeout after 3 attempts/);
+  assert.deepEqual(commands, ["sync", "sync", "sync"]);
+  assert.deepEqual(waits, [15 * 60 * 1000, 15 * 60 * 1000]);
+});
+
 test("does not retry a destination permission failure", async () => {
   const root = await mkdtemp(join(tmpdir(), "ntulearn-watchdog-"));
   const driveMountPath = join(root, "Google Drive");

@@ -45,6 +45,13 @@ export function watchdogVerdict({
     return { verdict: "red", message: "session lapsed — run `npm run login`" };
   }
 
+  if ([sync, verify].some(identityProviderSignInStalled)) {
+    return {
+      verdict: "red",
+      message: "sign-in stalled at the identity provider — run `npm run login`",
+    };
+  }
+
   const crashed = [sync, verify].find(isCrashOrTimeout);
   if (crashed) {
     const attemptsEvidence = attemptResults.flatMap((attempt) => [attempt.sync, attempt.verify]);
@@ -77,9 +84,21 @@ export function watchdogVerdict({
   return { verdict: "green", message: `synced, ${newFiles} new files` };
 }
 
+export function identityProviderSignInStalled(command) {
+  return /NTULearn sign-in is still at the identity provider after \d+(?:\.\d+)?s:/i.test(
+    commandEvidence(command),
+  );
+}
+
 export function sessionLapsed(command) {
+  return /the saved session is no longer signed in|not signed in while downloading|http 401/i.test(
+    commandEvidence(command),
+  );
+}
+
+function commandEvidence(command) {
   const failures = (command?.report?.courses ?? []).flatMap((course) => course.failures ?? []);
-  const evidence = [
+  return [
     command?.stderr,
     command?.error,
     command?.message,
@@ -87,9 +106,6 @@ export function sessionLapsed(command) {
   ]
     .filter(Boolean)
     .join("\n");
-  return /the saved session is no longer signed in|not signed in while downloading|http 401/i.test(
-    evidence,
-  );
 }
 
 export function isCrashOrTimeout(command) {

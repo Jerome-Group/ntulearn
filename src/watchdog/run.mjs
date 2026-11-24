@@ -6,7 +6,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { INITIAL_WATCHDOG_TIMEOUT_MS } from "../config.mjs";
 import { isDirectoryPresent, writeAtomically } from "../sync/files.mjs";
-import { isCrashOrTimeout, sessionLapsed, watchdogVerdict } from "./verdict.mjs";
+import {
+  identityProviderSignInStalled,
+  isCrashOrTimeout,
+  sessionLapsed,
+  watchdogVerdict,
+} from "./verdict.mjs";
 
 const LOCK_HELD = 75;
 const MAX_DIGEST_BYTES = 64 * 1024;
@@ -368,5 +373,6 @@ function timeoutFor(config) {
 function shouldRetry({ sync, verify }) {
   if ([sync, verify].some((command) => command?.destinationPermission)) return false;
   if ([sync, verify].some(sessionLapsed)) return false;
+  if ([sync, verify].some(identityProviderSignInStalled)) return false;
   return [sync, verify].some(isCrashOrTimeout);
 }
